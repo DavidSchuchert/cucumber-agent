@@ -28,6 +28,7 @@ class PersonalityConfig:
     """Agent personality configuration."""
 
     name: str = "Cucumber"
+    emoji: str = "🤖"
     tone: str = "friendly"
     language: str = "en"
     greeting: str = ""
@@ -44,6 +45,7 @@ class PersonalityConfig:
         data = cls._parse_md_dict(content)
         return cls(
             name=data.get("name", "Cucumber"),
+            emoji=data.get("emoji", "🤖"),
             tone=data.get("tone", "friendly"),
             language=data.get("language", "en"),
             greeting=data.get("greeting", ""),
@@ -73,6 +75,7 @@ class PersonalityConfig:
         lines = [
             "# Personality",
             f"name: {self.name}",
+            f"emoji: {self.emoji}",
             f"tone: {self.tone}",
             f"language: {self.language}",
             f"greeting: {self.greeting}",
