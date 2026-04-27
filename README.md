@@ -5,7 +5,7 @@
 > A clean, modular AI agent framework. Built from scratch.
 
 ```bash
-curl -LsSf https://get.cucumber.sh/install.sh | sh
+curl -LsSf https://raw.githubusercontent.com/DavidSchuchert/cucumber-agent/main/installer/install.sh | sh
 cucumber init
 cucumber run
 ```
@@ -24,7 +24,7 @@ OpenClaw and Hermes are great but have grown into complex, brittle systems. Cucu
 ### One-Line Install
 
 ```bash
-curl -LsSf https://get.cucumber.sh/install.sh | sh
+curl -LsSf https://raw.githubusercontent.com/DavidSchuchert/cucumber-agent/main/installer/install.sh | sh
 ```
 
 ### Setup Wizard
