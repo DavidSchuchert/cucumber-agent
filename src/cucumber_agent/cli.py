@@ -27,40 +27,38 @@ async def stream_print(stream: AsyncIterator[str]) -> str:
     in_code_block = False
     code_buffer = ""
 
-    with console.status("[bold green]Thinking..."):
-        async for chunk in stream:
-            full += chunk
+    async for chunk in stream:
+        full += chunk
 
-            # Handle code blocks specially
-            if not in_code_block and "```" in chunk:
-                parts = chunk.split("```")
-                if len(parts) >= 3:
-                    # Both start and end in same chunk
-                    console.print(parts[0], end="", soft_wrap=True)
-                    code = parts[1].rstrip()
-                    lang = "text"
-                    if code:
-                        syntax = Syntax(code, lexer=lang, theme="monokai", line_numbers=True)
-                        console.print(syntax)
-                    console.print(parts[2], end="", soft_wrap=True)
-                    continue
+        # Handle code blocks specially
+        if not in_code_block and "```" in chunk:
+            parts = chunk.split("```")
+            if len(parts) >= 3:
+                console.print(parts[0], end="")
+                code = parts[1].rstrip()
+                lang = "text"
+                if code:
+                    syntax = Syntax(code, lexer=lang, theme="monokai", line_numbers=True)
+                    console.print(syntax)
+                console.print(parts[2], end="")
+                continue
 
-            if not in_code_block and chunk.strip().startswith("```"):
-                in_code_block = True
-                code_buffer = chunk
-            elif in_code_block:
-                code_buffer += chunk
-                if "```" in chunk:
-                    lines = code_buffer.split("\n", 1)
-                    lang = lines[0].strip().strip("`") or "text"
-                    code = lines[1].rstrip() if len(lines) > 1 else ""
-                    if code:
-                        syntax = Syntax(code, lexer=lang, theme="monokai", line_numbers=True)
-                        console.print(syntax)
-                    in_code_block = False
-                    code_buffer = ""
-            else:
-                console.print(chunk, end="", soft_wrap=True)
+        if not in_code_block and chunk.strip().startswith("```"):
+            in_code_block = True
+            code_buffer = chunk
+        elif in_code_block:
+            code_buffer += chunk
+            if "```" in chunk:
+                lines = code_buffer.split("\n", 1)
+                lang = lines[0].strip().strip("`") or "text"
+                code = lines[1].rstrip() if len(lines) > 1 else ""
+                if code:
+                    syntax = Syntax(code, lexer=lang, theme="monokai", line_numbers=True)
+                    console.print(syntax)
+                in_code_block = False
+                code_buffer = ""
+        else:
+            console.print(chunk, end="")
 
     console.print()  # newline after streaming
     return full
