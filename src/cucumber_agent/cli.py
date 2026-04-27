@@ -240,10 +240,29 @@ class CliSession:
             # Check if this is a greeting and optimization should be offered
             offer_optimization = self._agent.needs_optimization(user_input)
 
-            stream = self._agent.run_stream(self._session, user_input)
-            await stream_print(stream)
+            # Use non-streaming to properly handle tool calls
+            response = await self._agent.run_with_tools(self._session, user_input)
 
-            console.print()  # newline after streaming
+            # Print the response
+            console.print(response.content)
+
+            # Check for tool calls
+            if response.tool_calls:
+                for tc in response.tool_calls:
+                    tool = tc.name
+                    args = tc.arguments
+                    console.print()
+                    self._print_tool_call({
+                        "name": tool,
+                        "arguments": args,
+                    })
+                    self._pending_tool_call = {
+                        "name": tool,
+                        "arguments": args,
+                    }
+                    return
+
+            console.print()  # newline after response
 
             # After first greeting, offer optimization
             if offer_optimization:
@@ -359,17 +378,21 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
 
     async def _handle_tool_approval(self, user_input: str) -> None:
         """Handle user's response to a tool call."""
-        self._pending_tool_call = None  # Clear first
-        choice = user_input.strip()
+        tool_call = self._pending_tool_call
+        if not tool_call:
+            console.print("[dim]No pending tool call.[/dim]\n")
+            return
 
-        tool_call = self._pending_tool_call or {}
+        choice = user_input.strip()
         tool_name = tool_call.get("name", "unknown")
-        command = tool_call.get("arguments", {}).get("command", "")
+        args = tool_call.get("arguments", {})
+        command = args.get("command", "")
 
         if choice == "1":
             # Execute
+            self._pending_tool_call = None  # Clear before execution
             console.print(f"\n[dim]⚡ Executing {tool_name}...[/dim]\n")
-            result = await ToolRegistry.execute(tool_name, **tool_call.get("arguments", {}))
+            result = await ToolRegistry.execute(tool_name, **args)
             if result.success:
                 console.print("[green]✓ Done[/green]\n")
                 console.print(f"[dim]{result.output[:500] if len(result.output) > 500 else result.output}[/dim]\n")
@@ -378,6 +401,7 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
 
         elif choice == "2":
             # Cancel
+            self._pending_tool_call = None
             console.print("[dim]Tool call cancelled.[/dim]\n")
 
         elif choice == "3":
@@ -391,11 +415,11 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                 self._pending_tool_call = tool_call
                 console.print("\n[dim]Updated! Choose again:[/dim]")
                 console.print("[1] Execute [2] Cancel [3] Edit again")
-                return  # Don't clear, let user confirm again
+                # Don't clear - let user confirm again
 
         else:
+            self._pending_tool_call = None
             console.print("[dim]Invalid choice. Tool call cancelled.[/dim]\n")
-            return
 
     def _print_tool_call(self, tool_call: dict) -> None:
         """Display a tool call with approval options."""

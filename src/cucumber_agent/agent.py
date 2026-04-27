@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
 from cucumber_agent.config import Config
-from cucumber_agent.provider import BaseProvider, ProviderRegistry
+from cucumber_agent.provider import BaseProvider, ModelResponse, ProviderRegistry
 from cucumber_agent.providers import (
     minimax,  # noqa: F401
     openrouter,  # noqa: F401
@@ -121,11 +121,9 @@ class Agent:
 
     def get_tools_spec(self) -> list[dict] | None:
         """Get tool specifications for the current provider."""
-        # Tools disabled for now - need proper approval flow first
-        return None
-        # from cucumber_agent.tools import ToolRegistry
-        # provider = self._config.agent.provider
-        # return ToolRegistry.get_tools_spec(provider)
+        from cucumber_agent.tools import ToolRegistry
+        provider = self._config.agent.provider
+        return ToolRegistry.get_tools_spec(provider)
 
     async def run(self, session: Session, user_input: str) -> str:
         """Process user input and return the response text."""
@@ -144,6 +142,27 @@ class Agent:
         session.add_assistant_message(response.content)
         return response.content
 
+    async def run_with_tools(self, session: Session, user_input: str) -> ModelResponse:
+        """Process user input and return response with potential tool calls."""
+        session.add_user_message(user_input)
+        messages = self._build_messages(session)
+        tools = self.get_tools_spec()
+
+        response = await self._provider.complete(
+            messages=messages,
+            model=self._agent_config.model,
+            temperature=self._agent_config.temperature,
+            max_tokens=self._agent_config.max_tokens,
+            tools=tools if tools else None,
+        )
+
+        # Don't add assistant message if tool calls present
+        # The tool result will be added after execution
+        if not response.tool_calls:
+            session.add_assistant_message(response.content)
+
+        return response
+
     async def run_stream(
         self,
         session: Session,
@@ -154,8 +173,8 @@ class Agent:
         messages = self._build_messages(session)
         tools = self.get_tools_spec()
 
-        # If tools are enabled, use complete() to get full response
         if tools:
+            # Use complete() to get response with potential tool calls
             response = await self._provider.complete(
                 messages=messages,
                 model=self._agent_config.model,
@@ -165,6 +184,10 @@ class Agent:
             )
             yield response.content
             session.add_assistant_message(response.content)
+
+            # If tool calls present, return them for approval flow
+            if response.tool_calls:
+                return  # Caller should check session for tool calls
             return
 
         # No tools - use streaming
