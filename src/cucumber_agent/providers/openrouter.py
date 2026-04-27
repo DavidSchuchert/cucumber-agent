@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
-from cucumber_agent.provider import BaseProvider, ModelResponse, ProviderRegistry
+from cucumber_agent.provider import BaseProvider, ModelResponse, ProviderRegistry, ToolCall
 from cucumber_agent.session import Message
 
 if TYPE_CHECKING:
@@ -47,12 +47,13 @@ class OpenRouterProvider(BaseProvider):
         *,
         temperature: float = 0.7,
         max_tokens: int | None = None,
+        tools: list[dict] | None = None,
     ) -> ModelResponse:
         """Send a complete request and return the full response."""
         async with self._client.stream(
             "POST",
             f"{self._base_url}/chat/completions",
-            json=self._build_request(messages, model, temperature, max_tokens),
+            json=self._build_request(messages, model, temperature, max_tokens, tools),
         ) as response:
             response.raise_for_status()
             data = await response.json()
@@ -66,12 +67,13 @@ class OpenRouterProvider(BaseProvider):
         *,
         temperature: float = 0.7,
         max_tokens: int | None = None,
+        tools: list[dict] | None = None,
     ) -> AsyncIterator[str]:
         """Stream the response as an async iterator of text chunks."""
         async with self._client.stream(
             "POST",
             f"{self._base_url}/chat/completions",
-            json=self._build_request(messages, model, temperature, max_tokens),
+            json=self._build_request(messages, model, temperature, max_tokens, tools),
         ) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
@@ -93,6 +95,7 @@ class OpenRouterProvider(BaseProvider):
         model: str,
         temperature: float,
         max_tokens: int | None,
+        tools: list[dict] | None,
     ) -> dict:
         """Build the request body."""
         body = {
@@ -103,6 +106,8 @@ class OpenRouterProvider(BaseProvider):
         }
         if max_tokens:
             body["max_tokens"] = max_tokens
+        if tools:
+            body["tools"] = tools
         return body
 
     def _format_message(self, message: Message) -> dict:
@@ -122,7 +127,6 @@ class OpenRouterProvider(BaseProvider):
         """Extract text content from a message."""
         if isinstance(content, str):
             return content
-        # Handle content blocks
         parts = []
         for block in content:
             if block.type == "text" and block.text:
@@ -138,6 +142,19 @@ class OpenRouterProvider(BaseProvider):
         message = choice.get("message", {})
         content = message.get("content", "")
 
+        # Parse tool calls
+        tool_calls_data = message.get("tool_calls", [])
+        tool_calls: list[ToolCall] | None = None
+        if tool_calls_data:
+            tool_calls = []
+            for tc in tool_calls_data:
+                func = tc.get("function", {})
+                tool_calls.append(ToolCall(
+                    id=tc.get("id", ""),
+                    name=func.get("name", ""),
+                    arguments=json.loads(func.get("arguments", "{}")),
+                ))
+
         usage = data.get("usage", {})
         return ModelResponse(
             content=content,
@@ -145,4 +162,5 @@ class OpenRouterProvider(BaseProvider):
             input_tokens=usage.get("prompt_tokens", 0),
             output_tokens=usage.get("completion_tokens", 0),
             finish_reason=choice.get("finish_reason"),
+            tool_calls=tool_calls,
         )

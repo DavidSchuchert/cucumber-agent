@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
@@ -18,13 +18,25 @@ class Role(Enum):
     ASSISTANT = "assistant"
 
 
+@dataclass
+class ToolCall:
+    """A tool call requested by the model."""
+
+    id: str
+    name: str
+    arguments: dict = field(default_factory=dict)
+
+
 @dataclass(frozen=True)
 class ModelResponse:
+    """Response from a model."""
+
     content: str
     model: str
     input_tokens: int = 0
     output_tokens: int = 0
     finish_reason: str | None = None
+    tool_calls: list[ToolCall] | None = None
 
 
 class BaseProvider(ABC):
@@ -38,6 +50,7 @@ class BaseProvider(ABC):
         *,
         temperature: float = 0.7,
         max_tokens: int | None = None,
+        tools: list[dict] | None = None,
     ) -> ModelResponse:
         """Send a complete request and return the full response."""
         ...
@@ -50,6 +63,7 @@ class BaseProvider(ABC):
         *,
         temperature: float = 0.7,
         max_tokens: int | None = None,
+        tools: list[dict] | None = None,
     ) -> AsyncIterator[str]:
         """Stream the response as an async iterator of text chunks."""
         ...

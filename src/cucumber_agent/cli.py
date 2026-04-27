@@ -16,6 +16,7 @@ from rich.syntax import Syntax
 from cucumber_agent.agent import Agent
 from cucumber_agent.config import Config
 from cucumber_agent.session import Session
+from cucumber_agent.tools.registry import ToolRegistry
 
 console = Console()
 
@@ -23,25 +24,33 @@ console = Console()
 async def stream_print(stream: AsyncIterator[str]) -> str:
     """Stream chunks and print them as they arrive. Return full text."""
     full = ""
-
-    # Check if this is a code block (starts with ```)
     in_code_block = False
     code_buffer = ""
-    first_chunk = True
 
     with console.status("[bold green]Thinking..."):
         async for chunk in stream:
             full += chunk
 
-            # Detect code blocks for special handling
-            if first_chunk and chunk.strip().startswith("```"):
+            # Handle code blocks specially
+            if not in_code_block and "```" in chunk:
+                parts = chunk.split("```")
+                if len(parts) >= 3:
+                    # Both start and end in same chunk
+                    console.print(parts[0], end="", soft_wrap=True)
+                    code = parts[1].rstrip()
+                    lang = "text"
+                    if code:
+                        syntax = Syntax(code, lexer=lang, theme="monokai", line_numbers=True)
+                        console.print(syntax)
+                    console.print(parts[2], end="", soft_wrap=True)
+                    continue
+
+            if not in_code_block and chunk.strip().startswith("```"):
                 in_code_block = True
                 code_buffer = chunk
-                first_chunk = False
             elif in_code_block:
                 code_buffer += chunk
                 if "```" in chunk:
-                    # Code block complete - render with syntax highlighting
                     lines = code_buffer.split("\n", 1)
                     lang = lines[0].strip().strip("`") or "text"
                     code = lines[1].rstrip() if len(lines) > 1 else ""
@@ -50,12 +59,10 @@ async def stream_print(stream: AsyncIterator[str]) -> str:
                         console.print(syntax)
                     in_code_block = False
                     code_buffer = ""
-                    first_chunk = False
             else:
-                # Regular text - stream it
                 console.print(chunk, end="", soft_wrap=True)
-                first_chunk = False
 
+    console.print()  # newline after streaming
     return full
 
 
@@ -179,6 +186,10 @@ class CliSession:
         self._running = False
         self._waiting_for_optimization_response = False
         self._debug_mode = False
+        self._pending_tool_call: dict | None = None  # For user confirmation
+
+        # Import tools
+        from cucumber_agent import tools  # noqa: F401
 
     async def run(self) -> None:
         """Run the REPL."""
@@ -218,6 +229,11 @@ class CliSession:
         # Handle optimization response
         if self._waiting_for_optimization_response:
             await self._handle_optimization_response(user_input)
+            return
+
+        # Handle tool call approval
+        if self._pending_tool_call:
+            await self._handle_tool_approval(user_input)
             return
 
         # Regular chat
@@ -342,6 +358,68 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                     console.print("[dim]Debug mode OFF[/dim]")
             case _:
                 console.print(f"[dim]Unknown command: {cmd}[/dim]. Type /help for help.")
+
+    async def _handle_tool_approval(self, user_input: str) -> None:
+        """Handle user's response to a tool call."""
+        self._pending_tool_call = None  # Clear first
+        choice = user_input.strip()
+
+        tool_call = self._pending_tool_call or {}
+        tool_name = tool_call.get("name", "unknown")
+        command = tool_call.get("arguments", {}).get("command", "")
+
+        if choice == "1":
+            # Execute
+            console.print(f"\n[dim]⚡ Executing {tool_name}...[/dim]\n")
+            result = await ToolRegistry.execute(tool_name, **tool_call.get("arguments", {}))
+            if result.success:
+                console.print("[green]✓ Done[/green]\n")
+                console.print(f"[dim]{result.output[:500] if len(result.output) > 500 else result.output}[/dim]\n")
+            else:
+                console.print(f"[red]✗ Error:[/red] {result.error or result.output}\n")
+
+        elif choice == "2":
+            # Cancel
+            console.print("[dim]Tool call cancelled.[/dim]\n")
+
+        elif choice == "3":
+            # Edit command
+            console.print(f"[dim]Current:[/dim] {command}")
+            new_cmd = await asyncio.to_thread(
+                lambda: console.input("[yellow]Enter new command: [/yellow]")
+            )
+            if new_cmd.strip():
+                tool_call["arguments"]["command"] = new_cmd.strip()
+                self._pending_tool_call = tool_call
+                console.print("\n[dim]Updated! Choose again:[/dim]")
+                console.print("[1] Execute [2] Cancel [3] Edit again")
+                return  # Don't clear, let user confirm again
+
+        else:
+            console.print("[dim]Invalid choice. Tool call cancelled.[/dim]\n")
+            return
+
+    def _print_tool_call(self, tool_call: dict) -> None:
+        """Display a tool call with approval options."""
+        tool_name = tool_call.get("name", "unknown")
+        args = tool_call.get("arguments", {})
+        command = args.get("command", "")
+        reason = args.get("reason", "No description provided")
+
+        console.print(
+            Panel(
+                f"[bold]Tool:[/bold] {tool_name}\n"
+                f"[bold]Command:[/bold] {command}\n"
+                f"[bold]Reason:[/bold] {reason}",
+                title="⚡ Tool Call Approval Required",
+                border_style="yellow",
+            )
+        )
+        console.print("[bold]Choose:[/bold]")
+        console.print("  [1] Execute")
+        console.print("  [2] Cancel")
+        console.print("  [3] Edit command")
+        console.print()
 
     def _print_debug_info(self) -> None:
         """Print debug information."""

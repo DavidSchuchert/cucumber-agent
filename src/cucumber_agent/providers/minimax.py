@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
-from cucumber_agent.provider import BaseProvider, ModelResponse, ProviderRegistry
+from cucumber_agent.provider import BaseProvider, ModelResponse, ProviderRegistry, ToolCall
 from cucumber_agent.session import Message
 
 if TYPE_CHECKING:
@@ -47,10 +47,10 @@ class MiniMaxProvider(BaseProvider):
         *,
         temperature: float = 0.7,
         max_tokens: int | None = None,
+        tools: list[dict] | None = None,
     ) -> ModelResponse:
         """Send a complete request and return the full response."""
-        # Non-streaming request
-        body = self._build_request(messages, model, temperature, max_tokens)
+        body = self._build_request(messages, model, temperature, max_tokens, tools)
         body["stream"] = False
 
         response = await self._client.post(
@@ -69,15 +69,15 @@ class MiniMaxProvider(BaseProvider):
         *,
         temperature: float = 0.7,
         max_tokens: int | None = None,
+        tools: list[dict] | None = None,
     ) -> AsyncIterator[str]:
         """Stream the response as an async iterator of text chunks."""
-        # MiniMax uses SSE streaming
 
         async def generate():
             async with self._client.stream(
                 "POST",
                 f"{self._base_url}/v1/messages",
-                json=self._build_request(messages, model, temperature, max_tokens),
+                json=self._build_request(messages, model, temperature, max_tokens, tools),
             ) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
@@ -95,7 +95,6 @@ class MiniMaxProvider(BaseProvider):
                     except json.JSONDecodeError:
                         continue
 
-        # Run sync generator in async context
         async def runner():
             async for chunk in generate():
                 yield chunk
@@ -108,6 +107,7 @@ class MiniMaxProvider(BaseProvider):
         model: str,
         temperature: float,
         max_tokens: int | None,
+        tools: list[dict] | None,
     ) -> dict:
         """Build the request body."""
         body = {
@@ -118,6 +118,8 @@ class MiniMaxProvider(BaseProvider):
         }
         if max_tokens:
             body["max_tokens"] = max_tokens
+        if tools:
+            body["tools"] = tools
         return body
 
     def _format_message(self, message: Message) -> dict:
@@ -148,13 +150,22 @@ class MiniMaxProvider(BaseProvider):
     def _parse_response(self, data: dict, model: str) -> ModelResponse:
         """Parse a MiniMax response into a ModelResponse."""
         content = ""
-        # content is a list of content blocks
+        tool_calls: list[ToolCall] | None = None
+
         content_blocks = data.get("content", [])
         if isinstance(content_blocks, list):
             for block in content_blocks:
                 if block.get("type") == "text":
                     content = block.get("text", "")
-                    break
+                elif block.get("type") == "tool_call":
+                    # Parse tool call
+                    tool_call_block = block.get("tool_call", {})
+                    tool_calls = tool_calls or []
+                    tool_calls.append(ToolCall(
+                        id=tool_call_block.get("id", ""),
+                        name=tool_call_block.get("name", ""),
+                        arguments=tool_call_block.get("input", {}),
+                    ))
 
         usage = data.get("usage", {})
         return ModelResponse(
@@ -163,4 +174,5 @@ class MiniMaxProvider(BaseProvider):
             input_tokens=usage.get("input_tokens", 0),
             output_tokens=usage.get("output_tokens", 0),
             finish_reason=data.get("stop_reason"),
+            tool_calls=tool_calls,
         )

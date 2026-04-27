@@ -119,16 +119,23 @@ class Agent:
         """Access personality config."""
         return self._config.personality
 
+    def get_tools_spec(self) -> list[dict]:
+        """Get tool specifications for the provider."""
+        from cucumber_agent.tools import ToolRegistry
+        return ToolRegistry.get_tools_spec()
+
     async def run(self, session: Session, user_input: str) -> str:
         """Process user input and return the response text."""
         session.add_user_message(user_input)
         messages = self._build_messages(session)
+        tools = self.get_tools_spec()
 
         response = await self._provider.complete(
             messages=messages,
             model=self._agent_config.model,
             temperature=self._agent_config.temperature,
             max_tokens=self._agent_config.max_tokens,
+            tools=tools if tools else None,
         )
 
         session.add_assistant_message(response.content)
@@ -142,6 +149,7 @@ class Agent:
         """Stream the response as chunks."""
         session.add_user_message(user_input)
         messages = self._build_messages(session)
+        tools = self.get_tools_spec()
 
         full_response = ""
         stream_iter = self._provider.stream(
@@ -149,6 +157,7 @@ class Agent:
             model=self._agent_config.model,
             temperature=self._agent_config.temperature,
             max_tokens=self._agent_config.max_tokens,
+            tools=tools if tools else None,
         )
         async for chunk in stream_iter:
             full_response += chunk
