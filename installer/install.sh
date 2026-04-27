@@ -1,12 +1,11 @@
 #!/bin/bash
 # CucumberAgent Installer
-# Usage: curl -LsSf https://get.cucumber.sh/install.sh | sh
-# Or locally: bash installer/install.sh
+# Usage: curl -LsSf https://raw.githubusercontent.com/DavidSchuchert/cucumber-agent/main/installer/install.sh | sh
 
 set -e
 
+REPO="DavidSchuchert/cucumber-agent"
 INSTALL_DIR="${HOME}/.cucumber-agent"
-CURRENT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 IS_INTERACTIVE="false"
 
 # Check if we have a TTY
@@ -28,20 +27,17 @@ fi
 
 echo "✓ uv ready"
 
-# Step 2: Setup source directory
-if [ -d "$CURRENT_DIR/src" ] && [ -f "$CURRENT_DIR/pyproject.toml" ]; then
-    echo "→ Installing from local source..."
-    SOURCE_DIR="$CURRENT_DIR"
-elif [ -d "$INSTALL_DIR/src" ] && [ -f "$INSTALL_DIR/pyproject.toml" ]; then
-    SOURCE_DIR="$INSTALL_DIR"
-elif [ -d "/Users/davidwork/cucumber-agent/src" ]; then
-    SOURCE_DIR="/Users/davidwork/cucumber-agent"
+# Step 2: Clone or update source from GitHub
+if [ ! -d "$INSTALL_DIR" ]; then
+    echo "→ Downloading CucumberAgent from GitHub..."
+    git clone "https://github.com/${REPO}.git" "$INSTALL_DIR"
 else
-    echo "ERROR: Could not find CucumberAgent source."
-    exit 1
+    echo "→ Updating existing installation..."
+    cd "$INSTALL_DIR"
+    git pull || true
 fi
 
-cd "$SOURCE_DIR"
+cd "$INSTALL_DIR"
 
 # Step 3: Install package as a tool
 echo "→ Installing package..."
@@ -51,16 +47,8 @@ uv tool install -e .
 echo ""
 echo "✅ CucumberAgent installed!"
 echo ""
-echo "→ Adding to PATH..."
 
-# Add uv tool directory to PATH
-UV_TOOL_DIR="${HOME}/.local/share/uv/tools"
-if [ -d "$UV_TOOL_DIR/cucumber-agent" ]; then
-    export PATH="${UV_TOOL_DIR}/cucumber-agent/bin:${PATH}"
-    echo "✓ PATH updated"
-fi
-
-# Step 4: Setup config
+# Step 4: Setup config if needed
 CONFIG_DIR="${HOME}/.cucumber"
 CONFIG_FILE="${CONFIG_DIR}/config.yaml"
 
@@ -85,28 +73,24 @@ if [ ! -f "$CONFIG_FILE" ]; then
             API_KEY="$OPENROUTER_API_KEY"
         else
             echo "⚠️  No API key found in environment."
-            echo "   Set MINIMAX_API_KEY or OPENROUTER_API_KEY before running 'cucumber run'"
-            echo ""
+            echo "   Set MINIMAX_API_KEY or OPENROUTER_API_KEY"
+            echo "   Then run 'cucumber init' to configure."
 
-            # Create minimal config
             cat > "$CONFIG_FILE" << 'EOF'
 agent:
   provider: minimax
   model: "MiniMax-M2.7"
   temperature: 0.7
   system_prompt: "You are CucumberAgent, a helpful AI assistant."
-
 providers:
   minimax:
     api_key: null
     base_url: "https://api.minimax.io/anthropic"
     model: "MiniMax-M2.7"
 EOF
-            echo "   Created config at $CONFIG_FILE"
-            echo "   Edit it to add your API key, then run 'cucumber run'"
+            echo "   Created empty config at $CONFIG_FILE"
         fi
 
-        # Write config if we have all values
         if [ -n "$API_KEY" ]; then
             cat > "$CONFIG_FILE" << EOF
 agent:
@@ -114,14 +98,13 @@ agent:
   model: "$MODEL"
   temperature: 0.7
   system_prompt: "You are CucumberAgent, a helpful AI assistant."
-
 providers:
   $PROVIDER:
     api_key: "$API_KEY"
     base_url: "$BASE_URL"
     model: "$MODEL"
 EOF
-            echo "   Created config with API key from environment"
+            echo "   Config created with API key from environment"
         fi
     fi
 else
@@ -131,5 +114,6 @@ fi
 echo ""
 echo "=========================================="
 echo ""
-echo "  Run 'cucumber run' to start chatting!"
+echo "  Run 'cucumber init' to set up your agent!"
+echo "  Then 'cucumber run' to start chatting!"
 echo ""
