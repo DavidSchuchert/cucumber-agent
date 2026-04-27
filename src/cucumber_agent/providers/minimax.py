@@ -49,13 +49,16 @@ class MiniMaxProvider(BaseProvider):
         max_tokens: int | None = None,
     ) -> ModelResponse:
         """Send a complete request and return the full response."""
-        async with self._client.stream(
-            "POST",
+        # Non-streaming request
+        body = self._build_request(messages, model, temperature, max_tokens)
+        body["stream"] = False
+
+        response = await self._client.post(
             f"{self._base_url}/v1/messages",
-            json=self._build_request(messages, model, temperature, max_tokens),
-        ) as response:
-            response.raise_for_status()
-            data = await response.json()
+            json=body,
+        )
+        response.raise_for_status()
+        data = response.json()
 
         return self._parse_response(data, model)
 
@@ -145,7 +148,9 @@ class MiniMaxProvider(BaseProvider):
     def _parse_response(self, data: dict, model: str) -> ModelResponse:
         """Parse a MiniMax response into a ModelResponse."""
         content = ""
-        if content_blocks := data.get("content", {}).get("content_blocks", []):
+        # content is a list of content blocks
+        content_blocks = data.get("content", [])
+        if isinstance(content_blocks, list):
             for block in content_blocks:
                 if block.get("type") == "text":
                     content = block.get("text", "")
