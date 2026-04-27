@@ -174,13 +174,15 @@ class CliSession:
 
             console.print()  # newline after streaming
 
-            # After first greeting, offer optimization
-            if offer_optimization:
-                optimization_offer = self._agent.build_optimization_response(user_input)
-                if optimization_offer:
-                    console.print(optimization_offer)
-                    console.print()
-                    self._waiting_for_optimization_response = True
+            # After first greeting, offer optimization as SEPARATE prompt
+            if offer_optimization and self._agent.build_optimization_response(user_input) == "":
+                pers = self._config.personality
+                console.print("\n[bold cyan]──────[/bold cyan]")
+                console.print(f"[bold]{pers.emoji} Möchtest du, dass ich meine Persönlichkeit optimiere?[/bold]")
+                console.print("    Ich kann Emoji, Greeting und Stärken basierend auf meinem Namen anpassen.")
+                console.print("    Antworte mit: [bold]ja[/bold] zum Optimieren oder [bold]nein[/bold] zum Überspringen")
+                console.print("[bold cyan]──────[/bold cyan]\n")
+                self._waiting_for_optimization_response = True
 
         except Exception as e:
             console.print(f"[bold red]Error:[/bold red] {e}")
@@ -192,27 +194,36 @@ class CliSession:
         response = user_input.lower().strip()
 
         # Check if user declined
-        no_patterns = [r"^nein\b", r"^no\b", r"^n\b", r"^ne\b", r"^überspring\b", r"^skip\b"]
+        no_patterns = [r"^nein\b", r"^no\b", r"^n\b", r"^ne\b", r"^überspring\b", r"^skip\b", r"^nee\b"]
         if any(re.match(p, response) for p in no_patterns):
-            console.print("[dim]Optimierung übersprungen.[/dim]\n")
+            console.print("[dim]OK, überspringe Optimierung.[/dim]\n")
+            return
+
+        # User wants optimization - check if response contains positive intent
+        positive_patterns = [r"^ja\b", r"^yes\b", r"^optimier", r"^ok\b", r"^okay\b", r"^gerne\b", r"^yo\b"]
+        if not any(re.match(p, response) for p in positive_patterns):
+            console.print("[dim]Verstanden, keine Optimierung.[/dim]\n")
             return
 
         # User wants optimization - send special prompt to AI
-        console.print("\n[dim]✨ Analyzing name and suggesting improvements...[/dim]\n")
+        console.print("\n[dim]✨ Analysiere meinen Namen und optimiere...[/dim]\n")
 
         # Create a special optimization prompt for the AI
         pers = self._config.personality
-        optimization_prompt = f"""Analysiere meinen Namen "{pers.name}" und schlage Verbesserungen für meine Persönlichkeit vor.
+        optimization_prompt = f"""Ich bin "{pers.name}" und mein aktuelles Emoji ist "{pers.emoji}" mit Tone "{pers.tone}" und Greeting "{pers.greeting}".
 
-Basierend auf meinem Namen sollst du MIR helfen besser zu werden:
-1. **Emoji**: Wähle ein passendes Emoji das zu meinem Namen passt
-2. **Greeting**: Ein passendes Willkommens-Greeting das zu meinem Namen und Tone "{pers.tone}" passt
-3. **Strengths**: Passende Stärken die zu meinem Namen passen
+Analysiere meinen Namen "{pers.name}" und schlage Verbesserungen vor:
+1. **Emoji**: Wähle das PERFEKTE Emoji das zu meinem Namen passt (sei kreativ!)
+2. **Greeting**: Ein cooles, einzigartiges Greeting (max 20 Wörter)
+3. **Strengths**: 2-3 passende Stärken für jemanden namens "{pers.name}"
 
-Antworte in diesem Format-damit ICH weiß was zu tun ist:
-PERSONALITY_UPDATE:emoji=🎭,greeting=Hallo,name!,strengths=kategorie1, kategorie2
+Antworte NUR mit:
+PERSONALITY_UPDATE:emoji={pers.emoji},greeting={pers.greeting},strengths={pers.strengths}
 
-WICHTIG: Antworte NUR mit dem PERSONALITY_UPDATE command wenn du wirklich Vorschläge hast die besser sind als das was ich schon habe. Wenn nicht, sag einfach "Keine Verbesserungen nötig"."""
+UND NUR wenn du ECHT bessere Vorschläge hast, ersetze die Werte:
+PERSONALITY_UPDATE:emoji=🎭,greeting=Dein neues Greeting hier,strengths=stärke1, stärke2
+
+Wenn nichts besser ist, antworte nur "KEINE_VERBESSERUNG". Keine Erklärung, keine Ausrede."""
 
         # Clear the session and send this prompt to the AI
         optimization_session = Session(id="optimize", model=self._config.agent.model)
@@ -225,9 +236,10 @@ WICHTIG: Antworte NUR mit dem PERSONALITY_UPDATE command wenn du wirklich Vorsch
         update_params = parse_personality_update(full_response)
         if update_params:
             apply_personality_update(update_params, self._config)
-            console.print("\n[green]✅ Persönlichkeit aktualisiert![/green]\n")
+            console.print("\n[green]✅ Perfekt! Meine Persönlichkeit wurde optimiert![/green]\n")
+            console.print("[dim]Änderungen werden nach Neustart aktiv (Ctrl+C + cucumber run)[/dim]\n")
         else:
-            console.print("[dim]Keine Änderungen vorgenommen.[/dim]\n")
+            console.print("[dim]OK, alles bleibt wie es ist.[/dim]\n")
 
     async def _handle_command(self, user_input: str) -> None:
         """Handle slash commands."""

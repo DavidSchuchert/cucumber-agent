@@ -190,14 +190,9 @@ class Agent:
 
         self._optimization_offered = True
 
-        # Ask the AI to analyze and offer improvements
-        return (
-            f"\n\n_{pers.emoji} Hey! Mir ist aufgefallen, dass ich mich als \"{pers.name}\" vorgestellt habe. "
-            f"Soll ich meine Persönlichkeit basierend auf meinem Namen optimieren? "
-            f"Ich könnte zum Beispiel ein passenderes Emoji vorschlagen, ein besseres Greeting, "
-            f"oder passendere Stärken.\n\n"
-            f"Antworte einfach **\"optimiere mich\"** oder sag mir was du ändern möchtest!_"
-        )
+        # Return empty - we'll handle this differently to avoid mixing with AI response
+        # The CLI will show this as a separate message after the AI responds
+        return ""  # Disabled - handled separately in CLI
 
     def apply_optimization(self) -> dict:
         """Apply suggested optimizations to personality.md."""
