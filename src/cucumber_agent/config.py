@@ -115,6 +115,13 @@ class PersonalityConfig:
         if self.interests:
             parts.append(f"I'm particularly interested in: {self.interests}.")
 
+        # Tool instructions
+        parts.append(
+            "IMPORTANT: When the user asks me to execute shell commands, read/write files, "
+            "or perform system operations, I MUST use the 'shell' tool. "
+            "I should NOT just describe what I would do - I must actually call the tool."
+        )
+
         parts.append("I'm here to help my human with whatever they need!")
 
         return " ".join(parts)
