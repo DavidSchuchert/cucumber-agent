@@ -119,10 +119,11 @@ class Agent:
         """Access personality config."""
         return self._config.personality
 
-    def get_tools_spec(self) -> list[dict]:
-        """Get tool specifications for the provider."""
+    def get_tools_spec(self) -> list[dict] | None:
+        """Get tool specifications for the current provider."""
         from cucumber_agent.tools import ToolRegistry
-        return ToolRegistry.get_tools_spec()
+        provider = self._config.agent.provider
+        return ToolRegistry.get_tools_spec(provider)
 
     async def run(self, session: Session, user_input: str) -> str:
         """Process user input and return the response text."""

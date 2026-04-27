@@ -26,9 +26,9 @@ class ToolRegistry:
         return list(cls._tools.keys())
 
     @classmethod
-    def get_tools_spec(cls) -> list[dict]:
-        """Get specifications for all registered tools."""
-        return [tool.get_spec() for tool in cls._tools.values()]
+    def get_tools_spec(cls, provider: str = "openrouter") -> list[dict]:
+        """Get specifications for all registered tools for a specific provider."""
+        return [tool.get_spec(provider) for tool in cls._tools.values()]
 
     @classmethod
     async def execute(cls, name: str, **kwargs) -> ToolResult:

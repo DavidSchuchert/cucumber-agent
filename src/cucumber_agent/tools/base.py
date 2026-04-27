@@ -27,13 +27,22 @@ class BaseTool(ABC):
         """Execute the tool with given parameters."""
         ...
 
-    def get_spec(self) -> dict:
-        """Get the OpenAI-style tool specification."""
-        return {
-            "type": "function",
-            "function": {
+    def get_spec(self, provider: str = "openrouter") -> dict:
+        """Get provider-specific tool specification."""
+        if provider == "minimax":
+            # MiniMax: direct fields without wrapper
+            return {
                 "name": self.name,
                 "description": self.description,
-                "parameters": self.parameters,
-            },
-        }
+                "input_schema": self.parameters,
+            }
+        else:
+            # OpenAI-style
+            return {
+                "type": "function",
+                "function": {
+                    "name": self.name,
+                    "description": self.description,
+                    "parameters": self.parameters,
+                },
+            }
