@@ -7,14 +7,52 @@ from typing import TYPE_CHECKING
 
 from cucumber_agent.config import Config
 from cucumber_agent.provider import BaseProvider, ProviderRegistry
-from cucumber_agent.session import Message, Role, Session
 
 # Import providers to trigger @ProviderRegistry.register decorators
-from cucumber_agent.providers import minimax  # noqa: F401
-from cucumber_agent.providers import openrouter  # noqa: F401
+from cucumber_agent.providers import (
+    minimax,  # noqa: F401
+    openrouter,  # noqa: F401
+)
+from cucumber_agent.session import Message, Role, Session
 
 if TYPE_CHECKING:
-    from cucumber_agent.config import AgentConfig
+    pass
+
+
+def estimate_tokens(text: str) -> int:
+    """Rough estimate of tokens (1 token ≈ 4 chars)."""
+    return len(text) // 4
+
+
+def trim_messages(
+    messages: list[Message],
+    max_tokens: int,
+    system_prompt_tokens: int,
+) -> list[Message]:
+    """Trim messages to fit within token budget."""
+    budget = max_tokens - system_prompt_tokens - 200  # buffer
+
+    if budget <= 0:
+        return []
+
+    # Calculate current tokens
+    current_tokens = sum(estimate_tokens(str(m.content)) for m in messages)
+
+    if current_tokens <= budget:
+        return messages
+
+    # Keep last N messages if remember_last is set
+    # Start from the end and work backwards
+    trimmed: list[Message] = []
+    for msg in reversed(messages):
+        msg_tokens = estimate_tokens(str(msg.content))
+        if current_tokens + msg_tokens <= budget:
+            trimmed.insert(0, msg)
+            current_tokens += msg_tokens
+        else:
+            break
+
+    return trimmed
 
 
 class Agent:
@@ -26,10 +64,12 @@ class Agent:
     def __init__(
         self,
         provider: BaseProvider,
-        config: AgentConfig,
+        config: Config,
     ):
         self._provider = provider
         self._config = config
+        self._context_config = config.context
+        self._agent_config = config.agent
 
     @classmethod
     def from_config(cls, config: Config | None = None) -> Agent:
@@ -62,28 +102,20 @@ class Agent:
                 kwargs["api_key"] = os.environ[env_var]
 
         provider = ProviderRegistry.get(provider_name, **kwargs)
-        return cls(provider=provider, config=config.agent)
+        return cls(provider=provider, config=config)
 
     async def run(self, session: Session, user_input: str) -> str:
-        """
-        Process user input and return the response text.
-        Handles tool calls automatically.
-        """
-        # Add user message
+        """Process user input and return the response text."""
         session.add_user_message(user_input)
-
-        # Build messages for provider
         messages = self._build_messages(session)
 
-        # Call provider
         response = await self._provider.complete(
             messages=messages,
-            model=self._config.model,
-            temperature=self._config.temperature,
-            max_tokens=self._config.max_tokens,
+            model=self._agent_config.model,
+            temperature=self._agent_config.temperature,
+            max_tokens=self._agent_config.max_tokens,
         )
 
-        # Add assistant response to session
         session.add_assistant_message(response.content)
         return response.content
 
@@ -96,35 +128,48 @@ class Agent:
         session.add_user_message(user_input)
         messages = self._build_messages(session)
 
-        # Stream and yield chunks - stream() returns AsyncIterator (not coroutine)
         full_response = ""
         stream_iter = self._provider.stream(
             messages=messages,
-            model=self._config.model,
-            temperature=self._config.temperature,
-            max_tokens=self._config.max_tokens,
+            model=self._agent_config.model,
+            temperature=self._agent_config.temperature,
+            max_tokens=self._agent_config.max_tokens,
         )
         async for chunk in stream_iter:
             full_response += chunk
             yield chunk
 
-        # Store final response
         session.add_assistant_message(full_response)
 
     def _build_messages(self, session: Session) -> list[Message]:
-        """Build the message list for the provider."""
+        """Build the message list for the provider with context trimming."""
         messages = []
 
         # Add system prompt
-        if self._config.system_prompt:
+        system_prompt = self._agent_config.system_prompt
+        if system_prompt:
             messages.append(
                 Message(
                     role=Role.SYSTEM,
-                    content=self._config.system_prompt,
+                    content=system_prompt,
                 )
             )
 
-        # Add conversation history
-        messages.extend(session.messages)
+        system_tokens = estimate_tokens(system_prompt)
+        max_tokens = self._context_config.max_tokens
+
+        # Get conversation history
+        history = session.messages
+
+        # Apply remember_last if set
+        remember_last = self._context_config.remember_last
+        if remember_last > 0 and len(history) > remember_last:
+            # Keep only last N messages
+            history = history[-remember_last:]
+
+        # Trim to fit token budget
+        if history:
+            trimmed_history = trim_messages(history, max_tokens, system_tokens)
+            messages.extend(trimmed_history)
 
         return messages

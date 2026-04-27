@@ -24,71 +24,146 @@ def print_banner() -> None:
     console.print()
 
 
-def ask_personality() -> dict:
-    """Ask about agent personality and user info."""
-    console.print("[bold]Let's set up your Agent's personality![/bold]\n")
+def ask_agent_name() -> str:
+    """Ask for agent's name."""
+    console.print("[bold]First, let's give your AI assistant a name![/bold]\n")
 
-    # Agent name
+    # Show suggestions
+    suggestions = ["Cucumber", "Herbert", "Buddy", "Assistant", "Max"]
+    console.print("[dim]Suggestions:[/dim] " + ", ".join(suggestions))
+    console.print()
+
     agent_name = Prompt.ask(
-        "What should I call you? (my name)",
+        "What's the AI assistant's name?",
         default="Cucumber",
     )
+    return agent_name.strip() or "Cucumber"
 
-    # User info
-    console.print("\n[bold]Tell me about yourself:[/bold]")
-    user_name = Prompt.ask("What's your name?", default="")
-    user_info = Prompt.ask("Anything else about you I should know?", default="")
 
-    # GitHub/portfolio
-    console.print("\n[bold]Online presence:[/bold]")
-    github_url = Prompt.ask(
-        "GitHub URL (or leave empty)",
+def ask_personality(agent_name: str) -> dict:
+    """Ask about personality and preferences."""
+    console.print(f"\n[bold]Now let's configure {agent_name}'s personality![/bold]\n")
+
+    personality = {}
+
+    # Tone - custom input allowed
+    console.print("[bold]Communication style:[/bold]")
+    console.print("[dim]   1.[/dim] casual")
+    console.print("[dim]   2.[/dim] friendly")
+    console.print("[dim]   3.[/dim] professional")
+    console.print("[dim]   4.[/dim] formal")
+    console.print("[dim]   5.[/dim] [bold]custom[/bold] (type your own)")
+
+    tone_choice = Prompt.ask(
+        "Choose a tone (or type custom)",
+        default="friendly",
+    )
+
+    # Check if it's a number choice
+    tone_map = {"1": "casual", "2": "friendly", "3": "professional", "4": "formal"}
+    if tone_choice in tone_map:
+        personality["tone"] = tone_map[tone_choice]
+    else:
+        personality["tone"] = tone_choice.strip() if tone_choice.strip() else "friendly"
+
+    console.print()
+
+    # Helper function for custom prompts
+    def custom_prompt(label: str, suggestion: str) -> str:
+        console.print(f"[dim]Suggestion:[/dim] {suggestion}")
+        result = Prompt.ask(label, default=suggestion)
+        return result.strip() if result.strip() else suggestion
+
+    # Greeting
+    default_greeting = f"Hi! I'm {agent_name}. How can I help you today?"
+    personality["greeting"] = custom_prompt("How should I greet users?", default_greeting)
+
+    # Strengths
+    default_strengths = "coding, web research, answering questions, problem-solving"
+    personality["strengths"] = custom_prompt(
+        "What are my strengths? (comma separated)", default_strengths
+    )
+
+    # Interests (optional)
+    console.print()
+    if Confirm.ask("Should I have specific interests or expertise?", default=True):
+        personality["interests"] = custom_prompt(
+            "What topics interest me?", "AI, technology, programming, open source"
+        )
+    else:
+        personality["interests"] = ""
+
+    return personality
+
+
+def ask_user_info(agent_name: str) -> dict:
+    """Ask about the user."""
+    console.print(f"\n[bold]Tell me about yourself (so {agent_name} can help better):[/bold]\n")
+
+    user_info = {}
+
+    user_name = Prompt.ask(
+        "What's your name?",
         default="",
     )
-    portfolio_url = Prompt.ask(
-        "Portfolio/Website URL (or leave empty)",
+    user_info["name"] = user_name.strip() if user_name.strip() else ""
+
+    user_bio = Prompt.ask(
+        "What should I know about you? (optional)",
         default="",
     )
+    user_info["bio"] = user_bio.strip() if user_bio.strip() else ""
 
-    # Behavior preferences
-    console.print("\n[bold]Behavior preferences:[/bold]")
-    can_search_web = Confirm.ask(
+    console.print()
+    console.print("[bold]Online presence (optional):[/bold]")
+
+    github = Prompt.ask(
+        "GitHub URL",
+        default="",
+    )
+    user_info["github"] = github.strip() if github.strip() else ""
+
+    portfolio = Prompt.ask(
+        "Portfolio/Website URL",
+        default="",
+    )
+    user_info["portfolio"] = portfolio.strip() if portfolio.strip() else ""
+
+    return user_info
+
+
+def ask_preferences() -> dict:
+    """Ask about agent behavior."""
+    console.print("\n[bold]Behavior preferences:[/bold]\n")
+
+    preferences = {}
+
+    preferences["can_search_web"] = Confirm.ask(
         "Should I search the web when needed?",
         default=True,
     )
-    can_code = Confirm.ask(
+
+    preferences["can_code"] = Confirm.ask(
         "Should I help with coding tasks?",
         default=True,
     )
 
-    # Tone
-    console.print("\n[bold]Communication style:[/bold]")
-    tone_options = ["casual", "formal", "friendly", "professional"]
-    tone = Prompt.ask(
-        "How should I communicate?",
-        choices=tone_options,
-        default="friendly",
+    preferences["can_remember"] = Confirm.ask(
+        "Should I remember things between conversations?",
+        default=True,
     )
 
-    return {
-        "agent_name": agent_name,
-        "user_name": user_name,
-        "user_info": user_info,
-        "github_url": github_url,
-        "portfolio_url": portfolio_url,
-        "can_search_web": can_search_web,
-        "can_code": can_code,
-        "tone": tone,
-    }
+    return preferences
 
 
 def select_provider() -> tuple:
     """Select a provider."""
-    console.print("[bold]1.[/bold] MiniMax (fast, cheap)")
-    console.print("[bold]2.[/bold] OpenRouter (hundreds of models)")
-    console.print("[bold]3.[/bold] DeepSeek (direct API)")
-    console.print("[bold]4.[/bold] NVIDIA NIM (40 req/min free)")
-    console.print("[bold]5.[/bold] LM Studio (local)")
+    console.print("\n[bold]Choose your AI provider:[/bold]")
+    console.print("[dim]1.[/dim] MiniMax (fast, cheap)")
+    console.print("[dim]2.[/dim] OpenRouter (many models)")
+    console.print("[dim]3.[/dim] DeepSeek (direct API)")
+    console.print("[dim]4.[/dim] NVIDIA NIM (40 req/min free)")
+    console.print("[dim]5.[/dim] LM Studio (local)")
     console.print()
 
     choice = Prompt.ask(
@@ -163,66 +238,88 @@ def select_model(provider_name: str, display_name: str) -> str:
 
     console.print(f"\n[bold]Available {display_name} models:[/bold]")
     for i, (model_id, desc) in enumerate(options, 1):
-        console.print(f"  [bold]{i}.[/bold] {desc} [dim]({model_id})[/dim]")
+        console.print(f"  [dim]{i}.[/dim] {desc} [dim]({model_id})[/dim]")
 
     choice = Prompt.ask(
-        "\nSelect model", choices=[str(i) for i in range(1, len(options) + 1)], default="1"
+        "Select model",
+        choices=[str(i) for i in range(1, len(options) + 1)],
+        default="1",
     )
     return options[int(choice) - 1][0]
 
 
-def build_system_prompt(personality: dict) -> str:
-    """Build the system prompt from personality settings."""
-    agent_name = personality["agent_name"]
-    user_name = personality.get("user_name", "") or "my friend"
+def build_system_prompt(
+    agent_name: str, personality: dict, user_info: dict, preferences: dict
+) -> str:
+    """Build the system prompt from all collected info."""
+    parts = []
+
+    # Core identity
+    parts.append(f"My name is {agent_name}.")
+
+    # Tone
     tone = personality.get("tone", "friendly")
-
-    # Tone modifiers
-    tone_intro = {
-        "casual": "Be casual and relaxed.",
-        "formal": "Be formal and professional.",
-        "friendly": "Be warm and friendly.",
-        "professional": "Be professional and concise.",
+    tone_desc = {
+        "casual": "I'm casual and relaxed in my communication.",
+        "friendly": "I'm warm and friendly in my communication.",
+        "professional": "I'm professional and concise in my communication.",
+        "formal": "I'm formal and respectful in my communication.",
     }
+    parts.append(tone_desc.get(tone, f"I communicate in a {tone} manner."))
 
-    parts = [
-        f"My name is {agent_name}.",
-        tone_intro.get(tone, "Be friendly."),
-    ]
+    # Greeting
+    if personality.get("greeting"):
+        parts.append(f'My typical greeting is: "{personality["greeting"]}"')
 
-    if user_name:
-        parts.append(f"My human's name is {user_name}.")
+    # Strengths
+    if personality.get("strengths"):
+        parts.append(f"My strengths include: {personality['strengths']}.")
 
-    user_info = personality.get("user_info", "")
-    if user_info:
-        parts.append(f"About my human: {user_info}")
+    # Interests
+    if personality.get("interests"):
+        parts.append(f"I'm particularly interested in: {personality['interests']}.")
 
-    if personality.get("github_url"):
-        parts.append(f"My human's GitHub: {personality['github_url']}")
+    # User info
+    if user_info.get("name"):
+        parts.append(f"My human's name is {user_info['name']}.")
 
-    if personality.get("portfolio_url"):
-        parts.append(f"My human's portfolio: {personality['portfolio_url']}")
+    if user_info.get("bio"):
+        parts.append(f"About my human: {user_info['bio']}")
 
-    if personality.get("can_search_web"):
-        parts.append("I can search the web when needed to help my human.")
+    if user_info.get("github"):
+        parts.append(f"My human's GitHub: {user_info['github']}")
 
-    if personality.get("can_code"):
+    if user_info.get("portfolio"):
+        parts.append(f"My human's portfolio: {user_info['portfolio']}")
+
+    # Behavior
+    if preferences.get("can_search_web"):
+        parts.append("I can and should search the web when needed to help my human.")
+
+    if preferences.get("can_code"):
         parts.append("I help with coding tasks when asked.")
 
+    if preferences.get("can_remember"):
+        parts.append("I can remember context from our conversation to provide better help.")
+
+    # Always
     parts.append("I'm here to help my human with whatever they need!")
 
     return " ".join(parts)
 
 
 def create_config(
+    agent_name: str,
     provider_name: str,
     base_url: str | None,
     api_key: str | None,
     model: str,
     personality: dict,
+    user_info: dict,
+    preferences: dict,
 ) -> dict:
     """Create the configuration dictionary."""
-    system_prompt = build_system_prompt(personality)
+    system_prompt = build_system_prompt(agent_name, personality, user_info, preferences)
 
     config = {
         "agent": {
@@ -239,7 +336,16 @@ def create_config(
                 "model": model,
             }
         },
-        "personality": personality,
+        "personality": {
+            "name": agent_name,
+            **personality,
+        },
+        "user": user_info,
+        "preferences": preferences,
+        "context": {
+            "max_tokens": 8000,
+            "remember_last": 10,
+        },
     }
 
     # Ask for workspace
@@ -266,27 +372,35 @@ def run() -> None:
             console.print("[dim]Keeping existing config. Run 'cucumber run' to start.[/dim]")
             return
 
-    # Ask personality first
-    personality = ask_personality()
+    # Step 1: Agent name
+    agent_name = ask_agent_name()
 
-    # Select provider
+    # Step 2: Personality
+    personality = ask_personality(agent_name)
+
+    # Step 3: User info
+    user_info = ask_user_info(agent_name)
+
+    # Step 4: Preferences
+    preferences = ask_preferences()
+
+    # Step 5: Provider
     console.print()
     provider_name, display_name, base_url = select_provider()
 
-    # Get API key
+    # Step 6: API key
     api_key = get_api_key(provider_name, display_name)
     if api_key is None and provider_name != "lmstudio":
-        console.print(
-            "[yellow]No API key provided. You can set it in config later or use environment variables.[/yellow]"
-        )
+        console.print("[yellow]No API key provided. You can set it in config later.[/yellow]")
 
-    # Select model
+    # Step 7: Model
     model = select_model(provider_name, display_name)
 
-    # Create config
-    config = create_config(provider_name, base_url, api_key, model, personality)
+    # Step 8: Create and save config
+    config = create_config(
+        agent_name, provider_name, base_url, api_key, model, personality, user_info, preferences
+    )
 
-    # Save
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     with open(CONFIG_FILE, "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
@@ -294,9 +408,10 @@ def run() -> None:
     console.print()
     console.print(
         Panel.fit(
-            "[bold green]✅ Setup complete![/bold green]\n\n"
+            f"[bold green]✅ Setup complete![/bold green]\n\n"
+            f"Hello! I'm {agent_name}!\n\n"
             f"Config saved to [dim]{CONFIG_FILE}[/dim]\n\n"
-            f"Hello! I'm {personality['agent_name']}! Let's get started!",
+            "Run [bold]cucumber run[/bold] to start chatting!",
             border_style="green",
         )
     )

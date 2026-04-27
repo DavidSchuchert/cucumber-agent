@@ -24,6 +24,44 @@ class ProviderConfig:
 
 
 @dataclass
+class PersonalityConfig:
+    """Agent personality configuration."""
+
+    name: str = "Cucumber"
+    tone: str = "friendly"
+    greeting: str = ""
+    strengths: str = ""
+    interests: str = ""
+
+
+@dataclass
+class UserConfig:
+    """User information."""
+
+    name: str = ""
+    bio: str = ""
+    github: str = ""
+    portfolio: str = ""
+
+
+@dataclass
+class PreferencesConfig:
+    """Agent behavior preferences."""
+
+    can_search_web: bool = True
+    can_code: bool = True
+    can_remember: bool = True
+
+
+@dataclass
+class ContextConfig:
+    """Context/memory settings."""
+
+    max_tokens: int = 8000
+    remember_last: int = 10
+
+
+@dataclass
 class AgentConfig:
     """Main agent configuration."""
 
@@ -41,6 +79,10 @@ class Config:
     config_dir: Path = field(default_factory=lambda: DEFAULT_CONFIG_DIR)
     providers: dict[str, ProviderConfig] = field(default_factory=dict)
     agent: AgentConfig = field(default_factory=AgentConfig)
+    personality: PersonalityConfig = field(default_factory=PersonalityConfig)
+    user: UserConfig = field(default_factory=UserConfig)
+    preferences: PreferencesConfig = field(default_factory=PreferencesConfig)
+    context: ContextConfig = field(default_factory=ContextConfig)
     workspace: Path | None = None
 
     @classmethod
@@ -55,6 +97,7 @@ class Config:
         with open(config_file) as f:
             data = yaml.safe_load(f) or {}
 
+        # Load providers
         providers = {}
         for name, pdata in data.get("providers", {}).items():
             if isinstance(pdata, dict):
@@ -66,6 +109,7 @@ class Config:
                     extra=pdata.get("extra", {}),
                 )
 
+        # Load agent config
         agent_data = data.get("agent", {})
         agent = AgentConfig(
             provider=agent_data.get("provider", "openrouter"),
@@ -78,6 +122,41 @@ class Config:
             ),
         )
 
+        # Load personality
+        pers_data = data.get("personality", {})
+        personality = PersonalityConfig(
+            name=pers_data.get("name", "Cucumber"),
+            tone=pers_data.get("tone", "friendly"),
+            greeting=pers_data.get("greeting", ""),
+            strengths=pers_data.get("strengths", ""),
+            interests=pers_data.get("interests", ""),
+        )
+
+        # Load user info
+        user_data = data.get("user", {})
+        user = UserConfig(
+            name=user_data.get("name", ""),
+            bio=user_data.get("bio", ""),
+            github=user_data.get("github", ""),
+            portfolio=user_data.get("portfolio", ""),
+        )
+
+        # Load preferences
+        pref_data = data.get("preferences", {})
+        preferences = PreferencesConfig(
+            can_search_web=pref_data.get("can_search_web", True),
+            can_code=pref_data.get("can_code", True),
+            can_remember=pref_data.get("can_remember", True),
+        )
+
+        # Load context
+        ctx_data = data.get("context", {})
+        context = ContextConfig(
+            max_tokens=ctx_data.get("max_tokens", 8000),
+            remember_last=ctx_data.get("remember_last", 10),
+        )
+
+        # Load workspace
         workspace = data.get("workspace")
         if workspace:
             workspace = Path(workspace)
@@ -86,6 +165,10 @@ class Config:
             config_dir=config_dir,
             providers=providers,
             agent=agent,
+            personality=personality,
+            user=user,
+            preferences=preferences,
+            context=context,
             workspace=workspace,
         )
 
@@ -110,6 +193,28 @@ class Config:
                     "extra": p.extra,
                 }
                 for name, p in self.providers.items()
+            },
+            "personality": {
+                "name": self.personality.name,
+                "tone": self.personality.tone,
+                "greeting": self.personality.greeting,
+                "strengths": self.personality.strengths,
+                "interests": self.personality.interests,
+            },
+            "user": {
+                "name": self.user.name,
+                "bio": self.user.bio,
+                "github": self.user.github,
+                "portfolio": self.user.portfolio,
+            },
+            "preferences": {
+                "can_search_web": self.preferences.can_search_web,
+                "can_code": self.preferences.can_code,
+                "can_remember": self.preferences.can_remember,
+            },
+            "context": {
+                "max_tokens": self.context.max_tokens,
+                "remember_last": self.context.remember_last,
             },
         }
 
