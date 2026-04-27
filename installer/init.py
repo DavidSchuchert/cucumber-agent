@@ -46,6 +46,25 @@ def ask_personality(agent_name: str) -> dict:
 
     personality = {}
 
+    # Language - NEW
+    console.print("[bold]Language:[/bold]")
+    console.print("[dim]   1.[/dim] English")
+    console.print("[dim]   2.[/dim] German (Deutsch)")
+    console.print("[dim]   3.[/dim] Other (specify)")
+
+    lang_choice = Prompt.ask(
+        "Which language should I speak?",
+        default="1",
+    )
+
+    lang_map = {"1": "en", "2": "de"}
+    if lang_choice in lang_map:
+        personality["language"] = lang_map[lang_choice]
+    else:
+        personality["language"] = "en"
+
+    console.print()
+
     # Tone - custom input allowed
     console.print("[bold]Communication style:[/bold]")
     console.print("[dim]   1.[/dim] casual")
@@ -253,6 +272,12 @@ def build_system_prompt(
 ) -> str:
     """Build the system prompt from all collected info."""
     parts = []
+
+    # Language instruction - CRITICAL
+    lang = personality.get("language", "en")
+    lang_map = {"en": "English", "de": "German"}
+    language_name = lang_map.get(lang, lang)
+    parts.append(f"I ALWAYS communicate in {language_name}. ALL my responses must be in {language_name}.")
 
     # Core identity
     parts.append(f"My name is {agent_name}.")

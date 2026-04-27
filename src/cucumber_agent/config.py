@@ -29,6 +29,7 @@ class PersonalityConfig:
 
     name: str = "Cucumber"
     tone: str = "friendly"
+    language: str = "en"
     greeting: str = ""
     strengths: str = ""
     interests: str = ""
@@ -127,6 +128,7 @@ class Config:
         personality = PersonalityConfig(
             name=pers_data.get("name", "Cucumber"),
             tone=pers_data.get("tone", "friendly"),
+            language=pers_data.get("language", "en"),
             greeting=pers_data.get("greeting", ""),
             strengths=pers_data.get("strengths", ""),
             interests=pers_data.get("interests", ""),
@@ -197,6 +199,7 @@ class Config:
             "personality": {
                 "name": self.personality.name,
                 "tone": self.personality.tone,
+                "language": self.personality.language,
                 "greeting": self.personality.greeting,
                 "strengths": self.personality.strengths,
                 "interests": self.personality.interests,
