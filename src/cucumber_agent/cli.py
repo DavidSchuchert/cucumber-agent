@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from collections.abc import AsyncIterator
 
 from rich.console import Console
@@ -148,8 +149,60 @@ async def run_cli() -> None:
     await session.run()
 
 
+def run_init() -> None:
+    """Run the setup wizard."""
+    # Find the installer script relative to the package
+    import os
+    import subprocess
+
+    # Try to find installer from various locations
+    possible_paths = [
+        os.path.join(os.path.dirname(__file__), "..", "..", "installer", "init.py"),
+        os.path.join(os.path.dirname(__file__), "..", "..", "installer", "init.py"),
+    ]
+
+    installer_path = None
+    for path in possible_paths:
+        expanded = os.path.expanduser(path)
+        resolved = os.path.normpath(expanded)
+        if os.path.exists(resolved):
+            installer_path = resolved
+            break
+
+    if installer_path and os.path.exists(installer_path):
+        result = subprocess.run([sys.executable, installer_path])
+        sys.exit(result.returncode)
+    else:
+        console.print("[bold red]Error:[/bold red] Could not find installer. Run from project directory.")
+        sys.exit(1)
+
+
+async def run_config_cmd() -> None:
+    """Show configuration."""
+    config = Config.load()
+    print_config(config)
+
+
 def main() -> None:
     """Main entry point."""
+    # Handle subcommands
+    if len(sys.argv) > 1:
+        cmd = sys.argv[1]
+        if cmd == "init":
+            run_init()
+            return
+        elif cmd == "config":
+            asyncio.run(run_config_cmd())
+            return
+        elif cmd in ("--help", "-h"):
+            console.print("[bold]CucumberAgent CLI[/bold]\n")
+            console.print("Commands:")
+            console.print("  [cyan]cucumber run[/cyan]     Start chat session")
+            console.print("  [cyan]cucumber init[/cyan]    Run setup wizard")
+            console.print("  [cyan]cucumber config[/cyan]  Show configuration")
+            console.print("  [cyan]cucumber --help[/cyan]  Show this help")
+            return
+
     try:
         asyncio.run(run_cli())
     except KeyboardInterrupt:
