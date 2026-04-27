@@ -174,8 +174,8 @@ class CliSession:
 
             console.print()  # newline after streaming
 
-            # After first greeting, offer optimization as SEPARATE prompt
-            if offer_optimization and self._agent.build_optimization_response(user_input) == "":
+            # After first greeting, offer optimization
+            if offer_optimization:
                 pers = self._config.personality
                 console.print("\n[bold cyan]──────[/bold cyan]")
                 console.print(f"[bold]{pers.emoji} Möchtest du, dass ich meine Persönlichkeit optimiere?[/bold]")
@@ -258,8 +258,6 @@ Wenn nichts besser ist, antworte nur "KEINE_VERBESSERUNG". Keine Erklärung, kei
                 print_config(self._config)
             case "/model":
                 console.print(f"Model: {self._config.agent.model}")
-            case "/optimize":
-                await self._run_optimization()
             case "/debug":
                 self._debug_mode = not self._debug_mode
                 if self._debug_mode:
@@ -269,22 +267,6 @@ Wenn nichts besser ist, antworte nur "KEINE_VERBESSERUNG". Keine Erklärung, kei
                     console.print("[dim]Debug mode OFF[/dim]")
             case _:
                 console.print(f"[dim]Unknown command: {cmd}[/dim]. Type /help for help.")
-
-    async def _run_optimization(self) -> None:
-        """Run optimization manually."""
-        from cucumber_agent.agent import suggest_optimization
-
-        pers = self._config.personality
-        suggestions = suggest_optimization(pers.name, pers.tone, pers.greeting)
-
-        console.print(f'\n[bold]✨ Optimizing for "{pers.name}"...[/bold]\n')
-        console.print(f"  Emoji: {suggestions['emoji']}")
-        console.print(f"  Greeting: {suggestions['greeting']}")
-        console.print(f"  Strengths: {suggestions['strengths']}\n")
-
-        self._agent.apply_optimization()
-        console.print("[green]✅ Personality optimized![/green]\n")
-        console.print("[dim]Restart: Ctrl+C then 'cucumber run'[/dim]\n")
 
     def _print_debug_info(self) -> None:
         """Print debug information."""
