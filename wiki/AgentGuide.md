@@ -30,9 +30,17 @@ You are CucumberAgent. Your personality and identity live in `~/.cucumber/person
 
 Personality is loaded from `~/.cucumber/personality/personality.md`. Edit that file to change:
 - `name` — your name
+- `emoji` — your avatar emoji
 - `tone` — communication style
 - `language` — response language
 - `greeting`, `strengths`, `interests`
+
+### Self-Optimization
+
+On first greeting, the agent offers to optimize its own personality. The AI analyzes its name and suggests better emoji/greeting/strengths. This is handled by:
+- `cli.py` → `_handle_optimization_response()` - manages the offer flow
+- `cli.py` → `parse_personality_update()` - parses `PERSONALITY_UPDATE:...` from AI
+- `cli.py` → `apply_personality_update()` - applies changes to personality.md
 
 ## Key Code Locations
 
@@ -49,7 +57,7 @@ Personality is loaded from `~/.cucumber/personality/personality.md`. Edit that f
 
 ## Debugging Tips
 
-1. **Run with DEBUG**: `DEBUG=1 cucumber run`
+1. **Use /debug**: Type `/debug` in the REPL to see session state
 2. **Check config**: `cucumber config`
 3. **View personality file**: `cat ~/.cucumber/personality/personality.md`
 4. **Test config loading**: `uv run python -c "from cucumber_agent.config import Config; c = Config.load(); print(c.agent.provider)"`

@@ -82,9 +82,21 @@ Inside the interactive session:
 
 | Command | Description |
 |---------|-------------|
-| `exit` or `quit` | End session |
+| `/help` | Show available commands |
+| `/exit` | Exit CucumberAgent |
+| `/clear` | Clear the conversation |
+| `/config` | Show current configuration |
+| `/model` | Show current model |
+| `/debug` | Toggle debug view |
 | `Ctrl+C` | Cancel current response |
 | `Ctrl+D` | Exit |
+
+### Output Formatting
+
+AI responses are automatically formatted:
+- **Markdown** rendered with proper styling
+- **Code blocks** shown with syntax highlighting (monokai theme) and line numbers
+- **Inline code** styled distinctly
 
 ## Exit Codes
 
