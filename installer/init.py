@@ -267,6 +267,31 @@ def select_model(provider_name: str, display_name: str) -> str:
     return options[int(choice) - 1][0]
 
 
+def create_personality_file(
+    agent_name: str,
+    personality: dict,
+) -> None:
+    """Create personality.md file."""
+    from pathlib import Path
+
+    personality_dir = Path.home() / ".cucumber" / "personality"
+    personality_dir.mkdir(parents=True, exist_ok=True)
+
+    lines = [
+        "# Personality",
+        f"name: {agent_name}",
+        f"tone: {personality.get('tone', 'friendly')}",
+        f"language: {personality.get('language', 'en')}",
+        f"greeting: {personality.get('greeting', '')}",
+        f"strengths: {personality.get('strengths', '')}",
+        f"interests: {personality.get('interests', '')}",
+        "",
+    ]
+
+    personality_file = personality_dir / "personality.md"
+    personality_file.write_text("\n".join(lines))
+
+
 def build_system_prompt(
     agent_name: str, personality: dict, user_info: dict, preferences: dict
 ) -> str:
@@ -333,6 +358,26 @@ def build_system_prompt(
     return " ".join(parts)
 
 
+def create_user_file(user_info: dict) -> None:
+    """Create user.md file."""
+    from pathlib import Path
+
+    user_dir = Path.home() / ".cucumber" / "user"
+    user_dir.mkdir(parents=True, exist_ok=True)
+
+    lines = [
+        "# User",
+        f"name: {user_info.get('name', '')}",
+        f"bio: {user_info.get('bio', '')}",
+        f"github: {user_info.get('github', '')}",
+        f"portfolio: {user_info.get('portfolio', '')}",
+        "",
+    ]
+
+    user_file = user_dir / "user.md"
+    user_file.write_text("\n".join(lines))
+
+
 def create_config(
     agent_name: str,
     provider_name: str,
@@ -344,6 +389,7 @@ def create_config(
     preferences: dict,
 ) -> dict:
     """Create the configuration dictionary."""
+    # Build system prompt from personality
     system_prompt = build_system_prompt(agent_name, personality, user_info, preferences)
 
     config = {
@@ -361,11 +407,8 @@ def create_config(
                 "model": model,
             }
         },
-        "personality": {
-            "name": agent_name,
-            **personality,
-        },
-        "user": user_info,
+        # Personality now in ~/.cucumber/personality/personality.md
+        # User info now in ~/.cucumber/user/user.md
         "preferences": preferences,
         "context": {
             "max_tokens": 8000,
@@ -429,6 +472,10 @@ def run() -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     with open(CONFIG_FILE, "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+
+    # Step 9: Create personality.md and user.md
+    create_personality_file(agent_name, personality)
+    create_user_file(user_info)
 
     console.print()
     console.print(

@@ -34,6 +34,88 @@ class PersonalityConfig:
     strengths: str = ""
     interests: str = ""
 
+    @classmethod
+    def from_markdown(cls, path: Path) -> PersonalityConfig:
+        """Load from personality.md file."""
+        if not path.exists():
+            return cls()
+
+        content = path.read_text()
+        data = cls._parse_md_dict(content)
+        return cls(
+            name=data.get("name", "Cucumber"),
+            tone=data.get("tone", "friendly"),
+            language=data.get("language", "en"),
+            greeting=data.get("greeting", ""),
+            strengths=data.get("strengths", ""),
+            interests=data.get("interests", ""),
+        )
+
+    @staticmethod
+    def _parse_md_dict(content: str) -> dict[str, str]:
+        """Parse markdown key: value pairs."""
+        result: dict[str, str] = {}
+        for line in content.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if ": " in line:
+                key, value = line.split(": ", 1)
+                result[key.strip()] = value.strip()
+            elif ":" in line:
+                key, value = line.split(":", 1)
+                result[key.strip()] = value.strip()
+        return result
+
+    def to_markdown(self, path: Path) -> None:
+        """Save to personality.md file."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lines = [
+            "# Personality",
+            f"name: {self.name}",
+            f"tone: {self.tone}",
+            f"language: {self.language}",
+            f"greeting: {self.greeting}",
+            f"strengths: {self.strengths}",
+            f"interests: {self.interests}",
+            "",
+        ]
+        path.write_text("\n".join(lines))
+
+    def to_system_prompt(self) -> str:
+        """Build system prompt from personality."""
+        parts = []
+
+        lang = self.language or "en"
+        lang_map = {"en": "English", "de": "German"}
+        language_name = lang_map.get(lang, lang)
+        parts.append(
+            f"I ALWAYS communicate in {language_name}. ALL my responses must be in {language_name}."
+        )
+
+        parts.append(f"My name is {self.name}.")
+
+        tone_desc = {
+            "casual": "I'm casual and relaxed in my communication.",
+            "friendly": "I'm warm and friendly in my communication.",
+            "professional": "I'm professional and concise in my communication.",
+            "formal": "I'm formal and respectful in my communication.",
+        }
+        parts.append(tone_desc.get(self.tone, f"I communicate in a {self.tone} manner."))
+
+        if self.greeting:
+            parts.append(f'My typical greeting is: "{self.greeting}"')
+
+        if self.strengths:
+            parts.append(f"My strengths include: {self.strengths}.")
+
+        if self.interests:
+            parts.append(f"I'm particularly interested in: {self.interests}.")
+
+        parts.append("I'm here to help my human with whatever they need!")
+
+        return " ".join(parts)
+
 
 @dataclass
 class UserConfig:
@@ -123,25 +205,30 @@ class Config:
             ),
         )
 
-        # Load personality
-        pers_data = data.get("personality", {})
-        personality = PersonalityConfig(
-            name=pers_data.get("name", "Cucumber"),
-            tone=pers_data.get("tone", "friendly"),
-            language=pers_data.get("language", "en"),
-            greeting=pers_data.get("greeting", ""),
-            strengths=pers_data.get("strengths", ""),
-            interests=pers_data.get("interests", ""),
+        # Load personality from personality.md (new structured approach)
+        personality = PersonalityConfig.from_markdown(
+            config_dir / "personality" / "personality.md"
         )
 
-        # Load user info
-        user_data = data.get("user", {})
-        user = UserConfig(
-            name=user_data.get("name", ""),
-            bio=user_data.get("bio", ""),
-            github=user_data.get("github", ""),
-            portfolio=user_data.get("portfolio", ""),
-        )
+        # Load user info from user.md (new structured approach)
+        user_md = config_dir / "user" / "user.md"
+        if user_md.exists():
+            user_data = PersonalityConfig._parse_md_dict(user_md.read_text())
+            user = UserConfig(
+                name=user_data.get("name", ""),
+                bio=user_data.get("bio", ""),
+                github=user_data.get("github", ""),
+                portfolio=user_data.get("portfolio", ""),
+            )
+        else:
+            # Fallback to YAML for backwards compatibility
+            user_data = data.get("user", {})
+            user = UserConfig(
+                name=user_data.get("name", ""),
+                bio=user_data.get("bio", ""),
+                github=user_data.get("github", ""),
+                portfolio=user_data.get("portfolio", ""),
+            )
 
         # Load preferences
         pref_data = data.get("preferences", {})
@@ -179,13 +266,29 @@ class Config:
         self.config_dir.mkdir(parents=True, exist_ok=True)
         config_file = self.config_dir / "config.yaml"
 
+        # Save personality to personality.md
+        self.personality.to_markdown(self.config_dir / "personality" / "personality.md")
+
+        # Save user to user.md
+        user_md = self.config_dir / "user" / "user.md"
+        user_md.parent.mkdir(parents=True, exist_ok=True)
+        user_lines = [
+            "# User",
+            f"name: {self.user.name}",
+            f"bio: {self.user.bio}",
+            f"github: {self.user.github}",
+            f"portfolio: {self.user.portfolio}",
+            "",
+        ]
+        user_md.write_text("\n".join(user_lines))
+
         data = {
             "agent": {
                 "provider": self.agent.provider,
                 "model": self.agent.model,
                 "temperature": self.agent.temperature,
                 "max_tokens": self.agent.max_tokens,
-                "system_prompt": self.agent.system_prompt,
+                "system_prompt": self.personality.to_system_prompt(),
             },
             "providers": {
                 name: {
@@ -196,20 +299,8 @@ class Config:
                 }
                 for name, p in self.providers.items()
             },
-            "personality": {
-                "name": self.personality.name,
-                "tone": self.personality.tone,
-                "language": self.personality.language,
-                "greeting": self.personality.greeting,
-                "strengths": self.personality.strengths,
-                "interests": self.personality.interests,
-            },
-            "user": {
-                "name": self.user.name,
-                "bio": self.user.bio,
-                "github": self.user.github,
-                "portfolio": self.user.portfolio,
-            },
+            # personality now in ~/.cucumber/personality/personality.md
+            # user now in ~/.cucumber/user/user.md
             "preferences": {
                 "can_search_web": self.preferences.can_search_web,
                 "can_code": self.preferences.can_code,
