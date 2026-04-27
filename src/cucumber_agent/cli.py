@@ -6,6 +6,7 @@ import asyncio
 import re
 import sys
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 from rich.console import Console
 from rich.markdown import Markdown
@@ -53,6 +54,7 @@ def print_help() -> None:
 | `/config` | Show current configuration |
 | `/model` | Show current model |
 | `/optimize` | Optimize personality based on name |
+| `/debug` | Toggle debug view |
 
 Just type normally to chat!
 """
@@ -81,6 +83,7 @@ class CliSession:
         self._session = Session(id="main", model=config.agent.model)
         self._running = False
         self._waiting_for_optimization_response = False
+        self._debug_mode = False
 
     async def run(self) -> None:
         """Run the REPL."""
@@ -95,7 +98,10 @@ class CliSession:
         while self._running:
             try:
                 user_input = await asyncio.to_thread(
-                    lambda: console.input("[bold green]cucumber> [/bold green]")
+                    lambda: console.input(
+                        "[bold green]cucumber> [/bold green]" if not self._debug_mode
+                        else "[bold red]cucumber [DEBUG]> [/bold red]"
+                    )
                 )
                 await self._handle_input(user_input)
             except KeyboardInterrupt:
@@ -184,6 +190,13 @@ class CliSession:
                 console.print(f"Model: {self._config.agent.model}")
             case "/optimize":
                 await self._run_optimization()
+            case "/debug":
+                self._debug_mode = not self._debug_mode
+                if self._debug_mode:
+                    console.print("[red]🔧 Debug mode ON[/red]")
+                    self._print_debug_info()
+                else:
+                    console.print("[dim]Debug mode OFF[/dim]")
             case _:
                 console.print(f"[dim]Unknown command: {cmd}[/dim]. Type /help for help.")
 
@@ -203,6 +216,29 @@ class CliSession:
         console.print("[green]✅ Personality optimized![/green]\n")
         console.print("[dim]Restart: Ctrl+C then 'cucumber run'[/dim]\n")
 
+    def _print_debug_info(self) -> None:
+        """Print debug information."""
+        pers = self._config.personality
+        ctx = self._config.context
+        agent = self._config.agent
+
+        console.print("\n[bold]🔧 Debug Info[/bold]")
+        console.print("  Personality:")
+        console.print(f"    name: {pers.name}")
+        console.print(f"    emoji: {pers.emoji}")
+        console.print(f"    tone: {pers.tone}")
+        console.print(f"    language: {pers.language}")
+        console.print(f"    greeting: {pers.greeting[:50] if pers.greeting else 'none'}...")
+        console.print("  Agent:")
+        console.print(f"    provider: {agent.provider}")
+        console.print(f"    model: {agent.model}")
+        console.print(f"    temperature: {agent.temperature}")
+        console.print("  Context:")
+        console.print(f"    max_tokens: {ctx.max_tokens}")
+        console.print(f"    remember_last: {ctx.remember_last}")
+        console.print(f"  Session messages: {len(self._session.messages)}")
+        console.print()
+
 
 async def run_cli() -> None:
     """Run the CLI session."""
@@ -214,13 +250,10 @@ async def run_cli() -> None:
 
 def run_init() -> None:
     """Run the setup wizard."""
-    # Find the installer script relative to the package
     import os
     import subprocess
 
-    # Try to find installer from various locations
     possible_paths = [
-        os.path.join(os.path.dirname(__file__), "..", "..", "installer", "init.py"),
         os.path.join(os.path.dirname(__file__), "..", "..", "installer", "init.py"),
     ]
 
@@ -240,6 +273,39 @@ def run_init() -> None:
         sys.exit(1)
 
 
+def run_update() -> None:
+    """Update CucumberAgent from GitHub."""
+    import subprocess
+
+    install_dir = Path.home() / ".cucumber-agent"
+
+    console.print("[bold]🔄 Updating CucumberAgent...[/bold]\n")
+
+    if not install_dir.exists():
+        console.print("[red]ERROR:[/red] Installation not found at ~/.cucumber-agent")
+        console.print("Run the installer first: curl ... | sh")
+        sys.exit(1)
+
+    try:
+        console.print("→ Pulling latest from GitHub...")
+        result = subprocess.run(
+            ["git", "pull", "origin", "main"],
+            cwd=install_dir,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            console.print("→ Reinstalling package...")
+            subprocess.run(["uv", "tool", "install", "-e", "."], cwd=install_dir)
+            console.print("\n[green]✅ Update complete![/green]\n")
+        else:
+            console.print(f"[red]Git pull failed:[/red] {result.stderr}")
+            sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Update failed:[/red] {e}")
+        sys.exit(1)
+
+
 async def run_config_cmd() -> None:
     """Show configuration."""
     config = Config.load()
@@ -256,6 +322,9 @@ def main() -> None:
             return
         elif cmd == "config":
             asyncio.run(run_config_cmd())
+            return
+        elif cmd == "update":
+            run_update()
             return
         elif cmd in ("--help", "-h"):
             console.print("[bold]CucumberAgent CLI[/bold]\n")
