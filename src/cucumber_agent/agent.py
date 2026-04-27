@@ -57,17 +57,26 @@ def trim_messages(
 
 
 # Emoji suggestions based on name patterns
-EMOJI_MAP = {
+# Exact matches first, then partial matches
+EXACT_EMOJI_MAP = {
     "cucumber": "🥒", "gherkin": "🥒", "pickle": "🥒",
-    "herb": "🌿", "sage": "🧙", "mint": "🍃", "thyme": "🌱",
-    "buddy": "🤝", "friend": "😊", "pal": "🙂", "max": "🎯",
+    "sage": "🧙", "mint": "🍃", "thyme": "🌱",
+    "buddy": "🤝", "pal": "🙂", "max": "🎯",
     "claude": "🧠", "atlas": "🌍", "neo": "🕶️", "cipher": "🔐",
-    "code": "💻", "bit": "🖥️", "byte": "⚡", "chip": "🔧",
-    "pixel": "🖼️", "debug": "🐛", "syntax": "📝",
-    "blob": "🟢", "wizard": "🧙‍♂️", "mage": "✨", "nova": "⭐",
-    "echo": "🔊", "sigma": "∑", "omega": "Ω", "delta": "Δ",
-    "arc": "🌈", "flux": "⚡", "zen": "☯️",
+    "debug": "🐛", "syntax": "📝",
+    "wizard": "🧙‍♂️", "mage": "✨",
+    "sigma": "∑", "omega": "Ω", "delta": "Δ",
+    "zen": "☯️", "nova": "⭐",
 }
+
+PARTIAL_EMOJI_MAP = {
+    "code": "💻", "bit": "🖥️", "byte": "⚡", "chip": "🔧",
+    "pixel": "🖼️",
+    "echo": "🔊", "arc": "🌈", "flux": "⚡",
+    "blob": "🟢",
+}
+
+EMOJI_MAP = {**EXACT_EMOJI_MAP, **PARTIAL_EMOJI_MAP}
 
 GREETING_PATTERNS = [
     r"^hi\b", r"^hello\b", r"^hey\b", r"^yo\b", r"^sup\b",
@@ -86,48 +95,28 @@ def is_greeting(text: str) -> bool:
 
 
 def suggest_emoji(name: str) -> str:
-    """Suggest emoji based on agent name."""
+    """Suggest emoji based on agent name. Prefers exact matches."""
     name_lower = name.lower()
-    for key, emoji in EMOJI_MAP.items():
+
+    # First check exact match
+    if name_lower in EXACT_EMOJI_MAP:
+        return EXACT_EMOJI_MAP[name_lower]
+
+    # Then check partial matches (substring in name)
+    for key, emoji in PARTIAL_EMOJI_MAP.items():
         if key in name_lower:
             return emoji
     return "🤖"
 
 
 def suggest_optimization(name: str, tone: str, greeting: str) -> dict:
-    """Suggest personality optimizations based on name."""
-    emoji = suggest_emoji(name)
-
-    # Suggest greeting based on tone
-    tone_greetings = {
-        "casual": f"Hey! Ich bin {name}. Was geht? 😎",
-        "friendly": f"Hi! Freut mich, dich zu sehen! Ich bin {name}. 👋",
-        "professional": f"Guten Tag. Ich bin {name}. Wie kann ich Ihnen helfen?",
-        "formal": f"Mein Name ist {name}. Zu Ihren Diensten.",
-    }
-    suggested_greeting = tone_greetings.get(tone, greeting)
-
-    # Suggest strengths based on name keywords
-    name_keywords = {
-        "code": "programming, debugging, code review, software architecture",
-        "herb": "research, writing, analysis, knowledge synthesis",
-        "sage": "wisdom, problem-solving, strategic thinking",
-        "buddy": "support, collaboration, communication, encouragement",
-        "claude": "reasoning, analysis, writing, creative problem-solving",
-        "nova": "creativity, innovation, exploration, inspiration",
-        "zen": "mindfulness, clarity, simplicity, balance",
-    }
-
-    suggested_strengths = "coding, problem-solving, research, communication"
-    for key, strengths in name_keywords.items():
-        if key in name.lower():
-            suggested_strengths = strengths
-            break
-
+    """DEPRECATED - AI now handles optimization itself. Kept for /optimize command."""
+    # This is only used as fallback for the /optimize command
+    # The actual optimization is done by the AI when it offers to improve itself
     return {
-        "emoji": emoji,
-        "greeting": suggested_greeting,
-        "strengths": suggested_strengths,
+        "emoji": "🤖",
+        "greeting": greeting,
+        "strengths": "coding, problem-solving, research, communication",
     }
 
 
@@ -190,25 +179,24 @@ class Agent:
     def build_optimization_response(self, user_input: str) -> str:
         """Build response offering optimization after first greeting."""
         pers = self._config.personality
-        suggestions = suggest_optimization(pers.name, pers.tone, pers.greeting)
 
-        # Check if already optimized (has emoji set and different from default)
-        current_emoji = pers.emoji if pers.emoji else "🤖"
+        # Check if already optimized
         already_optimized = (
             pers.greeting and pers.greeting != f"Hi! I'm {pers.name}. How can I help you today?"
         )
 
         if already_optimized:
-            return ""  # Skip optimization offer
+            return ""
 
         self._optimization_offered = True
 
+        # Ask the AI to analyze and offer improvements
         return (
-            f"\n\n_{current_emoji} psst! Ich könnte meine Persönlichkeit noch "
-            f'etwas optimieren basierend auf meinem Namen "{pers.name}"..._\n\n'
-            f"Soll ich das tun? (Schlag vor: Emoji {suggestions['emoji']}, "
-            f"passenderes Greeting, passende Stärken)\n\n"
-            f'Antworte einfach **"ja"** oder **"nein"**!'
+            f"\n\n_{pers.emoji} Hey! Mir ist aufgefallen, dass ich mich als \"{pers.name}\" vorgestellt habe. "
+            f"Soll ich meine Persönlichkeit basierend auf meinem Namen optimieren? "
+            f"Ich könnte zum Beispiel ein passenderes Emoji vorschlagen, ein besseres Greeting, "
+            f"oder passendere Stärken.\n\n"
+            f"Antworte einfach **\"optimiere mich\"** oder sag mir was du ändern möchtest!_"
         )
 
     def apply_optimization(self) -> dict:

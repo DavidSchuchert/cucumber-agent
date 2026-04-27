@@ -74,6 +74,44 @@ def print_config(config: Config) -> None:
     console.print(Markdown(config_text))
 
 
+def parse_personality_update(text: str) -> dict | None:
+    """Parse PERSONALITY_UPDATE:emoji=x,greeting=y,... from AI response."""
+    import re
+
+    match = re.search(r"PERSONALITY_UPDATE:([^\n]+)", text)
+    if not match:
+        return None
+
+    params = {}
+    for part in match.group(1).split(","):
+        if "=" in part:
+            key, value = part.split("=", 1)
+            params[key.strip()] = value.strip()
+    return params
+
+
+def apply_personality_update(params: dict, config: Config) -> None:
+    """Apply personality update from parsed params."""
+    pers = config.personality
+
+    if "emoji" in params:
+        pers.emoji = params["emoji"]
+    if "greeting" in params:
+        pers.greeting = params["greeting"]
+    if "tone" in params:
+        pers.tone = params["tone"]
+    if "strengths" in params:
+        pers.strengths = params["strengths"]
+    if "interests" in params:
+        pers.interests = params["interests"]
+
+    # Save to personality.md
+    pers.to_markdown(config.config_dir / "personality" / "personality.md")
+    # Update system prompt in agent config
+    config.agent.system_prompt = pers.to_system_prompt()
+    config.save()
+
+
 class CliSession:
     """CLI REPL session."""
 
@@ -153,23 +191,43 @@ class CliSession:
 
         response = user_input.lower().strip()
 
-        # Check for yes/no patterns
-        yes_patterns = [r"^ja\b", r"^yes\b", r"^y\b", r"^yo\b", r"^gerne\b", r"^ok\b", r"^okay\b"]
-        no_patterns = [r"^nein\b", r"^no\b", r"^n\b", r"^ne\b"]
-
-        if any(re.match(p, response) for p in yes_patterns):
-            console.print("\n[dim]✨ Optimizing personality...[/dim]\n")
-            suggestions = self._agent.apply_optimization()
-            console.print(
-                f"[green]✅ Done![/green] Emoji: {suggestions['emoji']}, "
-                f"Strengths: {suggestions['strengths']}"
-            )
-            console.print("\n[dim]Starte neu für effekt! (Ctrl+C + cucumber run)[/dim]\n")
-
-        elif any(re.match(p, response) for p in no_patterns):
+        # Check if user declined
+        no_patterns = [r"^nein\b", r"^no\b", r"^n\b", r"^ne\b", r"^überspring\b", r"^skip\b"]
+        if any(re.match(p, response) for p in no_patterns):
             console.print("[dim]Optimierung übersprungen.[/dim]\n")
+            return
+
+        # User wants optimization - send special prompt to AI
+        console.print("\n[dim]✨ Analyzing name and suggesting improvements...[/dim]\n")
+
+        # Create a special optimization prompt for the AI
+        pers = self._config.personality
+        optimization_prompt = f"""Analysiere meinen Namen "{pers.name}" und schlage Verbesserungen für meine Persönlichkeit vor.
+
+Basierend auf meinem Namen sollst du MIR helfen besser zu werden:
+1. **Emoji**: Wähle ein passendes Emoji das zu meinem Namen passt
+2. **Greeting**: Ein passendes Willkommens-Greeting das zu meinem Namen und Tone "{pers.tone}" passt
+3. **Strengths**: Passende Stärken die zu meinem Namen passen
+
+Antworte in diesem Format-damit ICH weiß was zu tun ist:
+PERSONALITY_UPDATE:emoji=🎭,greeting=Hallo,name!,strengths=kategorie1, kategorie2
+
+WICHTIG: Antworte NUR mit dem PERSONALITY_UPDATE command wenn du wirklich Vorschläge hast die besser sind als das was ich schon habe. Wenn nicht, sag einfach "Keine Verbesserungen nötig"."""
+
+        # Clear the session and send this prompt to the AI
+        optimization_session = Session(id="optimize", model=self._config.agent.model)
+        stream = self._agent.run_stream(optimization_session, optimization_prompt)
+        full_response = await stream_print(stream)
+
+        console.print()
+
+        # Parse and apply any personality update from AI response
+        update_params = parse_personality_update(full_response)
+        if update_params:
+            apply_personality_update(update_params, self._config)
+            console.print("\n[green]✅ Persönlichkeit aktualisiert![/green]\n")
         else:
-            console.print('[dim]Antworte "ja" oder "nein"[/dim]\n')
+            console.print("[dim]Keine Änderungen vorgenommen.[/dim]\n")
 
     async def _handle_command(self, user_input: str) -> None:
         """Handle slash commands."""
