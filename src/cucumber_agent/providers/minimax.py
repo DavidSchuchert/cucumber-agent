@@ -32,6 +32,7 @@ class MiniMaxProvider(BaseProvider):
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
+                "anthropic-version": "2023-06-01",
             },
             timeout=120.0,
         )
