@@ -121,9 +121,11 @@ class Agent:
 
     def get_tools_spec(self) -> list[dict] | None:
         """Get tool specifications for the current provider."""
-        from cucumber_agent.tools import ToolRegistry
-        provider = self._config.agent.provider
-        return ToolRegistry.get_tools_spec(provider)
+        # Tools disabled for now - need proper approval flow first
+        return None
+        # from cucumber_agent.tools import ToolRegistry
+        # provider = self._config.agent.provider
+        # return ToolRegistry.get_tools_spec(provider)
 
     async def run(self, session: Session, user_input: str) -> str:
         """Process user input and return the response text."""
@@ -152,13 +154,26 @@ class Agent:
         messages = self._build_messages(session)
         tools = self.get_tools_spec()
 
+        # If tools are enabled, use complete() to get full response
+        if tools:
+            response = await self._provider.complete(
+                messages=messages,
+                model=self._agent_config.model,
+                temperature=self._agent_config.temperature,
+                max_tokens=self._agent_config.max_tokens,
+                tools=tools,
+            )
+            yield response.content
+            session.add_assistant_message(response.content)
+            return
+
+        # No tools - use streaming
         full_response = ""
         stream_iter = self._provider.stream(
             messages=messages,
             model=self._agent_config.model,
             temperature=self._agent_config.temperature,
             max_tokens=self._agent_config.max_tokens,
-            tools=tools if tools else None,
         )
         async for chunk in stream_iter:
             full_response += chunk
