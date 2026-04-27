@@ -104,20 +104,47 @@ def print_config(config: Config) -> None:
     console.print(Markdown(config_text))
 
 
-def parse_personality_update(text: str) -> dict | None:
-    """Parse PERSONALITY_UPDATE:emoji=x,greeting=y,... from AI response."""
+def parse_personality_update(text: str) -> tuple[dict, str] | None:
+    """Parse PERSONITY_UPDATE:emoji=x,... from AI response. Returns (params, explanation)."""
     import re
 
-    match = re.search(r"PERSONALITY_UPDATE:([^\n]+)", text)
-    if not match:
-        return None
+    lines = text.strip().split("\n")
+    explanation = ""
+    params = None
 
-    params = {}
-    for part in match.group(1).split(","):
-        if "=" in part:
-            key, value = part.split("=", 1)
-            params[key.strip()] = value.strip()
-    return params
+    for i, line in enumerate(lines):
+        line = line.strip()
+        if line.startswith("PERSONALITY_UPDATE:"):
+            # Extract explanation from previous line(s)
+            if i > 0:
+                # Collect explanation lines before the update
+                explanation_parts = []
+                for j in range(i - 1, -1, -1):
+                    prev = lines[j].strip()
+                    if prev.startswith("KEINE_VERBESSERUNG"):
+                        break
+                    if prev.startswith("PERSONALITY_UPDATE"):
+                        break
+                    explanation_parts.insert(0, prev)
+                explanation = " ".join(explanation_parts)
+
+            # Parse params
+            match = re.match(r"PERSONALITY_UPDATE:(.+)", line)
+            if match:
+                params = {}
+                for part in match.group(1).split(","):
+                    if "=" in part:
+                        key, value = part.split("=", 1)
+                        params[key.strip()] = value.strip()
+            break
+        elif line.startswith("KEINE_VERBESSERUNG"):
+            # No improvement, get explanation from following lines
+            explanation = " ".join(line.strip() for line in lines[i + 1 : i + 3] if line.strip())
+            return None, explanation
+
+    if params:
+        return params, explanation
+    return None
 
 
 def apply_personality_update(params: dict, config: Config) -> None:
@@ -236,24 +263,34 @@ class CliSession:
             return
 
         # User wants optimization - send special prompt to AI
-        console.print("\n[dim]✨ Analysiere meinen Namen und optimiere...[/dim]\n")
+        console.print("\n[dim]✨ Analyzing my name and optimizing...[/dim]\n")
 
-        # Create a special optimization prompt for the AI
+        # Read current personality file
+        personality_file = self._config.config_dir / "personality" / "personality.md"
+        current_personality = personality_file.read_text() if personality_file.exists() else ""
+
         pers = self._config.personality
-        optimization_prompt = f"""Ich bin "{pers.name}" und mein aktuelles Emoji ist "{pers.emoji}" mit Tone "{pers.tone}" und Greeting "{pers.greeting}".
+        optimization_prompt = f"""You are analyzing a personality configuration to improve it.
 
-Analysiere meinen Namen "{pers.name}" und schlage Verbesserungen vor:
-1. **Emoji**: Wähle das PERFEKTE Emoji das zu meinem Namen passt (sei kreativ!)
-2. **Greeting**: Ein cooles, einzigartiges Greeting (max 20 Wörter)
-3. **Strengths**: 2-3 passende Stärken für jemanden namens "{pers.name}"
+Current personality:
+{current_personality}
 
-Antworte NUR mit:
-PERSONALITY_UPDATE:emoji={pers.emoji},greeting={pers.greeting},strengths={pers.strengths}
+Your task:
+1. Read the name "{pers.name}" - think about what this name evokes
+2. Suggest BETTER values than what's currently there:
+   - emoji: Pick an emoji that PERFECTLY matches this name (be creative, use unicode)
+   - greeting: Create a unique, catchy greeting (max 15 words)
+   - strengths: Suggest 2-3 strengths that fit this persona
 
-UND NUR wenn du ECHT bessere Vorschläge hast, ersetze die Werte:
-PERSONALITY_UPDATE:emoji=🎭,greeting=Dein neues Greeting hier,strengths=stärke1, stärke2
+Output format:
+First line: BRIEF explanation of what you changed and why (1-2 sentences)
+Second line: PERSONALITY_UPDATE:emoji=X,greeting=Y,strengths=Z
 
-Wenn nichts besser ist, antworte nur "KEINE_VERBESSERUNG". Keine Erklärung, keine Ausrede."""
+If you genuinely think the current values are already good, say:
+KEINE_VERBESSERUNG
+Then briefly explain why the current values work well for this name.
+
+Do NOT echo back the current values. Actually analyze and suggest improvements."""
 
         # Clear the session and send this prompt to the AI
         optimization_session = Session(id="optimize", model=self._config.agent.model)
@@ -263,13 +300,21 @@ Wenn nichts besser ist, antworte nur "KEINE_VERBESSERUNG". Keine Erklärung, kei
         console.print()
 
         # Parse and apply any personality update from AI response
-        update_params = parse_personality_update(full_response)
-        if update_params:
+        result = parse_personality_update(full_response)
+        if result:
+            update_params, explanation = result
             apply_personality_update(update_params, self._config)
-            console.print("\n[green]✅ Perfekt! Meine Persönlichkeit wurde optimiert![/green]\n")
-            console.print("[dim]Änderungen werden nach Neustart aktiv (Ctrl+C + cucumber run)[/dim]\n")
+
+            # Verify changes were saved
+            personality_file = self._config.config_dir / "personality" / "personality.md"
+            personality_file.read_text()  # Will raise if can't read
+
+            console.print(f"\n[dim]{explanation}[/dim]")
+            console.print("\n[green]✅ Personality optimized! Changes saved to personality.md[/green]\n")
+            console.print("[dim]Restart: Ctrl+C + cucumber run[/dim]\n")
         else:
-            console.print("[dim]OK, alles bleibt wie es ist.[/dim]\n")
+            explanation = result[1] if result else "No improvements suggested."
+            console.print("\n[dim]OK, nothing to improve.[/dim]\n")
 
     async def _handle_command(self, user_input: str) -> None:
         """Handle slash commands."""
