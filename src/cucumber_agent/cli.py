@@ -11,6 +11,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.syntax import Syntax
 
 from cucumber_agent.agent import Agent
 from cucumber_agent.config import Config
@@ -22,10 +23,39 @@ console = Console()
 async def stream_print(stream: AsyncIterator[str]) -> str:
     """Stream chunks and print them as they arrive. Return full text."""
     full = ""
+
+    # Check if this is a code block (starts with ```)
+    in_code_block = False
+    code_buffer = ""
+    first_chunk = True
+
     with console.status("[bold green]Thinking..."):
         async for chunk in stream:
             full += chunk
-            console.print(chunk, end="", soft_wrap=True)
+
+            # Detect code blocks for special handling
+            if first_chunk and chunk.strip().startswith("```"):
+                in_code_block = True
+                code_buffer = chunk
+                first_chunk = False
+            elif in_code_block:
+                code_buffer += chunk
+                if "```" in chunk:
+                    # Code block complete - render with syntax highlighting
+                    lines = code_buffer.split("\n", 1)
+                    lang = lines[0].strip().strip("`") or "text"
+                    code = lines[1].rstrip() if len(lines) > 1 else ""
+                    if code:
+                        syntax = Syntax(code, lexer=lang, theme="monokai", line_numbers=True)
+                        console.print(syntax)
+                    in_code_block = False
+                    code_buffer = ""
+                    first_chunk = False
+            else:
+                # Regular text - stream it
+                console.print(chunk, end="", soft_wrap=True)
+                first_chunk = False
+
     return full
 
 
