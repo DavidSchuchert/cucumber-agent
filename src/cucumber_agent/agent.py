@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
@@ -55,6 +56,81 @@ def trim_messages(
     return trimmed
 
 
+# Emoji suggestions based on name patterns
+EMOJI_MAP = {
+    "cucumber": "🥒", "gherkin": "🥒", "pickle": "🥒",
+    "herb": "🌿", "sage": "🧙", "mint": "🍃", "thyme": "🌱",
+    "buddy": "🤝", "friend": "😊", "pal": "🙂", "max": "🎯",
+    "claude": "🧠", "atlas": "🌍", "neo": "🕶️", "cipher": "🔐",
+    "code": "💻", "bit": "🖥️", "byte": "⚡", "chip": "🔧",
+    "pixel": "🖼️", "debug": "🐛", "syntax": "📝",
+    "blob": "🟢", "wizard": "🧙‍♂️", "mage": "✨", "nova": "⭐",
+    "echo": "🔊", "sigma": "∑", "omega": "Ω", "delta": "Δ",
+    "arc": "🌈", "flux": "⚡", "zen": "☯️",
+}
+
+GREETING_PATTERNS = [
+    r"^hi\b", r"^hello\b", r"^hey\b", r"^yo\b", r"^sup\b",
+    r"^moin\b", r"^servus\b", r"^hallo\b", r"^moin\b",
+    r"^guten\s*morgen\b", r"^guten\s*tag\b", r"^grüß?e?\b",
+]
+
+
+def is_greeting(text: str) -> bool:
+    """Check if text is a greeting."""
+    text_lower = text.lower().strip()
+    for pattern in GREETING_PATTERNS:
+        if re.match(pattern, text_lower):
+            return True
+    return False
+
+
+def suggest_emoji(name: str) -> str:
+    """Suggest emoji based on agent name."""
+    name_lower = name.lower()
+    for key, emoji in EMOJI_MAP.items():
+        if key in name_lower:
+            return emoji
+    return "🤖"
+
+
+def suggest_optimization(name: str, tone: str, greeting: str) -> dict:
+    """Suggest personality optimizations based on name."""
+    emoji = suggest_emoji(name)
+
+    # Suggest greeting based on tone
+    tone_greetings = {
+        "casual": f"Hey! Ich bin {name}. Was geht? 😎",
+        "friendly": f"Hi! Freut mich, dich zu sehen! Ich bin {name}. 👋",
+        "professional": f"Guten Tag. Ich bin {name}. Wie kann ich Ihnen helfen?",
+        "formal": f"Mein Name ist {name}. Zu Ihren Diensten.",
+    }
+    suggested_greeting = tone_greetings.get(tone, greeting)
+
+    # Suggest strengths based on name keywords
+    name_keywords = {
+        "code": "programming, debugging, code review, software architecture",
+        "herb": "research, writing, analysis, knowledge synthesis",
+        "sage": "wisdom, problem-solving, strategic thinking",
+        "buddy": "support, collaboration, communication, encouragement",
+        "claude": "reasoning, analysis, writing, creative problem-solving",
+        "nova": "creativity, innovation, exploration, inspiration",
+        "zen": "mindfulness, clarity, simplicity, balance",
+    }
+
+    suggested_strengths = "coding, problem-solving, research, communication"
+    for key, strengths in name_keywords.items():
+        if key in name.lower():
+            suggested_strengths = strengths
+            break
+
+    return {
+        "emoji": emoji,
+        "greeting": suggested_greeting,
+        "strengths": suggested_strengths,
+    }
+
+
 class Agent:
     """
     Core agent. Orchestrates provider calls and session management.
@@ -70,6 +146,7 @@ class Agent:
         self._config = config
         self._context_config = config.context
         self._agent_config = config.agent
+        self._optimization_offered = False  # Track if optimization was offered
 
     @classmethod
     def from_config(cls, config: Config | None = None) -> Agent:
@@ -103,6 +180,55 @@ class Agent:
 
         provider = ProviderRegistry.get(provider_name, **kwargs)
         return cls(provider=provider, config=config)
+
+    def needs_optimization(self, user_input: str) -> bool:
+        """Check if this is a greeting and optimization hasn't been offered yet."""
+        if self._optimization_offered:
+            return False
+        return is_greeting(user_input)
+
+    def build_optimization_response(self, user_input: str) -> str:
+        """Build response offering optimization after first greeting."""
+        pers = self._config.personality
+        suggestions = suggest_optimization(pers.name, pers.tone, pers.greeting)
+
+        # Check if already optimized (has emoji set and different from default)
+        current_emoji = pers.emoji if pers.emoji else "🤖"
+        already_optimized = (
+            pers.greeting and pers.greeting != f"Hi! I'm {pers.name}. How can I help you today?"
+        )
+
+        if already_optimized:
+            return ""  # Skip optimization offer
+
+        self._optimization_offered = True
+
+        return (
+            f"\n\n_{current_emoji} psst! Ich könnte meine Persönlichkeit noch "
+            f'etwas optimieren basierend auf meinem Namen "{pers.name}"..._\n\n'
+            f"Soll ich das tun? (Schlag vor: Emoji {suggestions['emoji']}, "
+            f"passenderes Greeting, passende Stärken)\n\n"
+            f'Antworte einfach **"ja"** oder **"nein"**!'
+        )
+
+    def apply_optimization(self) -> dict:
+        """Apply suggested optimizations to personality.md."""
+        pers = self._config.personality
+        suggestions = suggest_optimization(pers.name, pers.tone, pers.greeting)
+
+        # Update config in memory
+        pers.emoji = suggestions["emoji"]
+        pers.greeting = suggestions["greeting"]
+        pers.strengths = suggestions["strengths"]
+
+        # Save to personality.md
+        pers.to_markdown(self._config.config_dir / "personality" / "personality.md")
+
+        # Also update system prompt in config.yaml
+        self._agent_config.system_prompt = pers.to_system_prompt()
+        self._config.save()
+
+        return suggestions
 
     async def run(self, session: Session, user_input: str) -> str:
         """Process user input and return the response text."""

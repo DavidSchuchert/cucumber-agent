@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import sys
 from collections.abc import AsyncIterator
 
@@ -51,6 +52,7 @@ def print_help() -> None:
 | `/clear` | Clear the conversation |
 | `/config` | Show current configuration |
 | `/model` | Show current model |
+| `/optimize` | Optimize personality based on name |
 
 Just type normally to chat!
 """
@@ -78,6 +80,7 @@ class CliSession:
         self._config = config
         self._session = Session(id="main", model=config.agent.model)
         self._running = False
+        self._waiting_for_optimization_response = False
 
     async def run(self) -> None:
         """Run the REPL."""
@@ -111,14 +114,56 @@ class CliSession:
             await self._handle_command(user_input)
             return
 
+        # Handle optimization response
+        if self._waiting_for_optimization_response:
+            await self._handle_optimization_response(user_input)
+            return
+
         # Regular chat
         console.print()
         try:
+            # Check if this is a greeting and optimization should be offered
+            offer_optimization = self._agent.needs_optimization(user_input)
+
             stream = self._agent.run_stream(self._session, user_input)
             await stream_print(stream)
+
             console.print()  # newline after streaming
+
+            # After first greeting, offer optimization
+            if offer_optimization:
+                optimization_offer = self._agent.build_optimization_response(user_input)
+                if optimization_offer:
+                    console.print(optimization_offer)
+                    console.print()
+                    self._waiting_for_optimization_response = True
+
         except Exception as e:
             console.print(f"[bold red]Error:[/bold red] {e}")
+
+    async def _handle_optimization_response(self, user_input: str) -> None:
+        """Handle user's response to optimization offer."""
+        self._waiting_for_optimization_response = False
+
+        response = user_input.lower().strip()
+
+        # Check for yes/no patterns
+        yes_patterns = [r"^ja\b", r"^yes\b", r"^y\b", r"^yo\b", r"^gerne\b", r"^ok\b", r"^okay\b"]
+        no_patterns = [r"^nein\b", r"^no\b", r"^n\b", r"^ne\b"]
+
+        if any(re.match(p, response) for p in yes_patterns):
+            console.print("\n[dim]✨ Optimizing personality...[/dim]\n")
+            suggestions = self._agent.apply_optimization()
+            console.print(
+                f"[green]✅ Done![/green] Emoji: {suggestions['emoji']}, "
+                f"Strengths: {suggestions['strengths']}"
+            )
+            console.print("\n[dim]Starte neu für effekt! (Ctrl+C + cucumber run)[/dim]\n")
+
+        elif any(re.match(p, response) for p in no_patterns):
+            console.print("[dim]Optimierung übersprungen.[/dim]\n")
+        else:
+            console.print('[dim]Antworte "ja" oder "nein"[/dim]\n')
 
     async def _handle_command(self, user_input: str) -> None:
         """Handle slash commands."""
@@ -137,8 +182,26 @@ class CliSession:
                 print_config(self._config)
             case "/model":
                 console.print(f"Model: {self._config.agent.model}")
+            case "/optimize":
+                await self._run_optimization()
             case _:
                 console.print(f"[dim]Unknown command: {cmd}[/dim]. Type /help for help.")
+
+    async def _run_optimization(self) -> None:
+        """Run optimization manually."""
+        from cucumber_agent.agent import suggest_optimization
+
+        pers = self._config.personality
+        suggestions = suggest_optimization(pers.name, pers.tone, pers.greeting)
+
+        console.print(f'\n[bold]✨ Optimizing for "{pers.name}"...[/bold]\n')
+        console.print(f"  Emoji: {suggestions['emoji']}")
+        console.print(f"  Greeting: {suggestions['greeting']}")
+        console.print(f"  Strengths: {suggestions['strengths']}\n")
+
+        self._agent.apply_optimization()
+        console.print("[green]✅ Personality optimized![/green]\n")
+        console.print("[dim]Restart: Ctrl+C then 'cucumber run'[/dim]\n")
 
 
 async def run_cli() -> None:
