@@ -40,6 +40,67 @@ def ask_agent_name() -> str:
     return agent_name.strip() or "Cucumber"
 
 
+def enhance_personality(agent_name: str, personality: dict) -> dict:
+    """Enhance personality with AI-suggested optimizations based on name."""
+    # Suggest emoji based on name patterns
+    emoji_map = {
+        # Tech/coding names
+        "code": "💻", "bit": "🖥️", "byte": "⚡", "chip": "🔧",
+        "pixel": "🎨", "debug": "🐛", "syntax": "📝",
+        # Friendly names
+        "buddy": "🤝", "friend": "😊", "pal": "🙂", "max": "🎯",
+        # Nature names
+        "cucumber": "🥒", "gherkin": "🥒", "pickle": "🥒",
+        "herb": "🌿", "sage": "🧙", "mint": "🍃",
+        # Professional names
+        "claude": "🧠", "atlas": "🌍", "neo": "🕶️", "cipher": "🔐",
+        # Cute names
+        "blob": "🟢", "wizard": "🧙‍♂️", "mage": "✨",
+    }
+
+    name_lower = agent_name.lower()
+    emoji = emoji_map.get(name_lower, "🤖")
+
+    # Auto-suggest greeting based on name and tone
+    tone = personality.get("tone", "friendly")
+    tone_greetings = {
+        "casual": f"Hey! I'm {agent_name}. What's up? 😎",
+        "friendly": f"Hi! I'm {agent_name}. Great to see you! 👋",
+        "professional": f"Hello. I'm {agent_name}. How may I assist you today?",
+        "formal": f"Good day. I am {agent_name}. At your service.",
+    }
+    suggested_greeting = tone_greetings.get(tone, f"Hi! I'm {agent_name}.")
+
+    # Suggest strengths based on name (simple heuristic)
+    name_strengths = {
+        "code": "programming, debugging, code review, software architecture",
+        "herb": "research, writing, analysis, knowledge synthesis",
+        "sage": "wisdom, problem-solving, strategic thinking, mentorship",
+        "buddy": "support, collaboration, communication, encouragement",
+        "claude": "reasoning, analysis, writing, creative problem-solving",
+    }
+
+    suggested_strengths = name_strengths.get(name_lower, "coding, problem-solving, research, communication")
+
+    console.print(f"\n[bold cyan]✨ Optimizing personality for '{agent_name}'...[/bold cyan]")
+    console.print(f"  Suggested emoji: {emoji}")
+    console.print(f"  Suggested greeting: {suggested_greeting}")
+    console.print(f"  Suggested strengths: {suggested_strengths}")
+
+    # Ask if user wants to use suggested values
+    if Confirm.ask(f"\nUse these suggested values for {agent_name}?", default=True):
+        personality["greeting"] = suggested_greeting
+        personality["strengths"] = suggested_strengths
+        # Store emoji in extra field
+        personality["emoji"] = emoji
+    else:
+        # User keeps their custom values, still suggest emoji
+        if Confirm.ask("Add suggested emoji?", default=True):
+            personality["emoji"] = emoji
+
+    return personality
+
+
 def ask_personality(agent_name: str) -> dict:
     """Ask about personality and preferences."""
     console.print(f"\n[bold]Now let's configure {agent_name}'s personality![/bold]\n")
@@ -111,6 +172,9 @@ def ask_personality(agent_name: str) -> dict:
         )
     else:
         personality["interests"] = ""
+
+    # Step: Auto-enhance personality with AI suggestions
+    personality = enhance_personality(agent_name, personality)
 
     return personality
 
@@ -280,6 +344,7 @@ def create_personality_file(
     lines = [
         "# Personality",
         f"name: {agent_name}",
+        f"emoji: {personality.get('emoji', '🤖')}",
         f"tone: {personality.get('tone', 'friendly')}",
         f"language: {personality.get('language', 'en')}",
         f"greeting: {personality.get('greeting', '')}",
