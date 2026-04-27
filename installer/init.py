@@ -24,7 +24,65 @@ def print_banner() -> None:
     console.print()
 
 
-def select_provider() -> str:
+def ask_personality() -> dict:
+    """Ask about agent personality and user info."""
+    console.print("[bold]Let's set up your Agent's personality![/bold]\n")
+
+    # Agent name
+    agent_name = Prompt.ask(
+        "What should I call you? (my name)",
+        default="Cucumber",
+    )
+
+    # User info
+    console.print("\n[bold]Tell me about yourself:[/bold]")
+    user_name = Prompt.ask("What's your name?", default="")
+    user_info = Prompt.ask("Anything else about you I should know?", default="")
+
+    # GitHub/portfolio
+    console.print("\n[bold]Online presence:[/bold]")
+    github_url = Prompt.ask(
+        "GitHub URL (or leave empty)",
+        default="",
+    )
+    portfolio_url = Prompt.ask(
+        "Portfolio/Website URL (or leave empty)",
+        default="",
+    )
+
+    # Behavior preferences
+    console.print("\n[bold]Behavior preferences:[/bold]")
+    can_search_web = Confirm.ask(
+        "Should I search the web when needed?",
+        default=True,
+    )
+    can_code = Confirm.ask(
+        "Should I help with coding tasks?",
+        default=True,
+    )
+
+    # Tone
+    console.print("\n[bold]Communication style:[/bold]")
+    tone_options = ["casual", "formal", "friendly", "professional"]
+    tone = Prompt.ask(
+        "How should I communicate?",
+        choices=tone_options,
+        default="friendly",
+    )
+
+    return {
+        "agent_name": agent_name,
+        "user_name": user_name,
+        "user_info": user_info,
+        "github_url": github_url,
+        "portfolio_url": portfolio_url,
+        "can_search_web": can_search_web,
+        "can_code": can_code,
+        "tone": tone,
+    }
+
+
+def select_provider() -> tuple:
     """Select a provider."""
     console.print("[bold]1.[/bold] MiniMax (fast, cheap)")
     console.print("[bold]2.[/bold] OpenRouter (hundreds of models)")
@@ -65,7 +123,7 @@ def get_api_key(provider_name: str, display_name: str) -> str | None:
         return os.environ[env_var]
 
     if provider_name == "lmstudio":
-        return None  # No API key needed for local
+        return None
 
     api_key = Prompt.ask(
         f"Enter your {display_name} API key",
@@ -113,21 +171,66 @@ def select_model(provider_name: str, display_name: str) -> str:
     return options[int(choice) - 1][0]
 
 
+def build_system_prompt(personality: dict) -> str:
+    """Build the system prompt from personality settings."""
+    agent_name = personality["agent_name"]
+    user_name = personality.get("user_name", "") or "my friend"
+    tone = personality.get("tone", "friendly")
+
+    # Tone modifiers
+    tone_intro = {
+        "casual": "Be casual and relaxed.",
+        "formal": "Be formal and professional.",
+        "friendly": "Be warm and friendly.",
+        "professional": "Be professional and concise.",
+    }
+
+    parts = [
+        f"My name is {agent_name}.",
+        tone_intro.get(tone, "Be friendly."),
+    ]
+
+    if user_name:
+        parts.append(f"My human's name is {user_name}.")
+
+    user_info = personality.get("user_info", "")
+    if user_info:
+        parts.append(f"About my human: {user_info}")
+
+    if personality.get("github_url"):
+        parts.append(f"My human's GitHub: {personality['github_url']}")
+
+    if personality.get("portfolio_url"):
+        parts.append(f"My human's portfolio: {personality['portfolio_url']}")
+
+    if personality.get("can_search_web"):
+        parts.append("I can search the web when needed to help my human.")
+
+    if personality.get("can_code"):
+        parts.append("I help with coding tasks when asked.")
+
+    parts.append("I'm here to help my human with whatever they need!")
+
+    return " ".join(parts)
+
+
 def create_config(
     provider_name: str,
-    display_name: str,
     base_url: str | None,
     api_key: str | None,
     model: str,
+    personality: dict,
 ) -> dict:
     """Create the configuration dictionary."""
+    system_prompt = build_system_prompt(personality)
+
     config = {
         "agent": {
             "provider": provider_name,
             "model": model,
             "temperature": 0.7,
             "max_tokens": None,
-            "system_prompt": "You are CucumberAgent, a helpful AI assistant.",
+            "system_prompt": system_prompt,
         },
         "providers": {
             provider_name: {
@@ -136,12 +239,13 @@ def create_config(
                 "model": model,
             }
         },
+        "personality": personality,
     }
 
     # Ask for workspace
     workspace = Prompt.ask(
         "\nWorkspace directory",
-        default=str(Path.cwd()),
+        default=str(Path.home()),
     )
     if workspace.strip():
         config["workspace"] = str(Path(workspace.strip()).expanduser().resolve())
@@ -162,7 +266,11 @@ def run() -> None:
             console.print("[dim]Keeping existing config. Run 'cucumber run' to start.[/dim]")
             return
 
+    # Ask personality first
+    personality = ask_personality()
+
     # Select provider
+    console.print()
     provider_name, display_name, base_url = select_provider()
 
     # Get API key
@@ -176,7 +284,7 @@ def run() -> None:
     model = select_model(provider_name, display_name)
 
     # Create config
-    config = create_config(provider_name, display_name, base_url, api_key, model)
+    config = create_config(provider_name, base_url, api_key, model, personality)
 
     # Save
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -188,7 +296,7 @@ def run() -> None:
         Panel.fit(
             "[bold green]✅ Setup complete![/bold green]\n\n"
             f"Config saved to [dim]{CONFIG_FILE}[/dim]\n\n"
-            "Run [bold]cucumber run[/bold] to start chatting!",
+            f"Hello! I'm {personality['agent_name']}! Let's get started!",
             border_style="green",
         )
     )
