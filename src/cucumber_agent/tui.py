@@ -1,11 +1,17 @@
 """
-CucumberAgent Textual TUI — Built with prompt_toolkit, inspired by Hermes CLI / Claude Code.
+CucumberAgent TUI — prompt_toolkit + Rich, modeled after Hermes CLI.
 
-Architecture:
-  - prompt_toolkit Layout: scrolling message buffer (top) + fixed input (bottom)
-  - Rich for all text rendering (panels, markdown, colors)
-  - patch_stdout context so Rich.print() works inside the interactive loop
-  - ChatConsole: Rich Console adapter → _cprint → print_formatted_text(ANSI(...))
+The core rendering loop:
+  1. All messages stored in self.history._messages
+  2. _refresh_output() renders the FULL history to an ANSI string
+  3. _ansi_obj is passed directly to FormattedTextControl.text (not pre-parsed tuples)
+  4. self._app.invalidate() schedules a redraw
+  5. prompt_toolkit redraws the window with the new content
+  6. User types → Enter → _on_input → asyncio task → agent → _refresh_output + invalidate
+
+The magic: messages appear ABOVE the input because FormattedTextControl's
+getter is re-evaluated on every render cycle — prompt_toolkit's rendering
+is persistent, not one-shot like a plain print().
 """
 
 from __future__ import annotations
@@ -15,18 +21,16 @@ import re
 import shutil
 import sys
 from datetime import datetime
-from pathlib import Path
-from typing import Callable
+from io import StringIO
 
-# ─── prompt_toolkit for fixed-input TUI ────────────────────────────────────────
+# ─── prompt_toolkit ─────────────────────────────────────────────────────────
 from prompt_toolkit import print_formatted_text as _pt_print
 from prompt_toolkit.application import Application
-from prompt_toolkit.keys import Keys
 from prompt_toolkit.buffer import Buffer
-from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import ANSI as _PT_ANSI
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import Layout, HSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
@@ -34,236 +38,93 @@ from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style as PTStyle
 from prompt_toolkit.widgets import TextArea
 
-# ─── Rich for rendering ────────────────────────────────────────────────────────
+# ─── Rich ───────────────────────────────────────────────────────────────────
 from rich.console import Console
 from rich.markdown import Markdown
-from rich.panel import Panel
-from rich.text import Text
 
-# ─── Cucumber modules ─────────────────────────────────────────────────────────
+# ─── Cucumber ───────────────────────────────────────────────────────────────
 from cucumber_agent.config import Config
 from cucumber_agent.agent import Agent
 
 
-# ─── Color scheme (hex for Rich, named for markup) ───────────────────────────
+# ─── Colors ─────────────────────────────────────────────────────────────────
 
-GREEN   = "#4ade80"
-CYAN    = "#38bdf8"
-YELLOW  = "#fbbf24"
-RED     = "#f87171"
-DIM     = "#64748b"
-BG     = "#0b0e14"
-
-# prompt_toolkit style
-PT_STYLE = PTStyle.from_dict({
-    "wrapper":          f"bg:{BG} #e2e8f0",
-    "input":            f"#4ade80 bold",
-    "prompt":           f"#4ade80 bold",
-    "tool":             f"#fbbf24",
-    "tool-args":        f"#64748b",
-    "timestamp":        f"#475569",
-    "user-label":       f"#4ade80 bold",
-    "assistant-label":  f"#38bdf8 bold",
-    "error-label":      f"#f87171 bold",
-})
+C_BG       = "#0b0e14"
+C_INPUTBG  = "#111827"
+C_GREEN    = "#4ade80"
+C_CYAN     = "#38bdf8"
+C_YELLOW   = "#fbbf24"
+C_RED      = "#f87171"
+C_DIM      = "#64748b"
+C_ORANGE   = "#fb923c"
+C_USER     = "#bbf7d0"
+C_TS       = "#475569"
+C_TOOL_ARG = "#d4a017"
 
 
-# ─── Helper: ANSI print via prompt_toolkit ─────────────────────────────────────
+# ─── ANSI print via prompt_toolkit (identical to Hermes CLI) ─────────────────
 
 def _cprint(text: str):
-    """Print ANSI-colored text through prompt_toolkit's native renderer.
+    """Print an ANSI-rendered text line through prompt_toolkit.
 
-    Raw ANSI escapes via print() are swallowed by patch_stdout's StdoutProxy.
-    Routing through print_formatted_text(ANSI(...)) lets prompt_toolkit parse
-    the escapes and render real colors.
+    Raw ANSI escapes written via print() are swallowed by patch_stdout's
+    StdoutProxy. Routing through print_formatted_text(ANSI(...)) lets
+    prompt_toolkit parse the escapes and render real colors.
     """
+    if not text:
+        return
     _pt_print(_PT_ANSI(text))
 
 
-# ─── ChatConsole: Rich adapter for patch_stdout context ───────────────────────
+# ─── Terminal width ─────────────────────────────────────────────────────────
 
-class ChatConsole:
-    """Rich Console adapter for prompt_toolkit's patch_stdout context.
-
-    Captures Rich's rendered ANSI output and routes it through _cprint
-    so colors and markup render correctly inside the interactive chat loop.
-    """
-
-    def __init__(self):
-        from io import StringIO
-        self._buffer = StringIO()
-        self._inner = Console(
-            file=self._buffer,
-            force_terminal=True,
-            color_system="truecolor",
-            highlight=False,
-            width=_terminal_width(),
-        )
-
-    def print(self, *args, **kwargs):
-        self._buffer.seek(0)
-        self._buffer.truncate()
-        self._inner.width = _terminal_width()
-        self._inner.print(*args, **kwargs)
-        output = self._buffer.getvalue()
-        for line in output.rstrip("\n").split("\n"):
-            if line.strip():
-                _cprint(line)
-
-    def rule(self, style: str = "dim"):
-        _cprint(f"[{style}]{'─' * _terminal_width()}[/]")
-
-    def status(self, *args, **kwargs):
-        """No-op status (busy indicator handled by TUI loop)."""
-        yield self
-
-    @property
-    def width(self):
-        return _terminal_width()
-
-
-def _terminal_width() -> int:
+def _term_width() -> int:
     try:
         return shutil.get_terminal_size().columns
     except Exception:
         return 80
 
 
-# ─── Message buffer ────────────────────────────────────────────────────────────
+# ─── Helpers ───────────────────────────────────────────────────────────────
 
-class MessageBuffer:
-    """Holds the chat history as styled ANSI strings for prompt_toolkit."""
-
-    def __init__(self, console: ChatConsole):
-        self._lines: list[str] = []
-        self._console = console
-        self._last_input_height = 0
-
-    def add_user(self, text: str, ts: datetime):
-        time_str = ts.strftime("%H:%M")
-        # Wrap long lines
-        width = self._console.width - 10
-        wrapped = _wrap_lines(text, width)
-        for line in wrapped:
-            self._lines.append(
-                f"[#475569]{time_str}[/]  [#4ade80 bold]>[/] [#bbf7d0]{_esc_markup(line)}[/]"
-            )
-
-    def add_assistant(self, text: str, ts: datetime, name: str = "Herbert"):
-        time_str = ts.strftime("%H:%M")
-        # Strip reasoning/thinking blocks
-        clean = _strip_reasoning(text)
-        # Render as markdown
-        rendered = self._render_markdown(clean)
-        # Wrap long lines
-        wrapped = _wrap_lines(rendered, self._console.width - 10)
-        prefix = f"[#38bdf8 bold]{name}[/]"
-        for i, line in enumerate(wrapped):
-            if i == 0:
-                self._lines.append(f"  {line}  [#475569]{time_str}[/]")
-            else:
-                self._lines.append(f"  {line}")
-
-    def add_tool(self, name: str, args: dict, output: str, ts: datetime):
-        time_str = ts.strftime("%H:%M")
-        args_s = ", ".join(
-            f"[#fbbf24]{k}[/]=[#d4a017]{_esc_markup(str(v)[:60])}[/]"
-            for k, v in args.items() if k != "reason"
-        )
-        self._lines.append(
-            f"  [#fbbf24]⚡ {name}[/]"
-            + (f"  [#64748b]({args_s})[/]" if args_s else "")
-            + f"  [#475569]{time_str}[/]"
-        )
-        for line in _wrap_lines(_esc_markup(output[:300]), self._console.width - 14):
-            self._lines.append(f"    [#64748b]{line}[/]")
-
-    def add_error(self, text: str, ts: datetime):
-        time_str = ts.strftime("%H:%M")
-        self._lines.append(f"[#f87171]✗[/] {_esc_markup(text)}  [#475569]{time_str}[/]")
-
-    def add_system(self, text: str, ts: datetime):
-        time_str = ts.strftime("%H:%M")
-        self._lines.append(f"[#64748b italic]{text}[/]  {time_str}")
-
-    def add_blank(self):
-        self._lines.append("")
-
-    def clear(self):
-        self._lines.clear()
-
-    def get_formatted_text(self) -> list[tuple[str, str]]:
-        """Return list of (style, text) tuples for FormattedTextControl."""
-        result = []
-        for line in self._lines:
-            result.append((line, line))
-        return result
-
-    def _render_markdown(self, text: str) -> str:
-        """Render text as markdown, returning ANSI-colored string."""
-        if not text.strip():
-            return ""
-        buf = ""
-        md = Markdown(text, code_theme="monokai")
-        # Render through Rich
-        from io import StringIO
-        tmp_buf = StringIO()
-        c = Console(file=tmp_buf, force_terminal=True, color_system="truecolor", width=self._console.width - 10)
-        c.print(md)
-        ansi_output = tmp_buf.getvalue()
-        # Convert to prompt_toolkit-compatible ANSI
-        # Strip the \r\n that Rich adds
-        for line in ansi_output.rstrip("\n").split("\n"):
-            if line.strip():
-                buf += line + "\n"
-        return buf.rstrip("\n")
-
-    def __len__(self):
-        return len(self._lines)
-
-
-def _esc_markup(text: str) -> str:
-    """Escape [brackets] so they're treated as literal text."""
+def _esc(text: str) -> str:
+    """Escape [brackets] as literal text for Rich."""
     if not text:
         return ""
-    result = ""
+    result = []
     i = 0
     while i < len(text):
         c = text[i]
         if c == "[":
-            # Check if this looks like a Rich tag
-            if i + 1 < len(text) and text[i+1].isalpha():
-                result += "[["
-            else:
-                result += "[["
+            result.append("[[")
             i += 1
         elif c == "]":
-            result += "]]"
+            result.append("]]")
             i += 1
         else:
-            result += c
+            result.append(c)
             i += 1
-    return result
+    return "".join(result)
 
 
 def _strip_reasoning(text: str) -> str:
-    """Remove <think>/<think> blocks from text."""
-    for tag in ("think", "thinking", "thought", "reasoning", "REASONING_SCRATCHPAD"):
+    """Remove <think>/<reasoning> blocks."""
+    for tag in ("think", "thinking", "thought", "reasoning", "reasoning_scratchpad"):
         text = re.sub(rf"<{tag}>.*?</{tag}>", "", text, flags=re.DOTALL | re.IGNORECASE)
         text = re.sub(rf"<{tag}>.*$", "", text, flags=re.DOTALL | re.IGNORECASE)
     return text.strip()
 
 
-def _wrap_lines(text: str, width: int) -> list[str]:
-    """Simple word-wrap at width."""
+def _wrap(text: str, width: int) -> list[str]:
+    """Simple word-wrap."""
     if width <= 0:
         width = 60
     lines = []
-    for paragraph in text.split("\n"):
-        if not paragraph:
+    for para in text.split("\n"):
+        if not para:
             lines.append("")
             continue
-        words = paragraph.split()
+        words = para.split()
         current = ""
         for word in words:
             if not current:
@@ -278,55 +139,145 @@ def _wrap_lines(text: str, width: int) -> list[str]:
     return lines or [""]
 
 
-# ─── TUI Application ───────────────────────────────────────────────────────────
+# ─── Message history ─────────────────────────────────────────────────────────
+
+class MessageHistory:
+    """Stores chat messages and renders them as a Rich-ANSI string."""
+
+    def __init__(self, term_width: int):
+        self._messages: list[dict] = []
+        self._w = term_width
+
+    def add_user(self, text: str):
+        self._messages.append({"role": "user", "text": text, "ts": datetime.now()})
+
+    def add_assistant(self, text: str):
+        self._messages.append({"role": "assistant", "text": text, "ts": datetime.now()})
+
+    def add_tool(self, name: str, args: dict, output: str):
+        self._messages.append({
+            "role": "tool", "name": name, "args": args,
+            "output": output, "ts": datetime.now()
+        })
+
+    def add_error(self, text: str):
+        self._messages.append({"role": "error", "text": text, "ts": datetime.now()})
+
+    def add_system(self, text: str):
+        self._messages.append({"role": "system", "text": text, "ts": datetime.now()})
+
+    def clear(self):
+        self._messages.clear()
+
+    def render_to_ansi(self) -> str:
+        """Render the full message history to an ANSI string via Rich Console."""
+        if not self._messages:
+            return ""
+
+        buf = StringIO()
+        inner = Console(
+            file=buf,
+            force_terminal=True,
+            color_system="truecolor",
+            highlight=False,
+            width=self._w,
+        )
+
+        for msg in self._messages:
+            self._render_msg(inner, msg)
+
+        return buf.getvalue().rstrip("\n")
+
+    def _render_msg(self, c: Console, msg: dict):
+        ts = msg["ts"].strftime("%H:%M")
+        role = msg["role"]
+
+        if role == "user":
+            wrapped = _wrap(msg["text"], self._w - 10)
+            for i, line in enumerate(wrapped):
+                prefix = f"[#4ade80 bold]>[/] " if i == 0 else "  "
+                c.print(f"[#{C_TS}]{ts}[/]  {prefix}[#{C_USER}]{_esc(line)}[/]")
+
+        elif role == "assistant":
+            clean = _strip_reasoning(msg["text"])
+            if not clean.strip():
+                return
+            md = Markdown(clean, code_theme="ansi_dark")
+            c.print(md)
+
+        elif role == "tool":
+            name = msg["name"]
+            args = msg.get("args", {})
+            output = msg.get("output", "")
+            args_s = ", ".join(
+                f"[#{C_YELLOW}]{k}[/]=[#{C_TOOL_ARG}]{_esc(str(v)[:60])}[/]"
+                for k, v in args.items() if k != "reason"
+            )
+            c.print(
+                f"  [#{C_YELLOW}]⚡ {name}[/]"
+                + (f"  [#{C_DIM}]({args_s})[/]" if args_s else "")
+                + f"  [#{C_TS}]{ts}[/]"
+            )
+            if output:
+                for line in _wrap(output[:300], self._w - 14):
+                    c.print(f"    [#{C_DIM}]{_esc(line)}[/]")
+
+        elif role == "error":
+            c.print(f"[#{C_RED} bold]✗[/]  [#{C_RED}]{_esc(msg['text'])}[/]  [#{C_TS}]{ts}[/]")
+
+        elif role == "system":
+            c.print(f"[#{C_DIM} italic]{msg['text']}[/]  [#{C_TS}]{ts}[/]")
+
+
+# ─── CucumberTUI ────────────────────────────────────────────────────────────
 
 class CucumberTUI:
     """CucumberAgent TUI — prompt_toolkit + Rich, modeled after Hermes CLI."""
 
-    BANNER = f"""
-[bold {GREEN}]╔═[/{GREEN}][bold {GREEN}] HERBERT OPA — CUCUMBER AGENT [/{GREEN}][bold {GREEN}]═╗[/]
-[bold {GREEN}]╚[/{GREEN}]""".strip()
-
     def __init__(self, agent: Agent, config: Config):
         self.agent = agent
         self.config = config
-        self.console = ChatConsole()
-        self.msg_buf = MessageBuffer(self.console)
+        self._w = _term_width()
+        self.history = MessageHistory(self._w)
         self._running = False
+        self._session = None
         self._skill_loader = None
         self._facts = None
 
-        # ── prompt_toolkit layout ──────────────────────────────────────────────
-        self._history = InMemoryHistory()
-        self._input_buffer = Buffer(
-            history=self._history,
-            multiline=False,
-            accept_handler=self._on_input_submit,
-        )
+        # Current ANSI render of all messages — passed to FormattedTextControl
+        self._ansi_obj = _PT_ANSI("")
+
+        # ── Output window (scrollable message buffer) ─────────────────────────
+        def get_output_text() -> _PT_ANSI:
+            return self._ansi_obj
 
         self._output_control = FormattedTextControl(
-            text=self.msg_buf.get_formatted_text,
+            text=get_output_text,
+            focusable=False,
+            show_cursor=False,
         )
         self._output_window = Window(
             self._output_control,
-            always_hide_cursor=True,
-            style="bg:#0b0e14 #e2e8f0",
+            style=f"bg:{C_BG} #e2e8f0",
         )
 
-        self._input_window = Window(
-            FormattedTextControl([
-                (f"[#4ade80 bold]>[/] ", "> "),
-            ]),
-            width=Dimension(preferred=3),
-            height=Dimension(preferred=1),
-            style="bg:#111827",
+        # ── Input area (fixed at bottom) ───────────────────────────────────────
+        # TextArea creates its own buffer internally — we access it via
+        # _input_widget.buffer after construction.
+        self._input_widget = TextArea(
+            height=Dimension(min=1, max=3, preferred=1),
+            style=f"bg:{C_INPUTBG} #e2e8f0",
+            multiline=False,
+            wrap_lines=True,
+            focusable=True,
+            history=InMemoryHistory(),
+            accept_handler=self._on_input,
         )
 
-        self._root_container = HSplit([
-            self._output_window,
-            self._input_window,
-        ])
+        # ── Root layout: output (flex) + input (fixed height) ─────────────────
+        self._root = HSplit([self._output_window, self._input_widget])
 
+        # ── Key bindings ───────────────────────────────────────────────────────
         self._kb = KeyBindings()
 
         @self._kb.add(Keys.ControlC, eager=True)
@@ -335,49 +286,68 @@ class CucumberTUI:
 
         @self._kb.add(Keys.ControlL, eager=True)
         def _clear(event):
-            self.msg_buf.clear()
+            self.history.clear()
             self._refresh_output()
 
+        # ── prompt_toolkit Application ─────────────────────────────────────────
         self._app = Application(
-            layout=Layout(self._root_container),
+            layout=Layout(self._root),
             key_bindings=self._kb,
-            style=PT_STYLE,
+            style=PTStyle.from_dict({
+                "wrapper":           "#e2e8f0 bg:{bg}".format(bg=C_BG),
+                "output-field":      "#e2e8f0 bg:{bg}".format(bg=C_BG),
+                "input-field":      f"#e2e8f0 bg:{C_INPUTBG}",
+                "text-area":        f"#e2e8f0 bg:{C_INPUTBG}",
+                "cursor":           "bg:#4ade80 #0b0e14",
+            }),
             erase_when_done=False,
         )
 
-    # ── Public API ────────────────────────────────────────────────────────────
+    # ── Public API ─────────────────────────────────────────────────────────
 
     def run(self):
-        """Launch the TUI."""
         self._print_banner()
         self._init_agent_session()
-
+        self._refresh_output()
         with patch_stdout():
             self._running = True
             self._app.run()
 
-    # ── Initialization ──────────────────────────────────────────────────────
+    # ── Banner ─────────────────────────────────────────────────────────────
 
     def _print_banner(self):
-        pers = self.config.personality
-        w = _terminal_width()
+        w = self._w
         inner = w - 2
-        line1 = f"{pers.emoji} {pers.name} — CucumberAgent".ljust(inner)[:inner]
+        pers = self.config.personality
+        line1 = f"{pers.emoji} {pers.emoji} {pers.name} — CucumberAgent".ljust(inner)[:inner]
         line2 = f"{self.config.agent.provider}/{self.config.agent.model}".ljust(inner)[:inner]
         line3 = "[dim]Ctrl+L Clear  Ctrl+C Quit[/dim]".ljust(inner)[:inner]
 
-        _cprint("")
-        _cprint(f"[bold {GREEN}]╔{'═' * inner}╗[/]")
-        _cprint(f"[bold {GREEN}]║[/] [#38bdf8 bold]{line1}[/] [bold {GREEN}]║[/]")
-        _cprint(f"[bold {GREEN}]║[/] [#64748b]{line2}[/] [bold {GREEN}]║[/]")
-        _cprint(f"[bold {GREEN}]║[/] [#64748b]{line3}[/] [bold {GREEN}]║[/]")
-        _cprint(f"[bold {GREEN}]╚{'═' * inner}╝[/]")
-        _cprint("")
-        _cprint(f"[#4ade80]{pers.emoji} {pers.name}[/]  [dim]— Chat startklar. Sag was du brauchst![/]")
-        _cprint("")
+        for line in (
+            "",
+            f"[bold {C_GREEN}]╔{'═' * inner}╗[/bold]",
+            f"[bold {C_GREEN}]║[reset] {line1}  [{C_GREEN}]║[bold]",
+            f"[bold {C_GREEN}]║[reset] [dim]{line2}[/dim]  [{C_GREEN}]║[bold]",
+            f"[bold {C_GREEN}]║[reset] [dim]{line3}[/dim]  [{C_GREEN}]║[bold]",
+            f"[bold {C_GREEN}]╚{'═' * inner}╝[/bold]",
+            "",
+            f"[{C_GREEN}]{pers.emoji} {pers.name}[/{C_GREEN}]  [dim]— Chat startklar. Sag was du brauchst![/dim]",
+            "",
+        ):
+            _cprint(line)
+
+    # ── Output refresh ─────────────────────────────────────────────────────
+
+    def _refresh_output(self):
+        """Re-render message history to ANSI and schedule a UI redraw."""
+        ansi_str = self.history.render_to_ansi()
+        self._ansi_obj = _PT_ANSI(ansi_str) if ansi_str else _PT_ANSI("")
+        # Schedule a prompt_toolkit redraw of the output window
+        self._app.invalidate()
+
+    # ── Session init ───────────────────────────────────────────────────────
 
     def _init_agent_session(self):
-        """Initialize session, memory, skills."""
         from cucumber_agent.memory import FactsStore, SessionSummary
         from cucumber_agent.session import Session
         from cucumber_agent.workspace import WorkspaceDetector
@@ -417,9 +387,9 @@ class CucumberTUI:
         self._custom_tool_loader = tools_module.CustomToolLoader()
         self._custom_tool_loader.load_all()
 
-    # ── Input handling ───────────────────────────────────────────────────────
+    # ── Input handling ────────────────────────────────────────────────────
 
-    def _on_input_submit(self, buffer: Buffer) -> None:
+    def _on_input(self, buffer: Buffer) -> None:
         text = buffer.text.strip()
         buffer.text = ""
         if not text:
@@ -434,53 +404,45 @@ class CucumberTUI:
         command = parts[0].lower()
         arg = parts[1] if len(parts) > 1 else ""
 
-        if command in ("/exit", "/quit", "/q"):
+        if command in ("/exit", "/quit"):
             self._app.exit()
-        elif command in ("/clear", "/cls"):
-            self.msg_buf.clear()
+        elif command in ("/clear",):
+            self.history.clear()
             self._refresh_output()
-            self._print_system("Chat geleert.")
-        elif command in ("/help", "/h", "/?"):
+        elif command in ("/help",):
             self._show_help()
         elif command == "/config":
             cfg = self.config.agent
-            self._print_system(
-                f"[cyan]Provider:[/cyan] {cfg.provider}\n"
-                f"[cyan]Model:[/cyan] {cfg.model}\n"
-                f"[cyan]Temperature:[/cyan] {cfg.temperature}"
-            )
+            _cprint(f"[cyan]Provider:[/cyan] {cfg.provider}")
+            _cprint(f"[cyan]Model:[/cyan] {cfg.model}")
+            _cprint(f"[cyan]Temperature:[/cyan] {cfg.temperature}")
         elif command == "/memory":
             facts = self._facts.all()
             if facts:
-                lines = "\n".join(f"[cyan]{k}[/cyan]: {v}" for k, v in facts.items())
-                self._print_system(lines)
+                for k, v in facts.items():
+                    _cprint(f"[cyan]{k}[/cyan]: {v}")
             else:
-                self._print_system("[dim]Keine Fakten gespeichert.[/dim]")
+                _cprint("[dim italic]Keine Fakten gespeichert.[/dim italic]")
         elif command == "/skills":
             if self._skill_loader and self._skill_loader.skills:
-                lines = "\n".join(
-                    f"[cyan]{s.command}[/cyan]: {s.description[:60]}"
-                    for s in self._skill_loader.skills
-                )
-                self._print_system(lines)
+                for s in self._skill_loader.skills:
+                    _cprint(f"[cyan]{s.command}[/cyan]: {s.description[:60]}")
             else:
-                self._print_system("[dim]Keine Skills installiert.[/dim]")
+                _cprint("[dim italic]Keine Skills installiert.[/dim italic]")
         elif command == "/context":
             msgs = self.agent._build_messages(self._session)
             tokens = self.agent.estimate_tokens(msgs)
             max_ctx = self.config.context.max_tokens
             pct = (tokens / max_ctx) * 100
             color = "red" if pct > 80 else "yellow" if pct > 50 else "green"
-            self._print_system(
-                f"[cyan]Nachrichten:[/cyan] {len(self._session.messages)}\n"
-                f"[cyan]Tokens:[/cyan] [{color}]{tokens}[/{color}] / {max_ctx} ({pct:.1f}%)"
-            )
+            _cprint(f"[cyan]Nachrichten:[/cyan] {len(self._session.messages)}")
+            _cprint(f"[cyan]Tokens:[/cyan] [{color}]{tokens}[/{color}] / {max_ctx} ({pct:.1f}%)")
         else:
-            self._print_system(f"[red]Unbekannter Befehl:[/red] {command}")
+            _cprint(f"[red]Unbekannter Befehl:[/red] {command}")
 
     def _show_help(self):
-        lines = [
-            "[bold]CucumberAgent Commands[/bold]",
+        for line in (
+            "[bold]Commands[/bold]",
             "[cyan]/help[/cyan]     Diese Hilfe",
             "[cyan]/exit[/cyan]     Beenden",
             "[cyan]/clear[/cyan]    Chat leeren",
@@ -490,74 +452,57 @@ class CucumberTUI:
             "[cyan]/context[/cyan]   Context-Status",
             "",
             "[dim]Alles andere = Chat mit dem Agenten[/dim]",
-        ]
-        for line in lines:
-            self._print_system(line)
+        ):
+            _cprint(line)
 
-    # ── Agent loop ───────────────────────────────────────────────────────────
+    # ── Agent loop ─────────────────────────────────────────────────────────
 
     async def _run_chat(self, user_input: str):
-        from cucumber_agent.session import Message, Role
-        from cucumber_agent.tools import ToolRegistry
-        import re
-
-        ts = datetime.now()
-        self.msg_buf.add_user(user_input, ts)
-        self.msg_buf.add_blank()
+        self.history.add_user(user_input)
+        _cprint(f"[dim]Nachricht gesendet…[/]")
         self._refresh_output()
 
         try:
             response = await self.agent.run_with_tools(self._session, user_input)
 
-            if response.content and response.content.strip():
-                clean = _strip_reasoning(response.content).strip()
-                if clean:
-                    self.msg_buf.add_assistant(clean, datetime.now(), self.config.personality.name)
-                    self.msg_buf.add_blank()
+            if response.content:
+                clean = _strip_reasoning(response.content)
+                if clean.strip():
+                    self.history.add_assistant(clean)
                     self._refresh_output()
 
             if response.tool_calls:
                 for tc in response.tool_calls:
-                    ts_tc = datetime.now()
-                    self.msg_buf.add_tool(tc.name, tc.arguments, "Executing...", ts_tc)
+                    self.history.add_tool(tc.name, tc.arguments, "Executing…")
                     self._refresh_output()
 
                     try:
-                        result = await ToolRegistry.execute(tc.name, **tc.arguments)
+                        result = await self.agent.tools.execute(tc.name, **tc.arguments)
                         output = result.output if result.success else f"ERROR: {result.error or result.output}"
                     except Exception as e:
                         output = f"EXCEPTION: {e}"
 
+                    from cucumber_agent.session import Message, Role
                     self._session.messages.append(Message(
                         role=Role.TOOL, content=output, name=tc.name, tool_call_id=tc.id
                     ))
-                    self.msg_buf.add_tool(tc.name, tc.arguments, output, datetime.now())
-                    self.msg_buf.add_assistant(
-                        f"[green]✓[/green] {tc.name}\n{output[:300]}",
-                        datetime.now(),
-                        self.config.personality.name
-                    )
-                    self.msg_buf.add_blank()
+                    self.history.add_tool(tc.name, tc.arguments, output)
                     self._refresh_output()
 
-            # Context usage
-            current_msgs = self.agent._build_messages(self._session)
-            total_tokens = self.agent.estimate_tokens(current_msgs)
+            msgs = self.agent._build_messages(self._session)
+            tokens = self.agent.estimate_tokens(msgs)
             max_ctx = self.config.context.max_tokens
-            usage_pct = (total_tokens / max_ctx) * 100
-            color = "red" if usage_pct > 80 else "yellow" if usage_pct > 50 else "green"
-            self._print_system(
-                f"[dim]Context: [{color}]{total_tokens}[/{color}] / {max_ctx} tokens ({usage_pct:.1f}%)[/dim]"
-            )
+            pct = (tokens / max_ctx) * 100
+            color = "red" if pct > 80 else "yellow" if pct > 50 else "green"
+            _cprint(f"[dim]Context: [{color}]{tokens}[/{color}] / {max_ctx} tokens ({pct:.1f}%)[/dim]")
 
             if self.config.memory.enabled:
                 await self._maybe_compress()
 
         except Exception as e:
             import traceback
-            self.msg_buf.add_error(f"Fehler: {e}", datetime.now())
-            self._print_system(f"[dim]{traceback.format_exc()[:200]}[/dim]")
-            self.msg_buf.add_blank()
+            self.history.add_error(f"Fehler: {e}")
+            _cprint(f"[dim]{traceback.format_exc()[:200]}[/dim]")
             self._refresh_output()
 
     async def _maybe_compress(self):
@@ -572,15 +517,4 @@ class CucumberTUI:
         self._session.messages = remaining
         from cucumber_agent.memory import SessionSummary
         SessionSummary(self.config.memory.summary_file).save(new_summary)
-        self._print_system("[dim]✓ Kontext komprimiert.[/dim]")
-        self._refresh_output()
-
-    # ── Output helpers ───────────────────────────────────────────────────────
-
-    def _refresh_output(self):
-        """Re-render the message buffer to the output window."""
-        self._output_control.text = self.msg_buf.get_formatted_text()
-
-    def _print_system(self, text: str):
-        self.msg_buf.add_system(text, datetime.now())
-        self._refresh_output()
+        _cprint(f"[dim italic]✓ Kontext komprimiert.[/dim italic]")
