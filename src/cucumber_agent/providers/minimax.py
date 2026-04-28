@@ -7,10 +7,10 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
 import httpx
+from rich.console import Console
 
 from cucumber_agent.provider import BaseProvider, ModelResponse, ProviderRegistry, ToolCall
 from cucumber_agent.session import Message
-from rich.console import Console
 
 console = Console()
 
@@ -83,7 +83,16 @@ class MiniMaxProvider(BaseProvider):
                         response.raise_for_status()
 
                 response.raise_for_status()
-                data = response.json()
+                text = response.text.strip()
+                if not text:
+                    console.print("[yellow]MiniMax returned empty response[/yellow]")
+                    raise ValueError("Empty response from MiniMax API")
+                try:
+                    data = json.loads(text)
+                except json.JSONDecodeError as e:
+                    console.print(f"[red]MiniMax JSON Parse Error:[/red] {e}")
+                    console.print(f"[red]Response text:[/red] {text[:500]}")
+                    raise ValueError(f"Invalid JSON from MiniMax: {e}") from e
                 return self._parse_response(data, model)
 
             except httpx.HTTPStatusError as e:
