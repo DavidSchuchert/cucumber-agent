@@ -164,8 +164,14 @@ class Agent:
 
         return response
 
-    async def synthesize(self, session: Session, prompt: str = "") -> str:
-        """Synthesize a response based on recent tool results in session."""
+    async def synthesize(self, session: Session, prompt: str = "", max_depth: int = 1) -> str:
+        """Synthesize a response based on recent tool results in session.
+
+        Args:
+            session: The current session with tool results
+            prompt: Optional prompt to guide the synthesis
+            max_depth: Maximum recursion depth for tool execution (default 1)
+        """
         # Build messages WITHOUT modifying session
         messages = []
 
@@ -179,36 +185,16 @@ class Agent:
                 messages.append(m)
 
         if prompt:
-            messages.append(Message(role=Role.USER, content=prompt))
+            messages.append(Message(role=Role.USER, content=prompt + " Antworte dem Benutzer direkt. Keine weiteren Werkzeug-Aufrufe."))
 
-        # Allow tools for synthesis (for follow-up actions)
-        tools = self.get_tools_spec()
-
+        # No tools for synthesis to avoid loops
         response = await self._provider.complete(
             messages=messages,
             model=self._agent_config.model,
             temperature=self._agent_config.temperature,
             max_tokens=self._agent_config.max_tokens,
-            tools=tools if tools else None,
+            tools=None,  # No tools for synthesis - prevents loops
         )
-
-        # If tool calls came back, execute and get final response
-        if response.tool_calls:
-            # Execute ALL tool calls in sequence
-            for tc in response.tool_calls:
-                result = await ToolRegistry.execute(tc.name, **tc.arguments)
-                messages.append(Message(
-                    role=Role.USER,
-                    content=f"[TOOL_RESULT] {tc.name}: {result.output if result.success else 'ERROR: ' + (result.error or result.output)}"
-                ))
-            # Final completion - no more tools to avoid loops
-            response = await self._provider.complete(
-                messages=messages,
-                model=self._agent_config.model,
-                temperature=self._agent_config.temperature,
-                max_tokens=self._agent_config.max_tokens,
-                tools=None,  # No more tools to prevent loops
-            )
 
         return response.content
 
