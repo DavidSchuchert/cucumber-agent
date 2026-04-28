@@ -1,18 +1,5 @@
 """
 CucumberAgent Textual TUI — Full rewrite of the CLI interface.
-
-Layout:
-┌─────────────────────────────────────────┐
-│ HEADER: Name · Provider/Model · Status  │
-├─────────────────────────────────────────┤
-│  CHAT LOG (scrollable, bubble-style)    │
-│    - User messages (green, left)        │
-│    - Assistant messages (blue, right)   │
-│    - Tool calls (yellow, indented)     │
-│    - Timestamps (dim)                   │
-├─────────────────────────────────────────┤
-│ INPUT: > [prompt input]                 │
-└─────────────────────────────────────────┘
 """
 
 from __future__ import annotations
@@ -22,47 +9,41 @@ import re
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.css.query import NoMatches
-from textual.message import Message as TuiMessage
-from textual.reactive import reactive
-from textual.widgets import Button, Input, Static
+from textual.widgets import Input, Static
 from textual.widgets._rich_log import RichLog
 
 if TYPE_CHECKING:
     from cucumber_agent.agent import Agent
     from cucumber_agent.config import Config
-    from cucumber_agent.session import Message as AgentMessage
 
 
 # ─── Colors ────────────────────────────────────────────────────────────────────
 
-CUCUMBER_GREEN = "#4ade80"
-CUCUMBER_DARK = "#166534"
-HEADER_BG = "#0f172a"
-SURFACE = "#0b0e14"
-SURFACE_ALT = "#111827"
-BORDER = "#1e293b"
-TEXT_DIM = "#64748b"
-TEXT_MUTED = "#475569"
-USER_BG = "#14532d"
-ASSISTANT_BG = "#1e3a5f"
-TOOL_BG = "#292524"
-TOOL_BORDER = "#78716c"
-ERROR_BG = "#7f1d1d"
-TIMESTAMP_COLOR = "#475569"
-INPUT_BG = "#0f172a"
+# CSS (hex): use in CSS strings or Style objects
+GREEN_HEX   = "#4ade80"
+DKGREEN_HEX = "#166534"
+HBG_HEX     = "#0f172a"
+BG_HEX      = "#0b0e14"
+IBG_HEX     = "#111827"
+BORDER_HEX  = "#1e3a2f"
+DIM_HEX     = "#64748b"
+
+# Rich markup: use in [tag] markup strings — Rich only supports named colors
+GREEN  = "green"
+DIM    = "dim"
 
 
 # ─── Message Data ─────────────────────────────────────────────────────────────
 
 @dataclass
 class ChatMessageData:
-    role: str       # "user" | "assistant" | "tool" | "system" | "error"
+    role: str
     content: str
     timestamp: datetime = field(default_factory=datetime.now)
     tool_name: str | None = None
@@ -70,110 +51,31 @@ class ChatMessageData:
     tool_id: str | None = None
 
 
-# ─── Main App ─────────────────────────────────────────────────────────────────
+# ─── App ───────────────────────────────────────────────────────────────────────
 
 class CucumberTUI(App):
-    """The CucumberAgent Textual TUI."""
 
     CSS = f"""
     CucumberTUI {{
-        background: {SURFACE};
+        background: {BG_HEX};
         color: #e2e8f0;
     }}
 
     #header {{
-        height: 3;
-        background: {HEADER_BG};
-        border: solid {BORDER};
-        border-bottom: thick {CUCUMBER_GREEN};
-        padding: 0 2;
+        height: 2;
+        background: {HBG_HEX};
         dock: top;
     }}
 
     #chat-scroll {{
-        background: {SURFACE};
-        overflow-y: auto;
-        scrollbar-size: 1 1;
-    }}
-
-    #chat-log {{
-        padding: 1 2;
-        height: 100%;
+        background: {BG_HEX};
+        dock: top;
     }}
 
     #input-area {{
         height: 3;
-        background: {INPUT_BG};
-        border-top: solid {BORDER};
+        background: {IBG_HEX};
         dock: bottom;
-        padding: 0 2;
-    }}
-
-    #user-input {{
-        background: {SURFACE};
-        border: solid {BORDER};
-        color: #e2e8f0;
-        padding: 0 1;
-    }}
-
-    .timestamp {{
-        width: 5;
-        align: center middle;
-        color: {TIMESTAMP_COLOR};
-        padding: 0 1;
-    }}
-
-    .user-row, .assistant-row, .tool-row, .error-row, .system-row {{
-        height: auto;
-        margin-bottom: 1;
-    }}
-
-    .user-content {{
-        background: {USER_BG};
-        color: #bbf7d0;
-        border-left: thick {CUCUMBER_GREEN};
-        padding: 0 2;
-        width: auto;
-        max-width: 80%;
-        height: auto;
-    }}
-
-    .assistant-content {{
-        background: {ASSISTANT_BG};
-        color: #e2e8f0;
-        border-left: thick {CUCUMBER_DARK};
-        padding: 0 2;
-        width: auto;
-        max-width: 80%;
-        height: auto;
-    }}
-
-    .tool-row {{
-        layout: horizontal;
-    }}
-
-    .tool-content {{
-        background: {TOOL_BG};
-        border: solid {TOOL_BORDER};
-        color: #d6d3d1;
-        padding: 0 2;
-        width: auto;
-        max-width: 85%;
-        height: auto;
-    }}
-
-    .error-content {{
-        background: {ERROR_BG};
-        color: #fecaca;
-        border-left: thick #ef4444;
-        padding: 0 2;
-        width: auto;
-        max-width: 85%;
-    }}
-
-    .system-content {{
-        color: {TEXT_DIM};
-        text-style: italic;
     }}
     """
 
@@ -181,7 +83,6 @@ class CucumberTUI(App):
         Binding("ctrl+c", "quit", "Quit", show=True),
         Binding("ctrl+l", "clear_chat", "Clear", show=False),
         Binding("ctrl+k", "show_help", "Help", show=False),
-        Binding("escape", "quit", "", show=False),
     ]
 
     def __init__(self, agent: "Agent", config: "Config", **kwargs):
@@ -189,7 +90,6 @@ class CucumberTUI(App):
         self.agent = agent
         self.config = config
         self.messages: list[ChatMessageData] = []
-        self._thinking = False
         self._skill_loader = None
 
     # ── Lifecycle ────────────────────────────────────────────────────────────
@@ -198,40 +98,33 @@ class CucumberTUI(App):
         self.title = f"CucumberAgent — {self.config.agent.model}"
         self.sub_title = f"{self.config.agent.provider} · {self.config.personality.name}"
         # Enable markup on RichLog
-        chat_log = self.query_one("#chat-log", RichLog)
-        chat_log.markup = True
-        self._print_header()
-        self._print_welcome()
-        self._focus_input()
+        self.query_one("#chat-log", RichLog).markup = True
         self._init_agent_session()
+        self._print_welcome()
 
     def compose(self) -> ComposeResult:
-        from textual.widgets import Input
-        yield Container(Static(id="header"))
+        yield Container(Static(id="header"), id="header-container")
         yield VerticalScroll(RichLog(id="chat-log"), id="chat-scroll")
-        inp = Input(placeholder="Nachricht eingeben...", id="user-input")
-        inp.border_title = "> "
-        inp.border_title_color = CUCUMBER_GREEN
-        yield Horizontal(inp, id="input-area")
+        yield Horizontal(
+            Input(placeholder="Nachricht eingeben...", id="user-input"),
+            id="input-area",
+        )
 
     def _init_agent_session(self):
-        """Initialize agent session, memory, and skills (once at startup)."""
+        """Initialize agent session, memory, and skills."""
         from cucumber_agent.memory import FactsStore, SessionSummary
         from cucumber_agent.session import Session
         from cucumber_agent.workspace import WorkspaceDetector
-        from cucumber_agent.tools import CustomToolLoader
+        from cucumber_agent import tools as tools_module
 
         self._agent_session = Session(id="tui", model=self.config.agent.model)
 
-        # Workspace
         ws = WorkspaceDetector.detect(self.config.workspace)
         self._agent_session.metadata["workspace"] = ws.to_context_string()
 
-        # Memory
         self._facts = FactsStore(self.config.memory.facts_file)
         self._agent_session.metadata["facts_context"] = self._facts.to_context_string()
 
-        # Agent self-awareness
         config_dir = self.config.config_dir
         wiki_dir = self.config.workspace / "wiki"
         self._agent_session.metadata["agent_context"] = (
@@ -241,7 +134,6 @@ class CucumberTUI(App):
             f"Project Wiki: {wiki_dir}"
         )
 
-        # Long-term memory
         if self.config.memory.enabled:
             summary_store = SessionSummary(self.config.memory.summary_file)
             summary = summary_store.load()
@@ -252,34 +144,25 @@ class CucumberTUI(App):
             if summary:
                 self._agent_session.metadata["summary"] = summary
 
-        # Skills
         from cucumber_agent.skills import SkillLoader
         self._skill_loader = SkillLoader()
         self._skill_loader.load_all()
 
-        # Custom tools
-        from cucumber_agent import tools as tools_module
         self._custom_tool_loader = tools_module.CustomToolLoader()
         self._custom_tool_loader.load_all()
 
-    def _print_header(self):
-        header = self.query_one("#header", Static)
-        pers = self.config.personality
-        agent = self.config.agent
-        header.update(
-            f"[bold green]{pers.emoji} {pers.name}[/bold green]"
-            f"  [dim]·[/dim]  [cyan]{agent.provider}[/cyan]/[cyan]{agent.model}[/cyan]"
-            f"  [dim]·[/dim]  [dim]Ctrl+L Clear  Ctrl+K Help  Esc Quit[/dim]"
-        )
-
     def _print_welcome(self):
         pers = self.config.personality
+        header = self.query_one("#header", Static)
+        header.update(
+            f"[bold][{GREEN}]{pers.emoji} {pers.name}[/{GREEN}][/bold]"
+            f"  [dim]·[/dim]  [cyan]{self.config.agent.provider}[/cyan]/[cyan]{self.config.agent.model}[/cyan]"
+            f"  [dim]·[/dim]  [dim]Ctrl+L Clear  Ctrl+K Help  Ctrl+C Quit[/dim]"
+        )
         self.add_message(
-            role="system",
-            content=(
-                f"[bold green]{pers.emoji} {pers.name}[/bold green] "
-                f"[dim]— Chat startklar. Sag was du brauchst![/dim]"
-            ),
+            "system",
+            f"[bold][{GREEN}]{pers.emoji} {pers.name}[/{GREEN}][/bold] "
+            f"[dim]— Chat startklar. Sag was du brauchst![/dim]",
         )
 
     # ── Message Management ──────────────────────────────────────────────────
@@ -302,95 +185,100 @@ class CucumberTUI(App):
             tool_id=tool_id,
         )
         self.messages.append(msg)
-        self._write_to_rich_log(msg)
+        self._write_message(msg)
         self._scroll_to_bottom()
 
-    def _write_to_rich_log(self, msg: ChatMessageData):
-        """Write a single formatted message to the RichLog widget."""
+    def _write_message(self, msg: ChatMessageData):
         chat_log = self.query_one("#chat-log", RichLog)
         line = self._format_message(msg)
         chat_log.write(line)
 
     def _clear_chat_log(self):
-        chat_log = self.query_one("#chat-log", RichLog)
-        chat_log.clear()
+        self.query_one("#chat-log", RichLog).clear()
 
     def _format_message(self, msg: ChatMessageData) -> str:
         ts = msg.timestamp.strftime("%H:%M")
-        content = self._markup(msg.content)
 
         if msg.role == "user":
-            return (
-                f"[dim]{ts}[/dim]  "
-                f"[green]{content}[/green]\n"
-            )
+            # User content: escape any [brackets] to prevent markup injection
+            content = self._esc_markup(msg.content)
+            return f"[{DIM}]{ts}[/{DIM}]  [{GREEN}]{content}[/{GREEN}]\n\n"
+
         elif msg.role == "assistant":
-            return (
-                f"        {content}  [dim]{ts}[/dim]\n"
-            )
+            # Assistant content: no escaping (it's from the model, Rich handles it)
+            content = msg.content
+            return f"[          {content}  [{DIM}]{ts}[/{DIM}]\n\n"
+
         elif msg.role == "tool":
             name = msg.tool_name or "tool"
             args_s = ", ".join(
                 f"{k}={str(v)[:60]}" for k, v in (msg.tool_args or {}).items() if k != "reason"
             )
-            args_d = f" [dim]([/dim][yellow]{args_s}[/yellow][dim])[/dim]" if args_s else ""
-            result_preview = content[:300] if content else "[no output]"
+            args_d = f"  [dim]([{DIM}][yellow]{args_s}[/{DIM}][yellow][dim])[/{DIM}]" if args_s else ""
+            result = self._esc_markup(msg.content[:200]) if msg.content else "[no output]"
             return (
-                f"  [yellow]⚡ {name}[/yellow]{args_d}  [dim]{ts}[/dim]\n"
-                f"    [dim]{result_preview}...[/dim]\n"
+                f"  [{DIM}][yellow]⚡ {name}[/{DIM}][yellow]{args_d}[/{DIM}]\n"
+                f"    [{DIM}]{result}[/{DIM}]...\n\n"
             )
-        elif msg.role == "error":
-            return f"[red]✗[/red] {content}  [dim]{ts}[/dim]\n"
-        else:
-            return f"[dim]{content}[/dim]  {ts}\n"
 
-    def _markup(self, text: str) -> str:
-        """Apply basic markup to text content."""
+        elif msg.role == "error":
+            content = self._esc_markup(msg.content)
+            return f"[red]✗[/{red}] {content}  [{DIM}]{ts}[/{DIM}]\n\n"
+
+        else:  # system
+            # System content: these are app-generated markup strings, no escaping needed
+            return f"{msg.content}  [{DIM}]{ts}[/{DIM}]\n\n"
+
+    def _esc_markup(self, text: str) -> str:
+        """Escape text so it's treated as literal (no markup processing)."""
         if not text:
             return ""
-        # Protect literal [[ and ]]
-        text = text.replace("[[", "\x00L\x00").replace("]]", "\x00R\x00")
-        # Escape brackets for Rich
-        text = text.replace("[", "[[")
-        text = text.replace("\x00L\x00", "[[")
-        text = text.replace("\x00R\x00", "]]")
-        # Bold
-        text = re.sub(r'\*\*(.+?)\*\*', r'[bold]\1[/bold]', text)
-        # Italic
-        text = re.sub(r'\*(.+?)\*', r'[italic]\1[/italic]', text)
-        # Inline code
-        text = re.sub(r'`(.+?)`', r'[yellow]\1[/yellow]', text)
-        return text
+        # Replace [ with [[ (Rich escape) — but only if not already an escape
+        # We use [[ to represent a literal [
+        result = ""
+        i = 0
+        while i < len(text):
+            c = text[i]
+            if c == "[":
+                # Check if this looks like a Rich tag: [colorname/] or [bold] etc.
+                # Simple heuristic: if followed by alphanumeric before ]
+                if i + 1 < len(text) and text[i+1].isalpha():
+                    # Might be a tag — escape the [
+                    result += "[["
+                    i += 1
+                else:
+                    result += "[["
+                    i += 1
+            else:
+                result += c
+                i += 1
+        return result
 
     def _scroll_to_bottom(self):
         try:
-            scroll = self.query_one("#chat-scroll", VerticalScroll)
-            scroll.scroll_end(animate=False)
+            self.query_one("#chat-scroll", VerticalScroll).scroll_end(animate=False)
         except NoMatches:
             pass
 
     def _focus_input(self):
         try:
-            inp = self.query_one("#user-input", Input)
-            inp.focus()
+            self.query_one("#user-input", Input).focus()
         except NoMatches:
             pass
 
-    # ── Input ────────────────────────────────────────────────────────────────
+    # ── Input ───────────────────────────────────────────────────────────────
 
     def on_input_submitted(self, event: Input.Submitted):
-        if self._thinking:
-            return
         user_text = event.value.strip()
         if not user_text:
             return
+        event.input.value = ""
         if user_text.startswith("/"):
             self._handle_command(user_text)
         else:
             asyncio.create_task(self._run_chat(user_text))
 
     def _handle_command(self, cmd: str):
-        """Handle slash commands locally (no agent call)."""
         parts = cmd.strip().split(maxsplit=1)
         command = parts[0].lower()
         arg = parts[1] if len(parts) > 1 else ""
@@ -400,7 +288,7 @@ class CucumberTUI(App):
         elif command in ("/clear", "/cls"):
             self.messages.clear()
             self._clear_chat_log()
-            self.add_message("system", "Chat geleert.")
+            self.add_message("system", "[dim]Chat geleert.[/dim]")
         elif command in ("/help", "/h", "/?"):
             self._show_help()
         elif command == "/config":
@@ -408,8 +296,7 @@ class CucumberTUI(App):
             self.add_message("system",
                 f"[cyan]Provider:[/cyan] {cfg.provider}\n"
                 f"[cyan]Model:[/cyan] {cfg.model}\n"
-                f"[cyan]Temperature:[/cyan] {cfg.temperature}\n"
-                f"[cyan]Max Tokens:[/cyan] {cfg.max_tokens}"
+                f"[cyan]Temperature:[/cyan] {cfg.temperature}"
             )
         elif command == "/memory":
             facts = self._facts.all()
@@ -417,7 +304,7 @@ class CucumberTUI(App):
                 lines = "\n".join(f"[cyan]{k}[/cyan]: {v}" for k, v in facts.items())
                 self.add_message("system", lines)
             else:
-                self.add_message("system", "Keine Fakten gespeichert.")
+                self.add_message("system", "[dim]Keine Fakten gespeichert.[/dim]")
         elif command == "/skills":
             if self._skill_loader and self._skill_loader.skills:
                 lines = "\n".join(
@@ -426,9 +313,8 @@ class CucumberTUI(App):
                 )
                 self.add_message("system", lines)
             else:
-                self.add_message("system", "Keine Skills installiert.")
+                self.add_message("system", "[dim]Keine Skills installiert.[/dim]")
         elif command == "/context":
-            from cucumber_agent.agent import Agent
             msgs = self.agent._build_messages(self._agent_session)
             tokens = self.agent.estimate_tokens(msgs)
             max_ctx = self.config.context.max_tokens
@@ -456,32 +342,27 @@ class CucumberTUI(App):
             "[cyan]/context[/cyan]   Context-Status",
             "",
             "[dim]Alles andere = Chat mit dem Agenten[/dim]",
-            "[dim]Ctrl+L Clear  Ctrl+K Help  Esc Quit[/dim]",
         ]
         self.add_message("system", "\n".join(lines))
 
     # ── Agent Chat ───────────────────────────────────────────────────────────
 
     async def _run_chat(self, user_input: str):
-        """Run a full agent turn with tool execution."""
         from cucumber_agent.session import Message, Role
         from cucumber_agent.tools import ToolRegistry
         import re
 
-        self._thinking = True
         self.add_message("user", user_input)
 
         try:
             response = await self.agent.run_with_tools(self._agent_session, user_input)
 
-            # Display text content (without thinking blocks)
             if response.content and response.content.strip():
                 clean = re.sub(
-                    r'<(think|thinking|thought)>(.*?)</\1>',
+                    r'<(?:think|thinking|thought)>(.*?)</(?:think|thinking|thought)>',
                     '', response.content, flags=re.DOTALL | re.IGNORECASE
                 ).strip()
                 if clean:
-                    # Show any thinking blocks separately
                     thinking = re.findall(
                         r'<(?:think|thinking|thought)>(.*?)</(?:think|thinking|thought)>',
                         response.content, flags=re.DOTALL | re.IGNORECASE
@@ -491,84 +372,51 @@ class CucumberTUI(App):
                             self.add_message("assistant", f"[dim italic]💭 {block.strip()}[/dim italic]")
                     self.add_message("assistant", clean)
 
-            # Handle tool calls
             if response.tool_calls:
                 for tc in response.tool_calls:
-                    self.add_message(
-                        "tool",
-                        "Executing...",
-                        tool_name=tc.name,
-                        tool_args=tc.arguments,
-                        tool_id=tc.id,
-                    )
-
-                    # Execute tool
+                    self.add_message("tool", "Executing...", tool_name=tc.name, tool_args=tc.arguments, tool_id=tc.id)
                     try:
                         result = await ToolRegistry.execute(tc.name, **tc.arguments)
-                        if result.success:
-                            output = result.output or "(no output)"
-                        else:
-                            output = f"ERROR: {result.error or result.output}"
+                        output = result.output if result.success else f"ERROR: {result.error or result.output}"
                     except Exception as e:
                         output = f"EXCEPTION: {e}"
 
-                    # Append tool result to session (as Role.TOOL message)
                     self._agent_session.messages.append(Message(
-                        role=Role.TOOL,
-                        content=output,
-                        name=tc.name,
-                        tool_call_id=tc.id,
+                        role=Role.TOOL, content=output, name=tc.name, tool_call_id=tc.id
                     ))
+                    self.add_message("assistant", f"[green]✓[/green] {tc.name}\n[dim]{output[:500]}[/dim]")
 
-                    # Show result in chat
-                    self.add_message(
-                        "assistant",
-                        f"[green]✓[/green] {tc.name}\n[dim]{output[:500]}[/dim]",
-                    )
-
-            # Show context usage
             current_msgs = self.agent._build_messages(self._agent_session)
             total_tokens = self.agent.estimate_tokens(current_msgs)
             max_ctx = self.config.context.max_tokens
             usage_pct = (total_tokens / max_ctx) * 100
             color = "red" if usage_pct > 80 else "yellow" if usage_pct > 50 else "green"
-            self.add_message(
-                "system",
-                f"[dim]Context: [{color}]{total_tokens}[/{color}] / {max_ctx} tokens ({usage_pct:.1f}%)[/dim]"
-            )
+            self.add_message("system", f"[dim]Context: [{color}]{total_tokens}[/{color}] / {max_ctx} tokens ({usage_pct:.1f}%)[/dim]")
 
-            # Auto-compress if needed
             if self.config.memory.enabled:
                 await self._maybe_compress()
 
         except Exception as e:
             import traceback
-            self.add_message("error", f"Fehler: {e}\n{traceback.format_exc()}")
+            self.add_message("error", f"Fehler: {e}\n[dim]{traceback.format_exc()[:200]}[/dim]")
         finally:
-            self._thinking = False
             self._focus_input()
 
     async def _maybe_compress(self):
-        """Compress session if history is too long."""
         max_msgs = self.config.memory.max_session_messages
         if len(self._agent_session.messages) < max_msgs:
             return
-
         keep = self.config.memory.summarize_keep_recent
         to_sum = self._agent_session.messages[:-keep]
         remaining = self._agent_session.messages[-keep:]
-
         new_summary = await self.agent.summarize_messages(to_sum)
         self._agent_session.metadata["summary"] = new_summary
         self._agent_session.messages = remaining
-
         from cucumber_agent.memory import SessionSummary
-        store = SessionSummary(self.config.memory.summary_file)
-        store.save(new_summary)
-
+        SessionSummary(self.config.memory.summary_file).save(new_summary)
         self.add_message("system", "[dim]✓ Kontext komprimiert.[/dim]")
 
-    # ── Actions ──────────────────────────────────────────────────────────────
+    # ── Actions ─────────────────────────────────────────────────────────────
 
     def action_quit(self):
         self.exit()
@@ -576,7 +424,7 @@ class CucumberTUI(App):
     def action_clear_chat(self):
         self.messages.clear()
         self._clear_chat_log()
-        self.add_message("system", "Chat geleert.")
+        self.add_message("system", "[dim]Chat geleert.[/dim]")
 
     def action_show_help(self):
         self._show_help()
