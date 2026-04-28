@@ -151,6 +151,17 @@ class PreferencesConfig:
 
 
 @dataclass
+class MemoryConfig:
+    """Memory and persistence settings."""
+
+    enabled: bool = True
+    log_dir: Path = field(default_factory=lambda: Path.home() / ".cucumber" / "memory")
+    facts_file: Path = field(default_factory=lambda: Path.home() / ".cucumber" / "memory" / "facts.json")
+    max_session_messages: int = 20   # trigger context compression after this
+    summarize_keep_recent: int = 6   # keep this many recent messages when compressing
+
+
+@dataclass
 class ContextConfig:
     """Context/memory settings."""
 
@@ -180,6 +191,7 @@ class Config:
     user: UserConfig = field(default_factory=UserConfig)
     preferences: PreferencesConfig = field(default_factory=PreferencesConfig)
     context: ContextConfig = field(default_factory=ContextConfig)
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
     workspace: Path | None = None
 
     @classmethod
@@ -263,6 +275,16 @@ class Config:
             remember_last=ctx_data.get("remember_last", 10),
         )
 
+        # Load memory config
+        mem_data = data.get("memory", {})
+        memory = MemoryConfig(
+            enabled=mem_data.get("enabled", True),
+            log_dir=Path(mem_data.get("log_dir", str(Path.home() / ".cucumber" / "memory"))),
+            facts_file=Path(mem_data.get("facts_file", str(Path.home() / ".cucumber" / "memory" / "facts.json"))),
+            max_session_messages=mem_data.get("max_session_messages", 20),
+            summarize_keep_recent=mem_data.get("summarize_keep_recent", 6),
+        )
+
         # Load workspace
         workspace = data.get("workspace")
         if workspace:
@@ -276,6 +298,7 @@ class Config:
             user=user,
             preferences=preferences,
             context=context,
+            memory=memory,
             workspace=workspace,
         )
 

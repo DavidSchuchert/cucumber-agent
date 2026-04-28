@@ -26,8 +26,11 @@ from prompt_toolkit.styles import Style as PtkStyle
 
 from cucumber_agent.agent import Agent
 from cucumber_agent.config import Config
+from cucumber_agent.memory import FactsStore, SessionLogger
 from cucumber_agent.session import Session
+from cucumber_agent.skills import SkillLoader, SkillRunner
 from cucumber_agent.tools.registry import ToolRegistry
+from cucumber_agent.workspace import WorkspaceDetector
 
 console = Console()
 
@@ -110,13 +113,17 @@ def print_help() -> None:
     table.add_column("Beschreibung", style="white")
 
     commands = [
-        ("/help",     "Diese Hilfe anzeigen"),
-        ("/exit",     "CucumberAgent beenden"),
-        ("/clear",    "Gesprächsverlauf löschen"),
-        ("/config",   "Aktuelle Konfiguration anzeigen"),
-        ("/model",    "Aktuelles Modell anzeigen"),
-        ("/optimize", "Persönlichkeit basierend auf Namen optimieren"),
-        ("/debug",    "Debug-Modus ein/ausschalten"),
+        ("/help",          "Diese Hilfe anzeigen"),
+        ("/exit",          "CucumberAgent beenden"),
+        ("/clear",         "Gesprächsverlauf löschen (Kontext bleibt erhalten)"),
+        ("/config",        "Aktuelle Konfiguration anzeigen"),
+        ("/model",         "Aktuelles Modell anzeigen"),
+        ("/optimize",      "Persönlichkeit basierend auf Namen optimieren"),
+        ("/debug",         "Debug-Modus ein/ausschalten"),
+        ("/memory",        "Alle gemerkten Fakten anzeigen"),
+        ("/remember ...",  "Fakt merken, z.B. /remember name: David"),
+        ("/forget ...",    "Fakt vergessen, z.B. /forget name"),
+        ("/skills",        "Installierte Skills auflisten"),
     ]
     for cmd, desc in commands:
         table.add_row(cmd, desc)
@@ -224,38 +231,50 @@ class CliSession:
         self._running = False
         self._waiting_for_optimization_response = False
         self._debug_mode = False
-        self._pending_tool_calls: list[dict] = []  # Queue of pending tool calls
+        self._pending_tool_calls: list[dict] = []
         self._smart_retry = config.preferences.smart_retry
-        self._retry_count: dict[str, int] = {}  # Track retries per command
+        self._retry_count: dict[str, int] = {}
+
+        # Memory & persistence
+        self._facts = FactsStore(config.memory.facts_file)
+        self._logger = SessionLogger(config.memory.log_dir)
+
+        # Skills
+        self._skill_loader = SkillLoader()
+        self._skill_loader.load_all()
 
         # Import tools
         from cucumber_agent import tools  # noqa: F401
 
     async def run(self) -> None:
         """Run the REPL."""
+        # Populate session metadata once at startup
+        ws = WorkspaceDetector.detect(self._config.workspace)
+        self._session.metadata["workspace"] = ws.to_context_string()
+        self._session.metadata["facts_context"] = self._facts.to_context_string()
+
         print_welcome(self._config)
 
         pers = self._config.personality
 
-        # Build slash-command completer
+        # Build slash-command completer (static + skill commands)
         slash_commands = [
             "/help", "/exit", "/quit", "/clear",
             "/config", "/model", "/debug", "/optimize",
-        ]
-        completer = WordCompleter(slash_commands, sentence=True)
+            "/memory", "/remember", "/forget", "/skills",
+        ] + [s.command for s in self._skill_loader.skills]
+        completer = WordCompleter(sorted(set(slash_commands)), sentence=True)
 
-        # prompt_toolkit style — green prompt, dim autocomplete ghost text
         ptk_style = PtkStyle.from_dict({
-            "prompt":      "bold ansibright  green",
+            "prompt":       "bold ansibright  green",
             "auto-suggest": "fg:ansibrightblack",
         })
-
         history = InMemoryHistory()
         pt_session: PromptSession = PromptSession(
             history=history,
             auto_suggest=AutoSuggestFromHistory(),
             completer=completer,
-            complete_while_typing=False,  # only complete on Tab
+            complete_while_typing=False,
             style=ptk_style,
         )
 
@@ -298,22 +317,15 @@ class CliSession:
         # Regular chat
         console.print()
         try:
-            # Check if this is a greeting and optimization should be offered
             offer_optimization = self._agent.needs_optimization(user_input)
-
-            # Use non-streaming to properly handle tool calls
             response = await self._agent.run_with_tools(self._session, user_input)
 
-            # Check for tool calls FIRST
             if response.tool_calls:
-                # Suppress verbose text when tool calls present - just show minimal info
                 if response.content and response.content.strip():
                     words = response.content.lower()
                     if not any(w in words for w in ['ich', 'i will', 'let me', 'now', 'jetzt', 'werde']):
                         console.print(f"  [dim]{response.content.strip()}[/dim]")
                     console.print()
-
-                # Queue ALL tool calls, show first one
                 self._pending_tool_calls = [
                     {"name": tc.name, "arguments": tc.arguments}
                     for tc in response.tool_calls
@@ -321,12 +333,21 @@ class CliSession:
                 self._print_tool_call(self._pending_tool_calls[0])
                 return
             else:
-                # Print response with a subtle rule separator
                 pers = self._config.personality
                 console.print(Rule(f"[dim green]{pers.emoji}[/dim green]", style="dim green"))
                 console.print()
                 console.print(response.content)
                 console.print()
+
+                # Log the exchange
+                if self._config.memory.enabled:
+                    self._logger.log_exchange(user_input, response.content or "")
+
+                # Auto-compress if session is getting long
+                if self._config.memory.enabled and len(self._session.messages) >= self._config.memory.max_session_messages:
+                    console.print("  [dim]Komprimiere Kontext…[/dim]")
+                    await self._agent.compress_session(self._session)
+
 
             # After first greeting, offer optimization
             if offer_optimization:
@@ -419,9 +440,30 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
 
     async def _handle_command(self, user_input: str) -> None:
         """Handle slash commands."""
-        cmd = user_input.strip().lower()
+        # Hot-reload skills if files changed
+        if self._skill_loader.needs_reload():
+            self._skill_loader.load_all()
 
-        match cmd:
+        # Check for skill commands first
+        parts = user_input.strip().split(None, 1)
+        cmd_key = parts[0].lower()
+        skill = self._skill_loader.get(cmd_key)
+        if skill:
+            args = parts[1] if len(parts) > 1 else ""
+            console.print(f"  [dim magenta]⚡ Skill: {skill.name}[/dim magenta]\n")
+            result = await SkillRunner.run(skill, args, self._session, self._agent)
+            pers = self._config.personality
+            console.print(Rule(f"[dim green]{pers.emoji}[/dim green]", style="dim green"))
+            console.print()
+            console.print(result)
+            console.print()
+            return
+
+        cmd = user_input.strip().lower()
+        # Extract argument for parametric commands
+        arg = user_input.strip()[len(parts[0]):].strip()
+
+        match cmd.split()[0] if cmd else cmd:
             case "/help":
                 print_help()
             case "/exit" | "/quit":
@@ -429,7 +471,9 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                 console.print(f"[bold green]{pers.emoji}  Tschüss![/bold green]\n")
                 self._running = False
             case "/clear":
+                meta = dict(self._session.metadata)  # preserve workspace + facts
                 self._session = Session(id="main", model=self._config.agent.model)
+                self._session.metadata.update(meta)
                 console.print("  [dim green]✓ Gesprächsverlauf gelöscht[/dim green]\n")
             case "/config":
                 print_config(self._config)
@@ -443,6 +487,49 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                     self._print_debug_info()
                 else:
                     console.print("  [dim]Debug-Modus AUS[/dim]\n")
+            case "/memory":
+                facts = self._facts.all()
+                if not facts:
+                    console.print("  [dim]Keine gemerkten Fakten.[/dim]\n")
+                else:
+                    table = Table(show_header=False, box=None, padding=(0, 2))
+                    table.add_column("Key",   style="cyan")
+                    table.add_column("Value", style="white")
+                    for k, v in facts.items():
+                        table.add_row(k, v)
+                    console.print()
+                    console.print(Panel(table, title="[bold cyan]🧠 Gemerkte Fakten[/bold cyan]", border_style="cyan", padding=(0, 1)))
+                    console.print()
+            case "/remember":
+                if not arg:
+                    console.print("  [dim]Verwendung: /remember key: wert[/dim]\n")
+                else:
+                    key = self._facts.add_from_text(arg)
+                    # Update session metadata so it's active immediately
+                    self._session.metadata["facts_context"] = self._facts.to_context_string()
+                    console.print(f"  [green]✓ Gemerkt als „{key}“[/green]\n")
+            case "/forget":
+                if not arg:
+                    console.print("  [dim]Verwendung: /forget schlüssel[/dim]\n")
+                elif self._facts.delete(arg):
+                    self._session.metadata["facts_context"] = self._facts.to_context_string()
+                    console.print(f"  [green]✓ „{arg}“ vergessen[/green]\n")
+                else:
+                    console.print(f"  [dim]Kein Fakt namens „{arg}“ gefunden.[/dim]\n")
+            case "/skills":
+                skills = self._skill_loader.skills
+                if not skills:
+                    console.print("  [dim]Keine Skills installiert. Lege .yaml-Dateien in ~/.cucumber/skills/ ab.[/dim]\n")
+                else:
+                    table = Table(show_header=True, header_style="bold magenta", box=None, padding=(0, 2))
+                    table.add_column("Befehl",       style="bold cyan",  no_wrap=True)
+                    table.add_column("Args",          style="dim",        no_wrap=True)
+                    table.add_column("Beschreibung", style="white")
+                    for s in skills:
+                        table.add_row(s.command, s.args_hint, s.description)
+                    console.print()
+                    console.print(Panel(table, title="[bold magenta]⚡ Skills[/bold magenta]", border_style="magenta", padding=(0, 1)))
+                    console.print()
             case _:
                 console.print(f"  [dim]Unbekannter Befehl: [bold]{cmd}[/bold]. Tippe /help für Hilfe.[/dim]\n")
 

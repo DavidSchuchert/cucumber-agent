@@ -9,8 +9,9 @@ from typing import TYPE_CHECKING
 from cucumber_agent.config import Config
 from cucumber_agent.provider import BaseProvider, ModelResponse, ProviderRegistry
 from cucumber_agent.providers import (
-    minimax,  # noqa: F401
-    openrouter,  # noqa: F401
+    minimax,      # noqa: F401
+    openrouter,   # noqa: F401
+    ollama,       # noqa: F401
 )
 from cucumber_agent.session import Message, Role, Session
 from cucumber_agent.tools import ToolRegistry
@@ -165,14 +166,48 @@ class Agent:
 
         return response
 
-    async def synthesize(self, session: Session, prompt: str = "", max_depth: int = 1) -> str:
-        """Synthesize a response based on recent tool results in session.
+    async def compress_session(self, session: Session) -> None:
+        """Compress old messages into a compact summary to save tokens.
 
-        Args:
-            session: The current session with tool results
-            prompt: Optional prompt to guide the synthesis
-            max_depth: Maximum recursion depth for tool execution (default 1)
+        Keeps the most recent `remember_last` messages at full fidelity.
+        Older messages are summarised and stored in session.metadata['summary'].
+        The old messages are then removed from session.messages.
         """
+        keep = self._context_config.remember_last
+        if len(session.messages) <= keep:
+            return
+
+        old_messages = session.messages[:-keep]
+        session.messages = session.messages[-keep:]
+
+        # Build a minimal compression request (no tools, low temp)
+        compression_system = (
+            "Du fasst ein Gespräch präzise zusammen. "
+            "Halte alle wichtigen Fakten, Ergebnisse, getroffene Entscheidungen "
+            "und ausgeführte Befehle fest. Maximal 150 Wörter. Kein Smalltalk."
+        )
+        try:
+            response = await self._provider.complete(
+                messages=old_messages,
+                model=self._agent_config.model,
+                temperature=0.2,
+                max_tokens=350,
+                tools=None,
+                system_override=compression_system,
+            )
+            new_summary = response.content.strip()
+        except Exception:
+            return  # Fail silently — better to lose compression than crash
+
+        # Append to any existing summary
+        existing = session.metadata.get("summary", "")
+        if existing:
+            session.metadata["summary"] = existing + "\n\n[Neuere Zusammenfassung:]\n" + new_summary
+        else:
+            session.metadata["summary"] = new_summary
+
+    async def synthesize(self, session: Session, prompt: str = "", max_depth: int = 1) -> str:
+        """Synthesize a response based on recent tool results in session."""
         # Build messages WITHOUT modifying session
         messages = []
 
@@ -244,24 +279,42 @@ class Agent:
         session.add_assistant_message(full_response)
 
     def _build_messages(self, session: Session) -> list[Message]:
-        """Build message list with context trimming."""
-        messages = []
+        """Build message list using 3-tier memory architecture.
 
-        system_prompt = self._agent_config.system_prompt
-        if system_prompt:
-            messages.append(Message(role=Role.SYSTEM, content=system_prompt))
+        Tier 1 (Pinned — always present):
+          - System prompt: personality + workspace + facts
+        Tier 2 (Historical summary — if compression has run):
+          - A single compressed summary of older messages
+        Tier 3 (Recent messages — full fidelity):
+          - Last `remember_last` messages
+        """
+        messages: list[Message] = []
 
-        system_tokens = estimate_tokens(system_prompt)
-        max_tokens = self._context_config.max_tokens
+        # ── Tier 1: Pinned system prompt ───────────────────────────────
+        system_parts = [self._agent_config.system_prompt]
 
-        history = session.messages
+        if workspace := session.metadata.get("workspace"):
+            system_parts.append(f"\n{workspace}")
 
+        if facts := session.metadata.get("facts_context"):
+            system_parts.append(f"\n{facts}")
+
+        messages.append(Message(role=Role.SYSTEM, content="\n".join(system_parts)))
+
+        # ── Tier 2: Historical summary ─────────────────────────────────
+        if summary := session.metadata.get("summary"):
+            messages.append(Message(
+                role=Role.USER,
+                content=f"[Gesprächszusammenfassung früherer Nachrichten:]\n{summary}",
+            ))
+            messages.append(Message(
+                role=Role.ASSISTANT,
+                content="Verstanden, ich berücksichtige den bisherigen Verlauf.",
+            ))
+
+        # ── Tier 3: Recent messages (never trimmed — compression handles this) ─
         remember_last = self._context_config.remember_last
-        if remember_last > 0 and len(history) > remember_last:
-            history = history[-remember_last:]
-
-        if history:
-            trimmed = trim_messages(history, max_tokens, system_tokens)
-            messages.extend(trimmed)
+        recent = session.messages[-remember_last:] if remember_last > 0 else session.messages
+        messages.extend(recent)
 
         return messages
