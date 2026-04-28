@@ -208,24 +208,15 @@ class CucumberTUI:
     """CucumberAgent TUI — prompt_toolkit + Rich, modeled after Hermes CLI."""
 
     def __init__(self, agent: Agent, config: Config):
-        import sys as _sys
-        _sys.stderr.write("DEBUG: CucumberTUI.__init__ gestartet\n")
-        _sys.stderr.flush()
         self.agent = agent
         self.config = config
         self._w = _term_width()
-        _sys.stderr.write(f"DEBUG: term_width={self._w}\n")
-        _sys.stderr.flush()
         self.history = MessageHistory(self._w)
-        _sys.stderr.write("DEBUG: MessageHistory erstellt\n")
-        _sys.stderr.flush()
         self._running = False
         self._session = None
         self._skill_loader = None
         self._facts = None
         self._ansi_obj = _PT_ANSI("")
-        _sys.stderr.write("DEBUG: Variablen init\n")
-        _sys.stderr.flush()
 
         # Output window
         def get_output_text() -> _PT_ANSI:
@@ -239,8 +230,6 @@ class CucumberTUI:
             self._output_control,
             style=f"bg:{C_BG} #e2e8f0",
         )
-        _sys.stderr.write("DEBUG: Output window erstellt\n")
-        _sys.stderr.flush()
 
         # Input area
         self._input_widget = TextArea(
@@ -252,12 +241,8 @@ class CucumberTUI:
             history=InMemoryHistory(),
             accept_handler=self._on_input,
         )
-        _sys.stderr.write("DEBUG: Input widget erstellt\n")
-        _sys.stderr.flush()
 
         self._root = HSplit([self._output_window, self._input_widget])
-        _sys.stderr.write("DEBUG: HSplit erstellt\n")
-        _sys.stderr.flush()
 
         self._kb = KeyBindings()
         @self._kb.add(Keys.ControlC, eager=True)
@@ -267,8 +252,6 @@ class CucumberTUI:
         def _clear(event):
             self.history.clear()
             self._refresh_output()
-        _sys.stderr.write("DEBUG: KeyBindings erstellt\n")
-        _sys.stderr.flush()
 
         self._app = Application(
             layout=Layout(self._root),
@@ -282,32 +265,17 @@ class CucumberTUI:
             }),
             erase_when_done=False,
         )
-        _sys.stderr.write("DEBUG: Application erstellt — __init__ FERTIG\n")
-        _sys.stderr.flush()
 
     # ── Public API ─────────────────────────────────────────────────────────
 
     def run(self):
-        import sys as _sys
-        _sys.stderr.write("DEBUG: run() gestartet\n")
-        _sys.stderr.flush()
-        # Banner needs real stdout — print BEFORE patch_stdout()
-        _sys.stderr.write("DEBUG: drucke banner vor patch_stdout\n")
-        _sys.stderr.flush()
+        # Banner printed to raw stdout before PT app starts
         self._print_banner_raw()
-        _sys.stderr.write("DEBUG: banner roh fertig\n")
-        _sys.stderr.flush()
         self._init_agent_session()
-        _sys.stderr.write("DEBUG: session init fertig\n")
-        _sys.stderr.flush()
         self._refresh_output()
-        _sys.stderr.write("DEBUG: output refresh fertig, starte app.run()\n")
-        _sys.stderr.flush()
         with patch_stdout():
             self._running = True
             self._app.run()
-        _sys.stderr.write("DEBUG: app beendet\n")
-        _sys.stderr.flush()
 
     # ── _cprint: Rich markup → Console → ANSI → PT_ANSI → print_formatted_text ──
 
@@ -374,8 +342,6 @@ class CucumberTUI:
             "",
         ):
             self._cprint(line)
-        _sys.stderr.write("DEBUG: _print_banner() fertig\n")
-        _sys.stderr.flush()
 
     # ── Output refresh ─────────────────────────────────────────────────────
 
@@ -388,29 +354,18 @@ class CucumberTUI:
     # ── Session init ───────────────────────────────────────────────────────
 
     def _init_agent_session(self):
-        import sys as _sys
-        _sys.stderr.write("DEBUG: _init_agent_session()\n")
-        _sys.stderr.flush()
         from cucumber_agent.memory import FactsStore, SessionSummary
         from cucumber_agent.session import Session
         from cucumber_agent.workspace import WorkspaceDetector
         from cucumber_agent import tools as tools_module
-        _sys.stderr.write("DEBUG: imports ok\n")
-        _sys.stderr.flush()
 
         self._session = Session(id="tui", model=self.config.agent.model)
-        _sys.stderr.write("DEBUG: session created\n")
-        _sys.stderr.flush()
 
         ws = WorkspaceDetector.detect(self.config.workspace)
         self._session.metadata["workspace"] = ws.to_context_string()
-        _sys.stderr.write("DEBUG: workspace ok\n")
-        _sys.stderr.flush()
 
         self._facts = FactsStore(self.config.memory.facts_file)
         self._session.metadata["facts_context"] = self._facts.to_context_string()
-        _sys.stderr.write("DEBUG: facts ok\n")
-        _sys.stderr.flush()
 
         config_dir = self.config.config_dir
         wiki_dir = self.config.workspace / "wiki"
@@ -420,8 +375,6 @@ class CucumberTUI:
             f"Custom Tools: {config_dir}/custom_tools | "
             f"Project Wiki: {wiki_dir}"
         )
-        _sys.stderr.write("DEBUG: agent_context ok\n")
-        _sys.stderr.flush()
 
         if self.config.memory.enabled:
             summary_store = SessionSummary(self.config.memory.summary_file)
@@ -432,19 +385,13 @@ class CucumberTUI:
                 summary = logger.get_recent_summary(days=3, max_entries=10)
             if summary:
                 self._session.metadata["summary"] = summary
-            _sys.stderr.write("DEBUG: summary ok\n")
-            _sys.stderr.flush()
 
         from cucumber_agent.skills import SkillLoader
         self._skill_loader = SkillLoader()
         self._skill_loader.load_all()
-        _sys.stderr.write("DEBUG: skills loaded\n")
-        _sys.stderr.flush()
 
         self._custom_tool_loader = tools_module.CustomToolLoader()
         self._custom_tool_loader.load_all()
-        _sys.stderr.write("DEBUG: tools loaded — _init_agent_session FERTIG\n")
-        _sys.stderr.flush()
 
     # ── Input handling ────────────────────────────────────────────────────
 

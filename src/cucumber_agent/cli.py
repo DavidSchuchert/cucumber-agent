@@ -1061,20 +1061,11 @@ async def run_config_cmd() -> None:
 
 def run_tui() -> None:
     """Launch the prompt_toolkit + Rich TUI."""
-    import sys as _sys
-    _sys.stderr.write("DEBUG: run_tui() gestartet\n")
-    _sys.stderr.flush()
     from cucumber_agent.tui import CucumberTUI
-    _sys.stderr.write("DEBUG: CucumberTUI importiert\n")
-    _sys.stderr.flush()
     from cucumber_agent.agent import Agent
-    _sys.stderr.write("DEBUG: Agent importiert\n")
-    _sys.stderr.flush()
     import logging
 
     config = Config.load()
-    _sys.stderr.write(f"DEBUG: Config geladen: {config.agent.provider}/{config.agent.model}\n")
-    _sys.stderr.flush()
 
     log_level = getattr(logging, config.logging.level.upper(), logging.INFO)
     setup_logging(
@@ -1082,15 +1073,9 @@ def run_tui() -> None:
         level=log_level,
         verbose=config.logging.verbose,
     )
-    _sys.stderr.write("DEBUG: Logging setup\n")
-    _sys.stderr.flush()
 
     agent = Agent.from_config(config)
-    _sys.stderr.write("DEBUG: Agent erstellt\n")
-    _sys.stderr.flush()
     tui = CucumberTUI(agent, config)
-    _sys.stderr.write("DEBUG: CucumberTUI erstellt, starte tui.run()\n")
-    _sys.stderr.flush()
     tui.run()
 
 
