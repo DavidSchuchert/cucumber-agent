@@ -42,8 +42,26 @@ context:
   max_tokens: 8000        # Max tokens for context window
   remember_last: 10       # Keep last N messages
 
+logging:
+  enabled: true           # Enable file logging
+  level: INFO             # DEBUG, INFO, WARNING, ERROR
+  verbose: false          # If true, enables DEBUG level
+  log_dir: ~/.cucumber/logs  # Where to store logs
+
 workspace: /path/to/your/project
 ```
+
+### Logging Config
+
+| Field | Description | Default |
+|-------|-------------|---------|
+| `enabled` | Enable file logging | true |
+| `level` | Log level: DEBUG, INFO, WARNING, ERROR | INFO |
+| `verbose` | Enable DEBUG level + verbose console | false |
+| `log_dir` | Directory for log files | ~/.cucumber/logs |
+
+Log files are rotated automatically (5 MB per file, 3 backups kept).
+Exception traces are always logged to `cucumber.log`.
 
 ## personality/personality.md
 

@@ -10,6 +10,9 @@ import httpx
 
 from cucumber_agent.provider import BaseProvider, ModelResponse, ProviderRegistry, ToolCall
 from cucumber_agent.session import Message
+from rich.console import Console
+
+console = Console()
 
 if TYPE_CHECKING:
     from cucumber_agent.session import ContentBlock

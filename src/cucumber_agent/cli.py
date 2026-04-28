@@ -681,6 +681,14 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
             console.print(f"\n[dim]⚡ Executing {tool_name}...[/dim]\n")
             result = await ToolRegistry.execute(tool_name, **args)
 
+            # Log tool execution
+            logger.info(
+                f"Tool executed: {tool_name} | success: {result.success} | "
+                f"args: {str(args)[:100]}"
+            )
+            if not result.success:
+                logger.warning(f"Tool failed: {tool_name} | error: {result.error}")
+
             from cucumber_agent.session import Message, Role
 
             # Then add the actual tool result
