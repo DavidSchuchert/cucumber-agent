@@ -19,8 +19,19 @@ fi
 
 cd "$INSTALL_DIR"
 
-echo "→ Fetching latest changes from GitHub..."
+echo "→ Checking for updates..."
 git fetch origin main
+
+LOCAL_HASH=$(git rev-parse HEAD)
+REMOTE_HASH=$(git rev-parse origin/main)
+
+if [ "$LOCAL_HASH" = "$REMOTE_HASH" ]; then
+    echo "✅ CucumberAgent is already up to date (Version: ${LOCAL_HASH:0:7})."
+    echo ""
+    exit 0
+fi
+
+echo "→ New version found! Updating from ${LOCAL_HASH:0:7} to ${REMOTE_HASH:0:7}..."
 git reset --hard origin/main
 
 echo "→ Syncing dependencies and tools..."
