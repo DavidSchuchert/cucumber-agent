@@ -15,7 +15,7 @@ CONFIG_FILE = CONFIG_DIR / "config.yaml"
 
 
 def print_banner() -> None:
-    cucumber_ascii = """
+    cucumber_ascii = r"""
            _____ 
          /       \ 
         |  (O)(O) | 

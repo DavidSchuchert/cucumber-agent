@@ -84,7 +84,7 @@ def print_welcome(config: Config) -> None:
     agent_cfg = config.agent
 
     # ASCII Cucumber with Glubschaugen
-    cucumber_ascii = """
+    cucumber_ascii = r"""
            [bold green]_____ [/bold green]
          [bold green]/       \ [/bold green]
         [bold green]|  [white](O)(O)[/white] | [/bold green]
