@@ -8,6 +8,8 @@ Welcome to the CucumberAgent documentation!
 - [Providers](Providers.md) — Supported AI providers
 - [Configuration](Configuration.md) — Config files explained
 - [CLI Commands](CLI.md) — Command reference
+- [Skills](Skills.md) — Built-in and custom skills
+- [AgentGuide](AgentGuide.md) — Agent system guide
 
 ## Directory Structure
 
@@ -18,17 +20,28 @@ Welcome to the CucumberAgent documentation!
 │   └── personality.md       # Agent name, tone, language, greeting, etc.
 ├── user/
 │   └── user.md              # User info (name, bio, github, portfolio)
-├── memory/                  # (future) Conversation memory
-└── logs/                    # (future) Session logs
+├── memory/                  # Session logs + persistent facts
+├── custom_tools/            # Hot-reload custom Python tools
+└── skills/                  # YAML skill manifests
 ```
+
+## Features
+
+- **Tool System** — shell, search, web_search, web_reader, agent, create_tool
+- **Smart Retry** — Auto-retry READ commands on path errors (Bilder↔Pictures)
+- **Thinking Blocks** — Display agent internal thoughts
+- **Memory System** — 3-tier: pinned → session → recent
+- **Custom Tools** — Hot-reload from ~/.cucumber/custom_tools/
+- **Skills** — YAML manifests in ~/.cucumber/skills/
 
 ## How It Works
 
 1. **User runs `cucumber run`** → CLI starts
 2. **Config loaded from `~/.cucumber/`** → Provider, personality, user info
-3. **Personality.md → System Prompt** → Agent knows who it is
-4. **Messages sent to Provider** → AI model processes
-5. **Response streamed back** → User sees it in real-time
+3. **System prompt built** → Includes personality, skills, tool instructions
+4. **Messages sent to Provider** → AI model processes with tools
+5. **Tool calls shown for approval** → User decides [1] Execute [2] Cancel [3] Edit
+6. **Response streamed back** → Thinking blocks displayed, markdown rendered
 
 ## For the Agent
 
@@ -36,5 +49,8 @@ If you need to fix something or understand the system:
 
 - **Config loading**: `src/cucumber_agent/config.py` → `Config.load()`
 - **Personality parsing**: `src/cucumber_agent/config.py` → `PersonalityConfig.from_markdown()`
-- **Provider calls**: `src/cucumber_agent/agent.py` → `Agent.run()`
-- **Message trimming**: `src/cucumber_agent/agent.py` → `trim_messages()` — limits context to save tokens
+- **Provider calls**: `src/cucumber_agent/agent.py` → `Agent.run_with_tools()`
+- **Message trimming**: `src/cucumber_agent/agent.py` → `trim_messages()`
+- **Smart retry**: `src/cucumber_agent/smart_retry.py` → command classification
+- **Tool registry**: `src/cucumber_agent/tools/registry.py` → `ToolRegistry`
+- **Skills loader**: `src/cucumber_agent/skills/loader.py` → `SkillLoader`

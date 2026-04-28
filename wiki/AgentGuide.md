@@ -35,6 +35,39 @@ Personality is loaded from `~/.cucumber/personality/personality.md`. Edit that f
 - `language` — response language
 - `greeting`, `strengths`, `interests`
 
+### Smart Retry Not Working
+
+Smart retry is in `src/cucumber_agent/smart_retry.py`. Check:
+1. `preferences.smart_retry` in config.yaml is true
+2. Command is classified as READ (ls, cat, find, etc.)
+3. Error message contains "not found" or similar
+
+Path mappings: Bilder↔Pictures, Dokumente↔Documents
+
+### Memory System Issues
+
+Memory is in `src/cucumber_agent/memory.py`:
+- `SessionLogger` logs exchanges to ~/.cucumber/memory/
+- `FactsStore` persists key/value facts to ~/.cucumber/memory/facts.md
+- `/memory` and `/remember` commands in CLI
+
+### Custom Tools Not Loading
+
+Custom tools go in `~/.cucumber/custom_tools/*.py`. They must:
+1. Extend `BaseTool` from `cucumber_agent.tools.base`
+2. Implement `execute()` method
+3. Return `ToolResult(success=True/False, output=..., error=...)`
+
+### Skills Not Available
+
+Skills are YAML files in `~/.cucumber/skills/*.yaml`. Format:
+```yaml
+name: my_skill
+command: /myskill
+description: What it does
+prompt: "Instructions with {args} placeholder"
+```
+
 ### Self-Optimization
 
 On first greeting, the agent offers to optimize its own personality. The AI analyzes its name and suggests better emoji/greeting/strengths. This is handled by:
@@ -54,6 +87,13 @@ On first greeting, the agent offers to optimize its own personality. The AI anal
 | Provider system | `src/cucumber_agent/provider.py` |
 | MiniMax provider | `src/cucumber_agent/providers/minimax.py` |
 | OpenRouter provider | `src/cucumber_agent/providers/openrouter.py` |
+| Ollama provider | `src/cucumber_agent/providers/ollama.py` |
+| Tool registry | `src/cucumber_agent/tools/registry.py` |
+| Smart retry | `src/cucumber_agent/smart_retry.py` |
+| Memory system | `src/cucumber_agent/memory.py` |
+| Skills loader | `src/cucumber_agent/skills/loader.py` |
+| Custom tools | `src/cucumber_agent/tools/loader.py` |
+| Workspace | `src/cucumber_agent/workspace.py` |
 
 ## Debugging Tips
 
