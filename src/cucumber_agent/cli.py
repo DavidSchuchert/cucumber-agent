@@ -390,7 +390,7 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
 
         if choice == "1":
             # Execute
-            self._pending_tool_call = None  # Clear before execution
+            self._pending_tool_call = None
             console.print(f"\n[dim]⚡ Executing {tool_name}...[/dim]\n")
             result = await ToolRegistry.execute(tool_name, **args)
             if result.success:
@@ -405,7 +405,7 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
             console.print("[dim]Tool call cancelled.[/dim]\n")
 
         elif choice == "3":
-            # Edit command
+            # Edit command - ask for new command
             console.print(f"[dim]Current:[/dim] {command}")
             new_cmd = await asyncio.to_thread(
                 lambda: console.input("[yellow]Enter new command: [/yellow]")
@@ -413,9 +413,12 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
             if new_cmd.strip():
                 tool_call["arguments"]["command"] = new_cmd.strip()
                 self._pending_tool_call = tool_call
-                console.print("\n[dim]Updated! Choose again:[/dim]")
+                console.print()
+                self._print_tool_call(tool_call)
+                return  # Wait for next choice
+            else:
+                console.print("[dim]Command unchanged.[/dim]\n")
                 console.print("[1] Execute [2] Cancel [3] Edit again")
-                # Don't clear - let user confirm again
 
         else:
             self._pending_tool_call = None
