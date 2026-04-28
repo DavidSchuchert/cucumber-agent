@@ -97,3 +97,10 @@ class CustomToolLoader:
             if self._mtimes.get(py_file) != py_file.stat().st_mtime:
                 return True
         return False
+
+    def get_tools(self) -> list[str]:
+        """Return a list of all loaded custom tool names."""
+        names: list[str] = []
+        for tool_names in self._loaded_tools.values():
+            names.extend(tool_names)
+        return names

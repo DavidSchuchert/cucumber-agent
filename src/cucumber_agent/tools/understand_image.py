@@ -36,7 +36,15 @@ class UnderstandImageTool(BaseTool):
         """Analyze an image using MiniMax API."""
         import os
 
+        # Try env var first, then fall back to config
         api_key = os.environ.get("MINIMAX_API_KEY")
+        if not api_key:
+            from cucumber_agent.config import Config
+            config = Config.load()
+            prov_cfg = config.get_provider_config("minimax")
+            if prov_cfg and prov_cfg.api_key:
+                api_key = prov_cfg.api_key
+
         if not api_key:
             return ToolResult(
                 success=False,

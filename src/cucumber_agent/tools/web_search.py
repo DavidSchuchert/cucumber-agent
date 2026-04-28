@@ -36,7 +36,14 @@ class WebSearchTool(BaseTool):
         """Search the web using MiniMax API or DuckDuckGo fallback."""
         import os
 
+        # Try env var first, then fall back to config
         api_key = os.environ.get("MINIMAX_API_KEY")
+        if not api_key:
+            from cucumber_agent.config import Config
+            config = Config.load()
+            prov_cfg = config.get_provider_config("minimax")
+            if prov_cfg and prov_cfg.api_key:
+                api_key = prov_cfg.api_key
 
         if api_key:
             return await self._minimax_search(query, max_results, api_key)

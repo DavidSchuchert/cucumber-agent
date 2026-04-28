@@ -786,7 +786,7 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
             # Cancel this tool call
             tool_call = self._pending_tool_calls.pop(0)
             console.print("[dim]Tool call cancelled.[/dim]\n")
-            
+
             # Add a "cancelled" result to satisfy API requirements
             from cucumber_agent.session import Message, Role
             self._session.messages.append(Message(
@@ -795,36 +795,40 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                 name=tool_name,
                 tool_call_id=tool_call.get("id", "")
             ))
-            
+
             # Show next if available
             if self._pending_tool_calls:
                 self._print_tool_call(self._pending_tool_calls[0])
                 return
-            
+
             # Continue if no more pending
             with console.status("  [dim]denkt nach...[/dim]", spinner="dots", spinner_style="dim"):
                 response = await self._agent.run_with_tools(self._session, "")
             await self._process_agent_response(response)
-            # Edit command - ask for new command, pre-filled for easy editing
-            if command:
-                from prompt_toolkit import prompt as ptk_prompt
-                from prompt_toolkit.formatted_text import HTML
-                new_cmd = await asyncio.to_thread(
-                    ptk_prompt,
-                    HTML("  <b><ansiyellow>Befehl &gt;</ansiyellow></b> "),
-                    default=command,
-                )
-                if new_cmd.strip():
-                    self._pending_tool_calls[0]["arguments"]["command"] = new_cmd.strip()
-                    console.print()
-                    self._print_tool_call(self._pending_tool_calls[0])
-                    return  # Wait for next choice
-                else:
-                    console.print("  [dim]Befehl unverändert.[/dim]\n")
-                    self._print_tool_call(self._pending_tool_calls[0])
-            else:
-                console.print("  [dim]Bearbeiten nur für Befehle möglich.[/dim]")
+
+        elif choice == "3":
+            # Edit the command (pre-flight — before agent continues)
+            if not command:
+                console.print("  [dim]Bearbeiten nur für Befehle möglich.[/dim]\n")
                 self._print_tool_call(self._pending_tool_calls[0])
+                return
+
+            from prompt_toolkit import prompt as ptk_prompt
+            from prompt_toolkit.formatted_text import HTML
+            new_cmd = await asyncio.to_thread(
+                ptk_prompt,
+                HTML("  <b><ansiyellow>Befehl &gt;</ansiyellow></b> "),
+                default=command,
+            )
+            if new_cmd.strip():
+                self._pending_tool_calls[0]["arguments"]["command"] = new_cmd.strip()
+                console.print()
+                self._print_tool_call(self._pending_tool_calls[0])
+                return  # Wait for next choice
+            else:
+                console.print("  [dim]Befehl unverändert.[/dim]\n")
+                self._print_tool_call(self._pending_tool_calls[0])
+                return
 
         else:
             self._pending_tool_calls.clear()

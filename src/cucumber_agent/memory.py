@@ -10,8 +10,8 @@ from pathlib import Path
 class SessionLogger:
     """Appends each exchange to a daily markdown log file."""
 
-    def __init__(self, log_dir: Path) -> None:
-        self._log_dir = log_dir
+    def __init__(self, log_dir: Path | str) -> None:
+        self._log_dir = Path(log_dir)  # ensure Path
         self._log_dir.mkdir(parents=True, exist_ok=True)
 
     def _today_file(self) -> Path:
@@ -65,8 +65,8 @@ class SessionLogger:
 class FactsStore:
     """Persistent JSON store for important facts about the user / context."""
 
-    def __init__(self, facts_file: Path) -> None:
-        self._file = facts_file
+    def __init__(self, facts_file: Path | str) -> None:
+        self._file = Path(facts_file)  # ensure Path
         self._file.parent.mkdir(parents=True, exist_ok=True)
         self._facts: dict[str, str] = self._load()
 
@@ -76,6 +76,9 @@ class FactsStore:
                 return json.loads(self._file.read_text(encoding="utf-8"))
             except Exception:
                 return {}
+        # Ensure the file exists for later saves
+        self._file.parent.mkdir(parents=True, exist_ok=True)
+        self._file.write_text("{}", encoding="utf-8")
         return {}
 
     def _save(self) -> None:
@@ -130,8 +133,8 @@ class FactsStore:
 class SessionSummary:
     """Persistent storage for the latest session summary."""
 
-    def __init__(self, summary_file: Path) -> None:
-        self._file = summary_file
+    def __init__(self, summary_file: Path | str) -> None:
+        self._file = Path(summary_file)  # ensure Path
         self._file.parent.mkdir(parents=True, exist_ok=True)
 
     def save(self, summary: str) -> None:

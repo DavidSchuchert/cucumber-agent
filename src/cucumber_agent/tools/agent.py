@@ -160,7 +160,7 @@ class AgentTool(BaseTool):
                 tc_name = tc.name
                 tc_args = tc.arguments
 
-                # Safety: prevent recursive agent calls
+                # Safety: prevent recursive agent calls (depth check)
                 if tc_name == "agent":
                     console.print(
                         "  [yellow]⚠ Sub-Agent versuchte sich selbst aufzurufen "
@@ -174,6 +174,24 @@ class AgentTool(BaseTool):
                         ),
                     ))
                     continue
+
+                # Safety: block shell commands that try to invoke cucumber itself
+                if tc_name == "shell":
+                    shell_cmd = tc_args.get("command", "")
+                    if shell_cmd and any(
+                        cmd in shell_cmd for cmd in ("cucumber run", "cucumber", "hermes")
+                    ):
+                        console.print(
+                            "  [yellow]⚠ Shell-Befehl blockiert — würde mich selbst aufrufen.[/yellow]"
+                        )
+                        session.messages.append(Message(
+                            role=Role.USER,
+                            content=(
+                                "[TOOL_RESULT] shell: FEHLER — Befehl blockiert, "
+                                "da er den Agenten selbst aufrufen würde."
+                            ),
+                        ))
+                        continue
 
                 reason = tc_args.get("reason", "")
                 command = tc_args.get("command", "")
