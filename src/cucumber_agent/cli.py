@@ -243,11 +243,16 @@ class CliSession:
             # Use non-streaming to properly handle tool calls
             response = await self._agent.run_with_tools(self._session, user_input)
 
-            # Print the response
-            console.print(response.content)
-
-            # Check for tool calls
+            # Check for tool calls FIRST
             if response.tool_calls:
+                # Suppress verbose text when tool calls present - just show minimal info
+                if response.content and response.content.strip():
+                    # Only show if it looks like actual useful content, not "I'll now..."
+                    words = response.content.lower()
+                    if not any(w in words for w in ['ich', 'i will', 'let me', 'now', 'jetzt', 'werde']):
+                        console.print(response.content)
+            else:
+                console.print(response.content)
                 for tc in response.tool_calls:
                     tool = tc.name
                     args = tc.arguments

@@ -115,13 +115,13 @@ class PersonalityConfig:
         if self.interests:
             parts.append(f"I'm particularly interested in: {self.interests}.")
 
-        # Tool instructions
+        # Tool instructions - be more direct
         parts.append(
-            "IMPORTANT: When the user asks me to execute shell commands, read/write files, "
-            "or perform system operations, I MUST use the 'shell' tool. "
-            "I should NOT just describe what I would do - I must actually call the tool. "
-            "If I'm not sure about the exact path or directory name, I should first use "
-            "the 'search' tool to find the correct location."
+            "CRITICAL TOOL USAGE RULES:"
+            "1. When the user asks to execute commands, create files, read files, or perform system operations, use the 'shell' tool IMMEDIATELY."
+            "2. If unsure about exact paths or directory names, use the 'search' tool FIRST."
+            "3. When using tools, output MINIMAL text - just the tool call. Do NOT say things like 'I will now...' or 'Let me...'"
+            "4. Only provide explanatory text AFTER the tool has executed and returned results."
         )
 
         parts.append("I'm here to help my human with whatever they need!")
