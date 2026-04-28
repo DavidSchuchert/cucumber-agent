@@ -375,10 +375,20 @@ class CliSession:
 
         # Regular text response
         if response.content and response.content.strip():
-            # Clean up thinking/reasoning blocks if present
             import re
+            
+            # Extract thinking blocks
+            thinking_blocks = re.findall(r'<think>(.*?)</think>', response.content, flags=re.DOTALL)
+            # Clean up the main content
             clean_content = re.sub(r'<think>.*?</think>', '', response.content, flags=re.DOTALL).strip()
             
+            # Display thinking blocks if any
+            if thinking_blocks:
+                for block in thinking_blocks:
+                    if block.strip():
+                        console.print(f"  [dim italic white]💭 {block.strip()}[/dim italic white]")
+                console.print()
+
             if not clean_content:
                 return
 
