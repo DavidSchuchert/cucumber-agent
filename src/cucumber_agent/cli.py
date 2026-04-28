@@ -100,7 +100,7 @@ def print_welcome(config: Config) -> None:
         badges.append("[reverse cyan] 💻 SHELL [/reverse cyan]")
     badges.append("[reverse blue] 🤖 SUBAGENT [/reverse blue]")
     
-    console.print(Columns(badges, spacing=2))
+    console.print(Columns(badges, padding=(0, 2)))
     console.print(f"\n[dim]Tippe [bold]/help[/bold] für Befehle oder einfach loslegen![/dim]")
     console.print()
 
