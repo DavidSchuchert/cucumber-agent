@@ -291,9 +291,7 @@ class CucumberTUI:
         import sys as _sys
         _sys.stderr.write("DEBUG: run() gestartet\n")
         _sys.stderr.flush()
-        self._print_banner()
-        _sys.stderr.write("DEBUG: banner fertig\n")
-        _sys.stderr.flush()
+        # NOTE: Banner printed INSIDE patch_stdout() context (see Hermes pattern)
         self._init_agent_session()
         _sys.stderr.write("DEBUG: session init fertig\n")
         _sys.stderr.flush()
@@ -301,6 +299,9 @@ class CucumberTUI:
         _sys.stderr.write("DEBUG: output refresh fertig, starte app.run()\n")
         _sys.stderr.flush()
         with patch_stdout():
+            self._print_banner()
+            _sys.stderr.write("DEBUG: banner fertig\n")
+            _sys.stderr.flush()
             self._running = True
             self._app.run()
         _sys.stderr.write("DEBUG: app beendet\n")
