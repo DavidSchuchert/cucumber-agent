@@ -175,9 +175,11 @@ class Agent:
         # Build messages WITHOUT modifying session
         messages = []
 
-        system_prompt = self._agent_config.system_prompt
-        if system_prompt:
-            messages.append(Message(role=Role.SYSTEM, content=system_prompt))
+        # Override system prompt to prevent tool calls
+        system_override = (
+            "Du fasst Tool-Ergebnisse für den Benutzer zusammen. "
+            "Antworte direkt und klar. KEINE Werkzeug-Aufrufe mehr."
+        )
 
         # Get recent messages (skip any empty ones)
         for m in session.messages[-4:]:
@@ -185,15 +187,16 @@ class Agent:
                 messages.append(m)
 
         if prompt:
-            messages.append(Message(role=Role.USER, content=prompt + " Antworte dem Benutzer direkt. Keine weiteren Werkzeug-Aufrufe."))
+            messages.append(Message(role=Role.USER, content=prompt))
 
-        # No tools for synthesis to avoid loops
+        # Use provider directly with system override to prevent tool calls
         response = await self._provider.complete(
             messages=messages,
             model=self._agent_config.model,
             temperature=self._agent_config.temperature,
             max_tokens=self._agent_config.max_tokens,
-            tools=None,  # No tools for synthesis - prevents loops
+            tools=None,
+            system_override=system_override,
         )
 
         return response.content

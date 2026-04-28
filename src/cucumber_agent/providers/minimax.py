@@ -51,9 +51,10 @@ class MiniMaxProvider(BaseProvider):
         max_tokens: int | None = None,
         tools: list[dict] | None = None,
         max_retries: int = 3,
+        system_override: str | None = None,
     ) -> ModelResponse:
         """Send a complete request and return the full response."""
-        body = self._build_request(messages, model, temperature, max_tokens, tools)
+        body = self._build_request(messages, model, temperature, max_tokens, tools, system_override)
         body["stream"] = False
 
         for attempt in range(max_retries):
@@ -129,11 +130,21 @@ class MiniMaxProvider(BaseProvider):
         temperature: float,
         max_tokens: int | None,
         tools: list[dict] | None,
+        system_override: str | None = None,
     ) -> dict:
         """Build the request body."""
+        formatted_messages = [self._format_message(m) for m in messages]
+
+        # Override system message if specified
+        if system_override:
+            for msg in formatted_messages:
+                if msg.get("role") == "system":
+                    msg["content"] = system_override
+                    break
+
         body = {
             "model": model,
-            "messages": [self._format_message(m) for m in messages],
+            "messages": formatted_messages,
             "temperature": temperature,
             "stream": True,
         }
