@@ -1059,6 +1059,27 @@ async def run_config_cmd() -> None:
     print_config(config)
 
 
+def run_tui() -> None:
+    """Launch the Textual TUI."""
+    from cucumber_agent.tui import CucumberTUI
+    from cucumber_agent.agent import Agent
+    import asyncio
+    import logging
+
+    config = Config.load()
+
+    log_level = getattr(logging, config.logging.level.upper(), logging.INFO)
+    setup_logging(
+        log_dir=config.logging.log_dir,
+        level=log_level,
+        verbose=config.logging.verbose,
+    )
+
+    agent = Agent.from_config(config)
+    tui = CucumberTUI(agent, config)
+    tui.run()
+
+
 def main() -> None:
     """Main entry point."""
     # Handle subcommands
@@ -1073,10 +1094,14 @@ def main() -> None:
         elif cmd == "update":
             run_update()
             return
+        elif cmd == "tui":
+            run_tui()
+            return
         elif cmd in ("--help", "-h"):
             console.print("[bold]CucumberAgent CLI[/bold]\n")
             console.print("Commands:")
-            console.print("  [cyan]cucumber run[/cyan]     Start chat session")
+            console.print("  [cyan]cucumber run[/cyan]     Start chat session (legacy REPL)")
+            console.print("  [cyan]cucumber tui[/cyan]     Start chat session (new Textual TUI)")
             console.print("  [cyan]cucumber init[/cyan]    Run setup wizard")
             console.print("  [cyan]cucumber config[/cyan]  Show configuration")
             console.print("  [cyan]cucumber --help[/cyan]  Show this help")
