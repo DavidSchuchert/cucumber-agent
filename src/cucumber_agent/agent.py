@@ -165,11 +165,21 @@ class Agent:
         return response
 
     async def synthesize(self, session: Session, prompt: str = "") -> str:
-        """Synthesize a response based on tool results already in session."""
-        if prompt:
-            session.add_user_message(prompt)
+        """Synthesize a response based on recent tool results in session."""
+        # Build messages using ONLY the recent tool results + optional prompt
+        messages = []
 
-        messages = self._build_messages(session)
+        system_prompt = self._agent_config.system_prompt
+        if system_prompt:
+            messages.append(Message(role=Role.SYSTEM, content=system_prompt))
+
+        # Get last 4 messages (typically: user question, assistant+tool, tool result, empty user)
+        recent = session.messages[-4:] if len(session.messages) >= 4 else session.messages
+        messages.extend(recent)
+
+        if prompt:
+            messages.append(Message(role=Role.USER, content=prompt))
+
         tools = self.get_tools_spec()
 
         response = await self._provider.complete(
@@ -180,17 +190,23 @@ class Agent:
             tools=tools if tools else None,
         )
 
-        # If tool calls came back, handle them (but usually synthesis shouldn't trigger tools)
+        # If tool calls came back, handle them
         if response.tool_calls:
-            # Execute tools and recurse
             for tc in response.tool_calls:
                 result = await ToolRegistry.execute(tc.name, **tc.arguments)
-                session.add_user_message(
-                    f"[TOOL_RESULT] {tc.name}: {result.output if result.success else 'ERROR: ' + (result.error or result.output)}"
-                )
-            return await self.synthesize(session)
+                messages.append(Message(
+                    role=Role.USER,
+                    content=f"[TOOL_RESULT] {tc.name}: {result.output if result.success else 'ERROR: ' + (result.error or result.output)}"
+                ))
+            # Recurse with updated messages
+            response = await self._provider.complete(
+                messages=messages,
+                model=self._agent_config.model,
+                temperature=self._agent_config.temperature,
+                max_tokens=self._agent_config.max_tokens,
+                tools=None,  # No tools on synthesis
+            )
 
-        session.add_assistant_message(response.content)
         return response.content
 
     async def run_stream(
