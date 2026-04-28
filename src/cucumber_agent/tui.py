@@ -462,7 +462,6 @@ class CucumberTUI:
     def _handle_command(self, cmd: str):
         parts = cmd.strip().split(maxsplit=1)
         command = parts[0].lower()
-        arg = parts[1] if len(parts) > 1 else ""
 
         if command in ("/exit", "/quit"):
             self._app.exit()
@@ -470,35 +469,53 @@ class CucumberTUI:
             self.history.clear()
             self._refresh_output()
         elif command in ("/help",):
-            self._show_help()
+            for line in (
+                "[bold]Commands[/bold]",
+                "[cyan]/help[/cyan]     Diese Hilfe",
+                "[cyan]/exit[/cyan]     Beenden",
+                "[cyan]/clear[/cyan]    Chat leeren",
+                "[cyan]/config[/cyan]   Zeige Config",
+                "[cyan]/memory[/cyan]    Fakten anzeigen",
+                "[cyan]/skills[/cyan]    Verfügbare Skills",
+                "[cyan]/context[/cyan]   Context-Status",
+                "",
+                "[dim]Alles andere = Chat mit dem Agenten[/dim]",
+            ):
+                self.history.add_system(line)
+            self._refresh_output()
         elif command == "/config":
             cfg = self.config.agent
-            self._cprint(f"[cyan]Provider:[/cyan] {cfg.provider}")
-            self._cprint(f"[cyan]Model:[/cyan] {cfg.model}")
-            self._cprint(f"[cyan]Temperature:[/cyan] {cfg.temperature}")
+            self.history.add_system(f"[cyan]Provider:[/cyan] {cfg.provider}")
+            self.history.add_system(f"[cyan]Model:[/cyan] {cfg.model}")
+            self.history.add_system(f"[cyan]Temperature:[/cyan] {cfg.temperature}")
+            self._refresh_output()
         elif command == "/memory":
             facts = self._facts.all()
             if facts:
                 for k, v in facts.items():
-                    self._cprint(f"[cyan]{k}[/cyan]: {v}")
+                    self.history.add_system(f"[cyan]{k}[/cyan]: {v}")
             else:
-                self._cprint("[dim italic]Keine Fakten gespeichert.[/dim italic]")
+                self.history.add_system("[dim italic]Keine Fakten gespeichert.[/dim italic]")
+            self._refresh_output()
         elif command == "/skills":
             if self._skill_loader and self._skill_loader.skills:
                 for s in self._skill_loader.skills:
-                    self._cprint(f"[cyan]{s.command}[/cyan]: {s.description[:60]}")
+                    self.history.add_system(f"[cyan]{s.command}[/cyan]: {s.description[:60]}")
             else:
-                self._cprint("[dim italic]Keine Skills installiert.[/dim italic]")
+                self.history.add_system("[dim italic]Keine Skills installiert.[/dim italic]")
+            self._refresh_output()
         elif command == "/context":
             msgs = self.agent._build_messages(self._session)
             tokens = self.agent.estimate_tokens(msgs)
             max_ctx = self.config.context.max_tokens
             pct = (tokens / max_ctx) * 100
             color = "red" if pct > 80 else "yellow" if pct > 50 else "green"
-            self._cprint(f"[cyan]Nachrichten:[/cyan] {len(self._session.messages)}")
-            self._cprint(f"[cyan]Tokens:[/cyan] [{color}]{tokens}[/{color}] / {max_ctx} ({pct:.1f}%)")
+            self.history.add_system(f"[cyan]Nachrichten:[/cyan] {len(self._session.messages)}")
+            self.history.add_system(f"[cyan]Tokens:[/cyan] [{color}]{tokens}[/{color}] / {max_ctx} ({pct:.1f}%)")
+            self._refresh_output()
         else:
-            self._cprint(f"[red]Unbekannter Befehl:[/red] {command}")
+            self.history.add_system(f"[red]Unbekannter Befehl:[/red] {command}")
+            self._refresh_output()
 
     def _show_help(self):
         for line in (
@@ -519,7 +536,7 @@ class CucumberTUI:
 
     async def _run_chat(self, user_input: str):
         self.history.add_user(user_input)
-        self._cprint(f"[dim]Nachricht gesendet…[/]")
+        self.history.add_system("[dim]Nachricht gesendet…[/]")
         self._refresh_output()
 
         try:
@@ -554,7 +571,7 @@ class CucumberTUI:
             max_ctx = self.config.context.max_tokens
             pct = (tokens / max_ctx) * 100
             color = "red" if pct > 80 else "yellow" if pct > 50 else "green"
-            self._cprint(f"[dim]Context: [{color}]{tokens}[/{color}] / {max_ctx} tokens ({pct:.1f}%)[/dim]")
+            self.history.add_system(f"[dim]Context: [{color}]{tokens}[/{color}] / {max_ctx} tokens ({pct:.1f}%)[/dim]")
 
             if self.config.memory.enabled:
                 await self._maybe_compress()
@@ -562,7 +579,7 @@ class CucumberTUI:
         except Exception as e:
             import traceback
             self.history.add_error(f"Fehler: {e}")
-            self._cprint(f"[dim]{traceback.format_exc()[:200]}[/dim]")
+            self.history.add_system(f"[dim]{traceback.format_exc()[:200]}[/dim]")
             self._refresh_output()
 
     async def _maybe_compress(self):
@@ -577,4 +594,5 @@ class CucumberTUI:
         self._session.messages = remaining
         from cucumber_agent.memory import SessionSummary
         SessionSummary(self.config.memory.summary_file).save(new_summary)
-        self._cprint(f"[dim italic]✓ Kontext komprimiert.[/dim italic]")
+        self.history.add_system(f"[dim italic]✓ Kontext komprimiert.[/dim italic]")
+        self._refresh_output()
