@@ -253,23 +253,22 @@ class CliSession:
                     words = response.content.lower()
                     if not any(w in words for w in ['ich', 'i will', 'let me', 'now', 'jetzt', 'werde']):
                         console.print(response.content)
-            else:
-                console.print(response.content)
-                for tc in response.tool_calls:
-                    tool = tc.name
-                    args = tc.arguments
                     console.print()
+
+                # Show tool call approval
+                for tc in response.tool_calls:
                     self._print_tool_call({
-                        "name": tool,
-                        "arguments": args,
+                        "name": tc.name,
+                        "arguments": tc.arguments,
                     })
                     self._pending_tool_call = {
-                        "name": tool,
-                        "arguments": args,
+                        "name": tc.name,
+                        "arguments": tc.arguments,
                     }
                     return
-
-            console.print()  # newline after response
+            else:
+                console.print(response.content)
+                console.print()
 
             # After first greeting, offer optimization
             if offer_optimization:
