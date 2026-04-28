@@ -1,17 +1,5 @@
 """
 CucumberAgent TUI — prompt_toolkit + Rich, modeled after Hermes CLI.
-
-The core rendering loop:
-  1. All messages stored in self.history._messages
-  2. _refresh_output() renders the FULL history to an ANSI string
-  3. _ansi_obj is passed directly to FormattedTextControl.text (not pre-parsed tuples)
-  4. self._app.invalidate() schedules a redraw
-  5. prompt_toolkit redraws the window with the new content
-  6. User types → Enter → _on_input → asyncio task → agent → _refresh_output + invalidate
-
-The magic: messages appear ABOVE the input because FormattedTextControl's
-getter is re-evaluated on every render cycle — prompt_toolkit's rendering
-is persistent, not one-shot like a plain print().
 """
 
 from __future__ import annotations
@@ -26,7 +14,6 @@ from io import StringIO
 # ─── prompt_toolkit ─────────────────────────────────────────────────────────
 from prompt_toolkit import print_formatted_text as _pt_print
 from prompt_toolkit.application import Application
-from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.formatted_text import ANSI as _PT_ANSI
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
@@ -62,20 +49,6 @@ C_TS       = "#475569"
 C_TOOL_ARG = "#d4a017"
 
 
-# ─── ANSI print via prompt_toolkit (identical to Hermes CLI) ─────────────────
-
-def _cprint(text: str):
-    """Print an ANSI-rendered text line through prompt_toolkit.
-
-    Raw ANSI escapes written via print() are swallowed by patch_stdout's
-    StdoutProxy. Routing through print_formatted_text(ANSI(...)) lets
-    prompt_toolkit parse the escapes and render real colors.
-    """
-    if not text:
-        return
-    _pt_print(_PT_ANSI(text))
-
-
 # ─── Terminal width ─────────────────────────────────────────────────────────
 
 def _term_width() -> int:
@@ -88,7 +61,7 @@ def _term_width() -> int:
 # ─── Helpers ───────────────────────────────────────────────────────────────
 
 def _esc(text: str) -> str:
-    """Escape [brackets] as literal text for Rich."""
+    """Escape [brackets] as literal text for Rich markup."""
     if not text:
         return ""
     result = []
@@ -108,7 +81,7 @@ def _esc(text: str) -> str:
 
 
 def _strip_reasoning(text: str) -> str:
-    """Remove <think>/<reasoning> blocks."""
+    """Remove <think>/<reasoning> blocks from text."""
     for tag in ("think", "thinking", "thought", "reasoning", "reasoning_scratchpad"):
         text = re.sub(rf"<{tag}>.*?</{tag}>", "", text, flags=re.DOTALL | re.IGNORECASE)
         text = re.sub(rf"<{tag}>.*$", "", text, flags=re.DOTALL | re.IGNORECASE)
@@ -244,7 +217,7 @@ class CucumberTUI:
         self._skill_loader = None
         self._facts = None
 
-        # Current ANSI render of all messages — passed to FormattedTextControl
+        # ANSI render of all messages — passed directly to FormattedTextControl
         self._ansi_obj = _PT_ANSI("")
 
         # ── Output window (scrollable message buffer) ─────────────────────────
@@ -262,8 +235,6 @@ class CucumberTUI:
         )
 
         # ── Input area (fixed at bottom) ───────────────────────────────────────
-        # TextArea creates its own buffer internally — we access it via
-        # _input_widget.buffer after construction.
         self._input_widget = TextArea(
             height=Dimension(min=1, max=3, preferred=1),
             style=f"bg:{C_INPUTBG} #e2e8f0",
@@ -294,8 +265,8 @@ class CucumberTUI:
             layout=Layout(self._root),
             key_bindings=self._kb,
             style=PTStyle.from_dict({
-                "wrapper":           "#e2e8f0 bg:{bg}".format(bg=C_BG),
-                "output-field":      "#e2e8f0 bg:{bg}".format(bg=C_BG),
+                "wrapper":          "#e2e8f0 bg:{bg}".format(bg=C_BG),
+                "output-field":     "#e2e8f0 bg:{bg}".format(bg=C_BG),
                 "input-field":      f"#e2e8f0 bg:{C_INPUTBG}",
                 "text-area":        f"#e2e8f0 bg:{C_INPUTBG}",
                 "cursor":           "bg:#4ade80 #0b0e14",
@@ -312,6 +283,32 @@ class CucumberTUI:
         with patch_stdout():
             self._running = True
             self._app.run()
+
+    # ── _cprint: Rich markup → Console → ANSI → PT_ANSI → print_formatted_text ──
+
+    def _cprint(self, text: str):
+        """Print a Rich-markup string through prompt_toolkit with colors.
+
+        Pattern (identical to Hermes CLI):
+          Rich markup string
+            → Rich Console (render to ANSI escapes)
+            → prompt_toolkit.formatted_text.ANSI()
+            → print_formatted_text()
+        """
+        if not text:
+            return
+        buf = StringIO()
+        inner = Console(
+            file=buf,
+            force_terminal=True,
+            color_system="truecolor",
+            highlight=False,
+            width=self._w,
+        )
+        inner.print(text)
+        ansi_str = buf.getvalue().rstrip()
+        if ansi_str:
+            _pt_print(_PT_ANSI(ansi_str))
 
     # ── Banner ─────────────────────────────────────────────────────────────
 
@@ -334,7 +331,7 @@ class CucumberTUI:
             f"[{C_GREEN}]{pers.emoji} {pers.name}[/{C_GREEN}]  [dim]— Chat startklar. Sag was du brauchst![/dim]",
             "",
         ):
-            _cprint(line)
+            self._cprint(line)
 
     # ── Output refresh ─────────────────────────────────────────────────────
 
@@ -342,7 +339,6 @@ class CucumberTUI:
         """Re-render message history to ANSI and schedule a UI redraw."""
         ansi_str = self.history.render_to_ansi()
         self._ansi_obj = _PT_ANSI(ansi_str) if ansi_str else _PT_ANSI("")
-        # Schedule a prompt_toolkit redraw of the output window
         self._app.invalidate()
 
     # ── Session init ───────────────────────────────────────────────────────
@@ -389,7 +385,8 @@ class CucumberTUI:
 
     # ── Input handling ────────────────────────────────────────────────────
 
-    def _on_input(self, buffer: Buffer) -> None:
+    def _on_input(self, buffer) -> None:
+        """Called by TextArea when user presses Enter."""
         text = buffer.text.strip()
         buffer.text = ""
         if not text:
@@ -413,32 +410,32 @@ class CucumberTUI:
             self._show_help()
         elif command == "/config":
             cfg = self.config.agent
-            _cprint(f"[cyan]Provider:[/cyan] {cfg.provider}")
-            _cprint(f"[cyan]Model:[/cyan] {cfg.model}")
-            _cprint(f"[cyan]Temperature:[/cyan] {cfg.temperature}")
+            self._cprint(f"[cyan]Provider:[/cyan] {cfg.provider}")
+            self._cprint(f"[cyan]Model:[/cyan] {cfg.model}")
+            self._cprint(f"[cyan]Temperature:[/cyan] {cfg.temperature}")
         elif command == "/memory":
             facts = self._facts.all()
             if facts:
                 for k, v in facts.items():
-                    _cprint(f"[cyan]{k}[/cyan]: {v}")
+                    self._cprint(f"[cyan]{k}[/cyan]: {v}")
             else:
-                _cprint("[dim italic]Keine Fakten gespeichert.[/dim italic]")
+                self._cprint("[dim italic]Keine Fakten gespeichert.[/dim italic]")
         elif command == "/skills":
             if self._skill_loader and self._skill_loader.skills:
                 for s in self._skill_loader.skills:
-                    _cprint(f"[cyan]{s.command}[/cyan]: {s.description[:60]}")
+                    self._cprint(f"[cyan]{s.command}[/cyan]: {s.description[:60]}")
             else:
-                _cprint("[dim italic]Keine Skills installiert.[/dim italic]")
+                self._cprint("[dim italic]Keine Skills installiert.[/dim italic]")
         elif command == "/context":
             msgs = self.agent._build_messages(self._session)
             tokens = self.agent.estimate_tokens(msgs)
             max_ctx = self.config.context.max_tokens
             pct = (tokens / max_ctx) * 100
             color = "red" if pct > 80 else "yellow" if pct > 50 else "green"
-            _cprint(f"[cyan]Nachrichten:[/cyan] {len(self._session.messages)}")
-            _cprint(f"[cyan]Tokens:[/cyan] [{color}]{tokens}[/{color}] / {max_ctx} ({pct:.1f}%)")
+            self._cprint(f"[cyan]Nachrichten:[/cyan] {len(self._session.messages)}")
+            self._cprint(f"[cyan]Tokens:[/cyan] [{color}]{tokens}[/{color}] / {max_ctx} ({pct:.1f}%)")
         else:
-            _cprint(f"[red]Unbekannter Befehl:[/red] {command}")
+            self._cprint(f"[red]Unbekannter Befehl:[/red] {command}")
 
     def _show_help(self):
         for line in (
@@ -453,13 +450,13 @@ class CucumberTUI:
             "",
             "[dim]Alles andere = Chat mit dem Agenten[/dim]",
         ):
-            _cprint(line)
+            self._cprint(line)
 
     # ── Agent loop ─────────────────────────────────────────────────────────
 
     async def _run_chat(self, user_input: str):
         self.history.add_user(user_input)
-        _cprint(f"[dim]Nachricht gesendet…[/]")
+        self._cprint(f"[dim]Nachricht gesendet…[/]")
         self._refresh_output()
 
         try:
@@ -494,7 +491,7 @@ class CucumberTUI:
             max_ctx = self.config.context.max_tokens
             pct = (tokens / max_ctx) * 100
             color = "red" if pct > 80 else "yellow" if pct > 50 else "green"
-            _cprint(f"[dim]Context: [{color}]{tokens}[/{color}] / {max_ctx} tokens ({pct:.1f}%)[/dim]")
+            self._cprint(f"[dim]Context: [{color}]{tokens}[/{color}] / {max_ctx} tokens ({pct:.1f}%)[/dim]")
 
             if self.config.memory.enabled:
                 await self._maybe_compress()
@@ -502,7 +499,7 @@ class CucumberTUI:
         except Exception as e:
             import traceback
             self.history.add_error(f"Fehler: {e}")
-            _cprint(f"[dim]{traceback.format_exc()[:200]}[/dim]")
+            self._cprint(f"[dim]{traceback.format_exc()[:200]}[/dim]")
             self._refresh_output()
 
     async def _maybe_compress(self):
@@ -517,4 +514,4 @@ class CucumberTUI:
         self._session.messages = remaining
         from cucumber_agent.memory import SessionSummary
         SessionSummary(self.config.memory.summary_file).save(new_summary)
-        _cprint(f"[dim italic]✓ Kontext komprimiert.[/dim italic]")
+        self._cprint(f"[dim italic]✓ Kontext komprimiert.[/dim italic]")
