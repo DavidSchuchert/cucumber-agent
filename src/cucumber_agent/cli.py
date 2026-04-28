@@ -325,47 +325,10 @@ class CliSession:
 
         try:
             offer_optimization = self._agent.needs_optimization(user_input)
-            
             with console.status("  [dim]denkt nach...[/dim]", spinner="dots", spinner_style="dim"):
                 response = await self._agent.run_with_tools(self._session, user_input)
-
-            if response.tool_calls:
-                if response.content and response.content.strip():
-                    words = response.content.lower()
-                    if not any(w in words for w in ['ich', 'i will', 'let me', 'now', 'jetzt', 'werde']):
-                        console.print(f"  [dim]{response.content.strip()}[/dim]")
-                    console.print()
-                
-                # Appending the actual assistant message containing the tool calls
-                from cucumber_agent.session import Message, Role
-                assistant_msg = Message(
-                    role=Role.ASSISTANT,
-                    content=response.content or "",
-                    tool_calls=response.tool_calls
-                )
-                self._session.messages.append(assistant_msg)
-
-                self._pending_tool_calls = [
-                    {"name": tc.name, "arguments": tc.arguments, "id": tc.id}
-                    for tc in response.tool_calls
-                ]
-                self._print_tool_call(self._pending_tool_calls[0])
-                return
-            else:
-                pers = self._config.personality
-                console.print(Rule(f"[dim green]{pers.emoji}[/dim green]", style="dim green"))
-                console.print()
-                console.print(response.content)
-                console.print()
-
-                # Log the exchange
-                if self._config.memory.enabled:
-                    self._logger.log_exchange(user_input, response.content or "")
-
-                # Auto-compress if session is getting long
-                if self._config.memory.enabled and len(self._session.messages) >= self._config.memory.max_session_messages:
-                    with console.status("  [dim]Komprimiere Kontext...[/dim]", spinner="dots", spinner_style="dim"):
-                        await self._agent.compress_session(self._session)
+            
+            await self._process_agent_response(response, user_input)
 
 
             # After first greeting, offer optimization
@@ -384,6 +347,55 @@ class CliSession:
             if self._debug_mode:
                 import traceback
                 console.print(f"[dim red]{traceback.format_exc()}[/dim red]")
+
+    async def _process_agent_response(self, response, user_input: str = "") -> None:
+        """Process the agent's response, handling tool calls and text output."""
+        if response.tool_calls:
+            if response.content and response.content.strip():
+                words = response.content.lower()
+                if not any(w in words for w in ['ich', 'i will', 'let me', 'now', 'jetzt', 'werde']):
+                    console.print(f"  [dim]{response.content.strip()}[/dim]")
+                console.print()
+            
+            # Appending the actual assistant message containing the tool calls
+            from cucumber_agent.session import Message, Role
+            assistant_msg = Message(
+                role=Role.ASSISTANT,
+                content=response.content or "",
+                tool_calls=response.tool_calls
+            )
+            self._session.messages.append(assistant_msg)
+
+            self._pending_tool_calls = [
+                {"name": tc.name, "arguments": tc.arguments, "id": tc.id}
+                for tc in response.tool_calls
+            ]
+            self._print_tool_call(self._pending_tool_calls[0])
+            return
+
+        # Regular text response
+        if response.content and response.content.strip():
+            # Clean up thinking/reasoning blocks if present
+            import re
+            clean_content = re.sub(r'<think>.*?</think>', '', response.content, flags=re.DOTALL).strip()
+            
+            if not clean_content:
+                return
+
+            pers = self._config.personality
+            console.print(Rule(f"[dim green]{pers.emoji}[/dim green]", style="dim green"))
+            console.print()
+            console.print(clean_content)
+            console.print()
+
+            # Log the exchange (only if we have a user input to pair it with)
+            if self._config.memory.enabled and user_input:
+                self._logger.log_exchange(user_input, clean_content)
+
+            # Auto-compress if session is getting long
+            if self._config.memory.enabled and len(self._session.messages) >= self._config.memory.max_session_messages:
+                with console.status("  [dim]Komprimiere Kontext...[/dim]", spinner="dots", spinner_style="dim"):
+                    await self._agent.compress_session(self._session)
 
     async def _handle_optimization_response(self, user_input: str) -> None:
         """Handle user's response to optimization offer."""
@@ -593,17 +605,6 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
 
             if result.success:
                 console.print("[green]✓[/green]\n")
-                # If more tool calls queued, show next one
-                if self._pending_tool_calls:
-                    self._print_tool_call(self._pending_tool_calls[0])
-                    return
-                # Let AI synthesize a response based on the tool result
-                with console.status("  [dim]denkt nach...[/dim]", spinner="dots", spinner_style="dim"):
-                    resp_text = await self._agent.synthesize(self._session)
-                    
-                if resp_text.strip():
-                    console.print(resp_text)
-                    console.print()
             else:
                 error = result.error or result.output
                 console.print(f"[red]✗ Error:[/red] {error}\n")
@@ -628,11 +629,15 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                         await self._execute_auto_retry(tool_name, args, command, self._retry_count[retry_key])
                         return
 
-                # Not retryable - let AI respond
-                resp = await self._agent.synthesize(self._session, "Was kann ich wegen dieses Fehlers tun?")
-                if resp.strip():
-                    console.print(resp)
-                    console.print()
+            # If more tool calls queued, show next one
+            if self._pending_tool_calls:
+                self._print_tool_call(self._pending_tool_calls[0])
+                return
+
+            # Let AI respond or continue reasoning based on tool result
+            with console.status("  [dim]denkt nach...[/dim]", spinner="dots", spinner_style="dim"):
+                response = await self._agent.run_with_tools(self._session, "")
+            await self._process_agent_response(response)
 
         elif choice == "2":
             # Cancel this tool call

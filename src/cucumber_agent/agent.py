@@ -147,7 +147,8 @@ class Agent:
 
     async def run_with_tools(self, session: Session, user_input: str) -> ModelResponse:
         """Process user input and return response with potential tool calls."""
-        session.add_user_message(user_input)
+        if user_input:
+            session.add_user_message(user_input)
         messages = self._build_messages(session)
         tools = self.get_tools_spec()
 
