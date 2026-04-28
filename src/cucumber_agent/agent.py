@@ -298,6 +298,9 @@ class Agent:
         if facts := session.metadata.get("facts_context"):
             system_parts.append(f"\n{facts}")
 
+        if agent_ctx := session.metadata.get("agent_context"):
+            system_parts.append(f"\n[System Context - Path to your own files]\n{agent_ctx}")
+
         messages.append(Message(role=Role.SYSTEM, content="\n".join(system_parts)))
 
         # ── Tier 2: Historical summary ─────────────────────────────────

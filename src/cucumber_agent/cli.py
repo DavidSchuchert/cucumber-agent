@@ -254,6 +254,14 @@ class CliSession:
         ws = WorkspaceDetector.detect(self._config.workspace)
         self._session.metadata["workspace"] = ws.to_context_string()
         self._session.metadata["facts_context"] = self._facts.to_context_string()
+        
+        # Self-awareness: Tell the agent where its own files are
+        config_dir = self._config.config_dir
+        self._session.metadata["agent_context"] = (
+            f"Agent Home: {config_dir} | "
+            f"Personality File: {config_dir}/personality/personality.md | "
+            f"Custom Tools: {config_dir}/custom_tools"
+        )
 
         print_welcome(self._config)
 
