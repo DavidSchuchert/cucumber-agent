@@ -219,10 +219,13 @@ class Config:
             ),
         )
 
-        # Load personality from personality.md (new structured approach)
+        # Load personality from personality.md (always the source of truth)
         personality = PersonalityConfig.from_markdown(
             config_dir / "personality" / "personality.md"
         )
+        # Always rebuild system_prompt from personality.md so changes take effect
+        # without needing to manually edit config.yaml
+        agent.system_prompt = personality.to_system_prompt()
 
         # Load user info from user.md (new structured approach)
         user_md = config_dir / "user" / "user.md"

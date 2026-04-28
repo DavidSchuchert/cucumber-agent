@@ -8,10 +8,21 @@ import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+from rich.columns import Columns
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.rule import Rule
 from rich.syntax import Syntax
+from rich.table import Table
+from rich.text import Text
+
+from prompt_toolkit import PromptSession
+from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.history import InMemoryHistory
+from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.styles import Style as PtkStyle
 
 from cucumber_agent.agent import Agent
 from cucumber_agent.config import Config
@@ -64,49 +75,78 @@ async def stream_print(stream: AsyncIterator[str]) -> str:
     return full
 
 
-def print_welcome() -> None:
-    """Print welcome message."""
+def print_welcome(config: Config) -> None:
+    """Print welcome message with personality branding."""
+    pers = config.personality
+    agent_cfg = config.agent
+
+    # Header banner
+    console.print()
+    console.print(Rule(style="bold green"))
     console.print(
-        Panel.fit(
-            "[bold cyan]🥒 CucumberAgent[/bold cyan]\n\n"
-            "A clean, modular AI agent framework.\n\n"
-            "Type [bold]/help[/bold] for commands or just chat!",
-            border_style="cyan",
-        )
+        f"  [bold green]{pers.emoji}  {pers.name}[/bold green]  "
+        f"[dim green]· powered by {agent_cfg.provider}/{agent_cfg.model}[/dim green]"
     )
+    console.print(Rule(style="bold green"))
+    console.print()
+
+    # Capabilities row
+    caps = []
+    if config.preferences.can_search_web:
+        caps.append("[dim]🔍 search[/dim]")
+    if config.preferences.can_code:
+        caps.append("[dim]💻 shell[/dim]")
+    caps.append("[dim]🤖 subagent[/dim]")
+    console.print("  " + "   ".join(caps))
+    console.print()
+    console.print("  [dim]Tippe [bold white]/help[/bold white] für Befehle oder einfach loslegen![/dim]")
+    console.print()
 
 
 def print_help() -> None:
     """Print help message."""
-    help_text = """
-# Commands
+    table = Table(show_header=True, header_style="bold green", box=None, padding=(0, 2))
+    table.add_column("Befehl", style="bold cyan", no_wrap=True)
+    table.add_column("Beschreibung", style="white")
 
-| Command | Description |
-|---------|-------------|
-| `/help` | Show this help |
-| `/exit` | Exit CucumberAgent |
-| `/clear` | Clear the conversation |
-| `/config` | Show current configuration |
-| `/model` | Show current model |
-| `/optimize` | Optimize personality based on name |
-| `/debug` | Toggle debug view |
+    commands = [
+        ("/help",     "Diese Hilfe anzeigen"),
+        ("/exit",     "CucumberAgent beenden"),
+        ("/clear",    "Gesprächsverlauf löschen"),
+        ("/config",   "Aktuelle Konfiguration anzeigen"),
+        ("/model",    "Aktuelles Modell anzeigen"),
+        ("/optimize", "Persönlichkeit basierend auf Namen optimieren"),
+        ("/debug",    "Debug-Modus ein/ausschalten"),
+    ]
+    for cmd, desc in commands:
+        table.add_row(cmd, desc)
 
-Just type normally to chat!
-"""
-    console.print(Markdown(help_text))
+    console.print()
+    console.print(Panel(table, title="[bold green]Befehle[/bold green]", border_style="green", padding=(1, 2)))
+    console.print()
 
 
 def print_config(config: Config) -> None:
     """Print configuration."""
+    pers = config.personality
     agent = config.agent
-    config_text = f"""
-# Current Config
 
-**Provider:** {agent.provider}
-**Model:** {agent.model}
-**Temperature:** {agent.temperature}
-"""
-    console.print(Markdown(config_text))
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column("Key", style="dim")
+    table.add_column("Value", style="white")
+
+    table.add_row("Provider",     f"[cyan]{agent.provider}[/cyan]")
+    table.add_row("Modell",       f"[cyan]{agent.model}[/cyan]")
+    table.add_row("Temperatur",   str(agent.temperature))
+    table.add_row("Name",         f"{pers.emoji} {pers.name}")
+    table.add_row("Ton",          pers.tone)
+    table.add_row("Sprache",      pers.language)
+    table.add_row("Greeting",     pers.greeting or "—")
+    table.add_row("Stärken",      pers.strengths or "—")
+
+    console.print()
+    console.print(Panel(table, title="[bold green]Konfiguration[/bold green]", border_style="green", padding=(1, 2)))
+    console.print()
 
 
 def parse_personality_update(text: str) -> tuple[dict, str] | None:
@@ -193,27 +233,46 @@ class CliSession:
 
     async def run(self) -> None:
         """Run the REPL."""
-        print_welcome()
+        print_welcome(self._config)
 
-        # Show model info
-        console.print(
-            f"[dim]Using {self._config.agent.provider}/{self._config.agent.model}[/dim]\n"
+        pers = self._config.personality
+
+        # Build slash-command completer
+        slash_commands = [
+            "/help", "/exit", "/quit", "/clear",
+            "/config", "/model", "/debug", "/optimize",
+        ]
+        completer = WordCompleter(slash_commands, sentence=True)
+
+        # prompt_toolkit style — green prompt, dim autocomplete ghost text
+        ptk_style = PtkStyle.from_dict({
+            "prompt":      "bold ansibright  green",
+            "auto-suggest": "fg:ansibrightblack",
+        })
+
+        history = InMemoryHistory()
+        pt_session: PromptSession = PromptSession(
+            history=history,
+            auto_suggest=AutoSuggestFromHistory(),
+            completer=completer,
+            complete_while_typing=False,  # only complete on Tab
+            style=ptk_style,
         )
 
         self._running = True
         while self._running:
             try:
-                user_input = await asyncio.to_thread(
-                    lambda: console.input(
-                        "[bold green]cucumber> [/bold green]" if not self._debug_mode
-                        else "[bold red]cucumber [DEBUG]> [/bold red]"
-                    )
-                )
+                if not self._debug_mode:
+                    prompt_text = HTML(f"<b><ansigreen>{pers.emoji} {pers.name}&gt;</ansigreen></b> ")
+                else:
+                    prompt_text = HTML(f"<b><ansired>🔧 {pers.name} [DEBUG]&gt;</ansired></b> ")
+
+                user_input = await pt_session.prompt_async(prompt_text)
                 await self._handle_input(user_input)
             except KeyboardInterrupt:
-                console.print("\n[dim]Use /exit to quit[/dim]")
+                console.print(f"\n  [dim]Strg+C erkannt. Tippe [bold]/exit[/bold] zum Beenden.[/dim]")
             except EOFError:
-                console.print("\n[bold]Goodbye![/bold]")
+                console.print(f"\n[bold green]{pers.emoji}  Tschüss![/bold green]\n")
                 break
 
     async def _handle_input(self, user_input: str) -> None:
@@ -249,10 +308,9 @@ class CliSession:
             if response.tool_calls:
                 # Suppress verbose text when tool calls present - just show minimal info
                 if response.content and response.content.strip():
-                    # Only show if it looks like actual useful content, not "I'll now..."
                     words = response.content.lower()
                     if not any(w in words for w in ['ich', 'i will', 'let me', 'now', 'jetzt', 'werde']):
-                        console.print(response.content)
+                        console.print(f"  [dim]{response.content.strip()}[/dim]")
                     console.print()
 
                 # Queue ALL tool calls, show first one
@@ -263,17 +321,22 @@ class CliSession:
                 self._print_tool_call(self._pending_tool_calls[0])
                 return
             else:
+                # Print response with a subtle rule separator
+                pers = self._config.personality
+                console.print(Rule(f"[dim green]{pers.emoji}[/dim green]", style="dim green"))
+                console.print()
                 console.print(response.content)
                 console.print()
 
             # After first greeting, offer optimization
             if offer_optimization:
                 pers = self._config.personality
-                console.print("\n[bold cyan]──────[/bold cyan]")
-                console.print(f"[bold]{pers.emoji} Möchtest du, dass ich meine Persönlichkeit optimiere?[/bold]")
-                console.print("    Ich kann Emoji, Greeting und Stärken basierend auf meinem Namen anpassen.")
-                console.print("    Antworte mit: [bold]ja[/bold] zum Optimieren oder [bold]nein[/bold] zum Überspringen")
-                console.print("[bold cyan]──────[/bold cyan]\n")
+                console.print(Rule(style="dim cyan"))
+                console.print(f"  [bold]{pers.emoji}  Möchtest du, dass ich meine Persönlichkeit optimiere?[/bold]")
+                console.print("  [dim]Ich kann Emoji, Greeting und Stärken basierend auf meinem Namen anpassen.[/dim]")
+                console.print("  [dim]Antworte mit [bold white]ja[/bold white] oder [bold white]nein[/bold white][/dim]")
+                console.print(Rule(style="dim cyan"))
+                console.print()
                 self._waiting_for_optimization_response = True
 
         except Exception as e:
@@ -362,24 +425,26 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
             case "/help":
                 print_help()
             case "/exit" | "/quit":
-                console.print("[bold]Goodbye![/bold]")
+                pers = self._config.personality
+                console.print(f"[bold green]{pers.emoji}  Tschüss![/bold green]\n")
                 self._running = False
             case "/clear":
                 self._session = Session(id="main", model=self._config.agent.model)
-                console.print("[dim]Conversation cleared[/dim]")
+                console.print("  [dim green]✓ Gesprächsverlauf gelöscht[/dim green]\n")
             case "/config":
                 print_config(self._config)
             case "/model":
-                console.print(f"Model: {self._config.agent.model}")
+                cfg = self._config.agent
+                console.print(f"  [dim]{cfg.provider}[/dim] / [bold cyan]{cfg.model}[/bold cyan]\n")
             case "/debug":
                 self._debug_mode = not self._debug_mode
                 if self._debug_mode:
-                    console.print("[red]🔧 Debug mode ON[/red]")
+                    console.print("  [bold red]🔧 Debug-Modus AN[/bold red]")
                     self._print_debug_info()
                 else:
-                    console.print("[dim]Debug mode OFF[/dim]")
+                    console.print("  [dim]Debug-Modus AUS[/dim]\n")
             case _:
-                console.print(f"[dim]Unknown command: {cmd}[/dim]. Type /help for help.")
+                console.print(f"  [dim]Unbekannter Befehl: [bold]{cmd}[/bold]. Tippe /help für Hilfe.[/dim]\n")
 
     async def _handle_tool_approval(self, user_input: str) -> None:
         """Handle user's response to a tool call."""
@@ -470,11 +535,14 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                 self._print_tool_call(self._pending_tool_calls[0])
 
         elif choice == "3":
-            # Edit command - ask for new command
+            # Edit command - ask for new command, pre-filled for easy editing
             if command:
-                console.print(f"[dim]Current:[/dim] {command}")
+                from prompt_toolkit import prompt as ptk_prompt
+                from prompt_toolkit.formatted_text import HTML
                 new_cmd = await asyncio.to_thread(
-                    lambda: console.input("[yellow]Enter new command: [/yellow]")
+                    ptk_prompt,
+                    HTML("  <b><ansiyellow>Befehl &gt;</ansiyellow></b> "),
+                    default=command,
                 )
                 if new_cmd.strip():
                     self._pending_tool_calls[0]["arguments"]["command"] = new_cmd.strip()
@@ -482,10 +550,10 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                     self._print_tool_call(self._pending_tool_calls[0])
                     return  # Wait for next choice
                 else:
-                    console.print("[dim]Command unchanged.[/dim]\n")
+                    console.print("  [dim]Befehl unverändert.[/dim]\n")
                     self._print_tool_call(self._pending_tool_calls[0])
             else:
-                console.print("[dim]Edit not supported for this tool type.[/dim]")
+                console.print("  [dim]Bearbeiten nur für Befehle möglich.[/dim]")
                 self._print_tool_call(self._pending_tool_calls[0])
 
         else:
@@ -597,21 +665,21 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
         ctx = self._config.context
         agent = self._config.agent
 
-        console.print("\n[bold]🔧 Debug Info[/bold]")
-        console.print("  Personality:")
-        console.print(f"    name: {pers.name}")
-        console.print(f"    emoji: {pers.emoji}")
-        console.print(f"    tone: {pers.tone}")
-        console.print(f"    language: {pers.language}")
-        console.print(f"    greeting: {pers.greeting[:50] if pers.greeting else 'none'}...")
-        console.print("  Agent:")
-        console.print(f"    provider: {agent.provider}")
-        console.print(f"    model: {agent.model}")
-        console.print(f"    temperature: {agent.temperature}")
-        console.print("  Context:")
-        console.print(f"    max_tokens: {ctx.max_tokens}")
-        console.print(f"    remember_last: {ctx.remember_last}")
-        console.print(f"  Session messages: {len(self._session.messages)}")
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column("Key", style="dim")
+        table.add_column("Value", style="white")
+        table.add_row("provider",    agent.provider)
+        table.add_row("model",       agent.model)
+        table.add_row("temperature", str(agent.temperature))
+        table.add_row("max_tokens",  str(ctx.max_tokens))
+        table.add_row("remember",    str(ctx.remember_last))
+        table.add_row("messages",    str(len(self._session.messages)))
+        table.add_row("name",        f"{pers.emoji} {pers.name}")
+        table.add_row("tone",        pers.tone)
+        table.add_row("language",    pers.language)
+
+        console.print()
+        console.print(Panel(table, title="[bold red]🔧 Debug Info[/bold red]", border_style="red", padding=(0, 1)))
         console.print()
 
 

@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 import time
 
+from prompt_toolkit import prompt as ptk_prompt
+from prompt_toolkit.formatted_text import HTML
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -273,7 +276,7 @@ class AgentTool(BaseTool):
         """Prompt user for tool approval. Returns the choice string."""
         console.print("  [bold]Aktion:[/bold]  [1] Ausführen  [2] Überspringen  [3] Bearbeiten  [4] Abbrechen")
         choice = await asyncio.to_thread(
-            console.input, "  [bold yellow]Wahl:[/bold yellow] "
+            ptk_prompt, HTML("  <b><ansiyellow>Wahl &gt;</ansiyellow></b> ")
         )
         return choice.strip()
 
@@ -311,7 +314,8 @@ class AgentTool(BaseTool):
         """Let user edit a command, then execute."""
         console.print(f"  [dim]Aktuell:[/dim] {original_cmd}")
         new_cmd = await asyncio.to_thread(
-            console.input, "  [yellow]Neuer Befehl:[/yellow] "
+            ptk_prompt, HTML("  <b><ansiyellow>Neuer Befehl &gt;</ansiyellow></b> "),
+            default=original_cmd
         )
         if new_cmd.strip():
             args["command"] = new_cmd.strip()
