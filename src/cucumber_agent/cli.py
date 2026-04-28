@@ -362,10 +362,15 @@ class CliSession:
         """Process the agent's response, handling tool calls and text output."""
         if response.tool_calls:
             if response.content and response.content.strip():
-                words = response.content.lower()
-                if not any(w in words for w in ['ich', 'i will', 'let me', 'now', 'jetzt', 'werde']):
-                    console.print(f"  [dim]{response.content.strip()}[/dim]")
-                console.print()
+                import re
+                # Clean up thinking/reasoning blocks
+                clean_tool_content = re.sub(r'<(think|thinking|thought)>.*?</\1>', '', response.content, flags=re.DOTALL | re.IGNORECASE).strip()
+                
+                if clean_tool_content:
+                    words = clean_tool_content.lower()
+                    if not any(w in words for w in ['ich', 'i will', 'let me', 'now', 'jetzt', 'werde']):
+                        console.print(f"  [dim]{clean_tool_content}[/dim]")
+                    console.print()
             
             # Appending the actual assistant message containing the tool calls
             from cucumber_agent.session import Message, Role
@@ -387,14 +392,14 @@ class CliSession:
         if response.content and response.content.strip():
             import re
             
-            # Extract thinking blocks
-            thinking_blocks = re.findall(r'<think>(.*?)</think>', response.content, flags=re.DOTALL)
+            # Extract thinking blocks (handles <think>, <thinking>, <thought> case-insensitive)
+            thinking_blocks = re.findall(r'<(think|thinking|thought)>(.*?)</\1>', response.content, flags=re.DOTALL | re.IGNORECASE)
             # Clean up the main content
-            clean_content = re.sub(r'<think>.*?</think>', '', response.content, flags=re.DOTALL).strip()
+            clean_content = re.sub(r'<(think|thinking|thought)>.*?</\1>', '', response.content, flags=re.DOTALL | re.IGNORECASE).strip()
             
             # Display thinking blocks if any
             if thinking_blocks:
-                for block in thinking_blocks:
+                for _, block in thinking_blocks:
                     if block.strip():
                         console.print(f"  [dim italic white]💭 {block.strip()}[/dim italic white]")
                 console.print()
