@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
@@ -49,19 +50,38 @@ class MiniMaxProvider(BaseProvider):
         temperature: float = 0.7,
         max_tokens: int | None = None,
         tools: list[dict] | None = None,
+        max_retries: int = 3,
     ) -> ModelResponse:
         """Send a complete request and return the full response."""
         body = self._build_request(messages, model, temperature, max_tokens, tools)
         body["stream"] = False
 
-        response = await self._client.post(
-            f"{self._base_url}/v1/messages",
-            json=body,
-        )
-        response.raise_for_status()
-        data = response.json()
+        for attempt in range(max_retries):
+            try:
+                response = await self._client.post(
+                    f"{self._base_url}/v1/messages",
+                    json=body,
+                )
 
-        return self._parse_response(data, model)
+                # Handle 529 with retry
+                if response.status_code == 529:
+                    wait_time = 2 ** attempt  # 1, 2, 4 seconds
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(wait_time)
+                        continue
+                    else:
+                        response.raise_for_status()
+
+                response.raise_for_status()
+                data = response.json()
+                return self._parse_response(data, model)
+
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 529 and attempt < max_retries - 1:
+                    wait_time = 2 ** attempt
+                    await asyncio.sleep(wait_time)
+                    continue
+                raise
 
     def stream(
         self,

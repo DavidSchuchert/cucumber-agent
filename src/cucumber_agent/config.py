@@ -119,7 +119,9 @@ class PersonalityConfig:
         parts.append(
             "IMPORTANT: When the user asks me to execute shell commands, read/write files, "
             "or perform system operations, I MUST use the 'shell' tool. "
-            "I should NOT just describe what I would do - I must actually call the tool."
+            "I should NOT just describe what I would do - I must actually call the tool. "
+            "If I'm not sure about the exact path or directory name, I should first use "
+            "the 'search' tool to find the correct location."
         )
 
         parts.append("I'm here to help my human with whatever they need!")
