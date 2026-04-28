@@ -111,8 +111,6 @@ class CucumberTUI(App):
     #user-input {{
         background: {SURFACE};
         border: solid {BORDER};
-        border-title: "{CUCUMBER_GREEN} >";
-        border-title-style: bold;
         color: #e2e8f0;
         padding: 0 1;
     }}
@@ -204,12 +202,14 @@ class CucumberTUI(App):
         self._init_agent_session()
 
     def compose(self) -> ComposeResult:
+        from textual.widgets import Input
         yield Container(Static(id="header"))
         yield VerticalScroll(Static(id="chat-log"), id="chat-scroll")
-        yield Horizontal(
-            Input(placeholder="Nachricht eingeben...", id="user-input"),
-            id="input-area",
-        )
+        inp = Input(placeholder="Nachricht eingeben...", id="user-input")
+        inp.border_title = "> "
+        inp.border_title_color = CUCUMBER_GREEN
+        inp.border_style = BORDER
+        yield Horizontal(inp, id="input-area")
 
     def _init_agent_session(self):
         """Initialize agent session, memory, and skills (once at startup)."""
