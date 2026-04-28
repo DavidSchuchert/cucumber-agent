@@ -26,7 +26,11 @@ class MiniMaxProvider(BaseProvider):
         model: str = "MiniMax-M2.7",
     ):
         self._api_key = api_key
-        self._base_url = base_url.rstrip("/")
+        # Strip trailing slash and remove /anthropic if the user config still has it
+        url = base_url.rstrip("/")
+        if url.endswith("/anthropic"):
+            url = url[:-10] + "/v1"
+        self._base_url = url
         self._model = model
         self._client = httpx.AsyncClient(
             headers={
