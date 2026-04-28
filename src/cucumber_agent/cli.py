@@ -328,8 +328,18 @@ class CliSession:
                     if not any(w in words for w in ['ich', 'i will', 'let me', 'now', 'jetzt', 'werde']):
                         console.print(f"  [dim]{response.content.strip()}[/dim]")
                     console.print()
+                
+                # Appending the actual assistant message containing the tool calls
+                from cucumber_agent.session import Message, Role
+                assistant_msg = Message(
+                    role=Role.ASSISTANT,
+                    content=response.content or "",
+                    tool_calls=response.tool_calls
+                )
+                self._session.messages.append(assistant_msg)
+
                 self._pending_tool_calls = [
-                    {"name": tc.name, "arguments": tc.arguments}
+                    {"name": tc.name, "arguments": tc.arguments, "id": tc.id}
                     for tc in response.tool_calls
                 ]
                 self._print_tool_call(self._pending_tool_calls[0])
@@ -559,24 +569,18 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
             console.print(f"\n[dim]⚡ Executing {tool_name}...[/dim]\n")
             result = await ToolRegistry.execute(tool_name, **args)
 
-            # Add assistant + tool result to session so AI has context
             from cucumber_agent.session import Message, Role
 
-            # First add what the AI was trying to do
-            desc = args.get('command', args.get('task', tool_name))
-            assistant_msg = Message(
-                role=Role.ASSISTANT,
-                content=f"Ich führe {tool_name} aus: {desc}"
-            )
-            self._session.messages.append(assistant_msg)
-
-            # Then add the tool result (truncate large outputs)
+            # Then add the actual tool result
             output_text = result.output if result.success else 'ERROR: ' + (result.error or result.output)
             if len(output_text) > 3000:
                 output_text = output_text[:1500] + "\n... [TRUNCATED] ...\n" + output_text[-1500:]
+            
             tool_result_msg = Message(
-                role=Role.USER,
-                content=f"[TOOL_RESULT] {tool_name}: {output_text}"
+                role=Role.TOOL,
+                content=output_text,
+                name=tool_name,
+                tool_call_id=tool_call.get("id", "")
             )
             self._session.messages.append(tool_result_msg)
 

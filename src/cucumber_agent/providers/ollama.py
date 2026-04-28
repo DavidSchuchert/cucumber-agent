@@ -124,6 +124,15 @@ class OllamaProvider(BaseProvider):
             result["name"] = message.name
         if message.tool_call_id:
             result["tool_call_id"] = message.tool_call_id
+        if message.tool_calls:
+            result["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
+                }
+                for tc in message.tool_calls
+            ]
         return result
 
     def _extract_content(self, content: str | list[ContentBlock]) -> str:

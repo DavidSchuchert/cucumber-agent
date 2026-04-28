@@ -217,10 +217,8 @@ class Agent:
             "Antworte direkt und klar. KEINE Werkzeug-Aufrufe mehr."
         )
 
-        # Get recent messages (skip any empty ones)
-        for m in session.messages[-4:]:
-            if m.content and str(m.content).strip():
-                messages.append(m)
+        # Get full session context (respecting 3-tier memory)
+        messages = self._build_messages(session)
 
         if prompt:
             messages.append(Message(role=Role.USER, content=prompt))

@@ -33,7 +33,7 @@ class ToolCall:
 
     id: str
     name: str
-    input: dict
+    arguments: dict
 
 
 @dataclass
