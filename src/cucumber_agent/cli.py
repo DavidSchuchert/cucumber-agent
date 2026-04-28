@@ -398,11 +398,42 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
             self._pending_tool_call = None
             console.print(f"\n[dim]⚡ Executing {tool_name}...[/dim]\n")
             result = await ToolRegistry.execute(tool_name, **args)
+
+            # Add tool result to session so AI can see it
+            from cucumber_agent.session import Message, Role
+            tool_result_msg = Message(
+                role=Role.USER,
+                content=f"[TOOL_RESULT] {tool_name}: {result.output if result.success else 'ERROR: ' + (result.error or result.output)}"
+            )
+            self._session.messages.append(tool_result_msg)
+
             if result.success:
                 console.print("[green]✓ Done[/green]\n")
-                console.print(f"[dim]{result.output[:500] if len(result.output) > 500 else result.output}[/dim]\n")
+                output_text = result.output[:500] if len(result.output) > 500 else result.output
+                if output_text.strip():
+                    console.print(f"[dim]{output_text}[/dim]\n")
+                # Now let AI respond to the result
+                resp = await self._agent.run_with_tools(self._session, "")
+                if resp.tool_calls:
+                    for tc in resp.tool_calls:
+                        self._print_tool_call({"name": tc.name, "arguments": tc.arguments})
+                        self._pending_tool_call = {"name": tc.name, "arguments": tc.arguments}
+                        return
+                else:
+                    console.print(resp.content)
+                    console.print()
             else:
                 console.print(f"[red]✗ Error:[/red] {result.error or result.output}\n")
+                # Let AI respond to the error
+                resp = await self._agent.run_with_tools(self._session, "")
+                if resp.tool_calls:
+                    for tc in resp.tool_calls:
+                        self._print_tool_call({"name": tc.name, "arguments": tc.arguments})
+                        self._pending_tool_call = {"name": tc.name, "arguments": tc.arguments}
+                        return
+                else:
+                    console.print(resp.content)
+                    console.print()
 
         elif choice == "2":
             # Cancel
