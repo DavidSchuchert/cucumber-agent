@@ -653,6 +653,10 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                 table.add_row("Maximaler Context:", f"{max_context} Tokens")
                 table.add_row("Auslastung:", f"{usage_pct:.1f}%")
                 
+                summary_status = "[green]Aktiv[/green]" if self._session.metadata.get("summary") else "[dim]Inaktiv[/dim]"
+                table.add_row("Gesprächs-Summary:", summary_status)
+                table.add_row("Nachrichten (Live):", f"{len(self._session.messages)}")
+                
                 # Show a small progress bar
                 bar_width = 20
                 filled = int(usage_pct / (100 / bar_width)) if usage_pct < 100 else bar_width
