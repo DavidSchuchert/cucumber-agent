@@ -257,10 +257,12 @@ class CliSession:
         
         # Self-awareness: Tell the agent where its own files are
         config_dir = self._config.config_dir
+        wiki_dir = self._config.workspace / "wiki"
         self._session.metadata["agent_context"] = (
             f"Agent Home: {config_dir} | "
             f"Personality File: {config_dir}/personality/personality.md | "
-            f"Custom Tools: {config_dir}/custom_tools"
+            f"Custom Tools: {config_dir}/custom_tools | "
+            f"Project Wiki: {wiki_dir}"
         )
 
         print_welcome(self._config)
