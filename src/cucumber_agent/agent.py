@@ -160,10 +160,8 @@ class Agent:
             tools=tools if tools else None,
         )
 
-        # Don't add assistant message if tool calls present
-        # The tool result will be added after execution
-        if not response.tool_calls:
-            session.add_assistant_message(response.content)
+        # Add assistant message (even with tool calls) so subsequent tool results can reference it
+        session.add_assistant_message(response.content)
 
         return response
 
