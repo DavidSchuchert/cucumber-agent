@@ -31,6 +31,7 @@ from textual.css.query import NoMatches
 from textual.message import Message as TuiMessage
 from textual.reactive import reactive
 from textual.widgets import Button, Input, Static
+from textual.widgets._rich_log import RichLog
 
 if TYPE_CHECKING:
     from cucumber_agent.agent import Agent
@@ -204,11 +205,10 @@ class CucumberTUI(App):
     def compose(self) -> ComposeResult:
         from textual.widgets import Input
         yield Container(Static(id="header"))
-        yield VerticalScroll(Static(id="chat-log"), id="chat-scroll")
+        yield VerticalScroll(RichLog(id="chat-log"), id="chat-scroll")
         inp = Input(placeholder="Nachricht eingeben...", id="user-input")
         inp.border_title = "> "
         inp.border_title_color = CUCUMBER_GREEN
-        inp.border_style = BORDER
         yield Horizontal(inp, id="input-area")
 
     def _init_agent_session(self):
@@ -299,13 +299,18 @@ class CucumberTUI(App):
             tool_id=tool_id,
         )
         self.messages.append(msg)
-        self._render()
+        self._write_to_rich_log(msg)
         self._scroll_to_bottom()
 
-    def _render(self):
-        chat_log = self.query_one("#chat-log", Static)
-        lines = [self._format_message(m) for m in self.messages]
-        chat_log.update("\n".join(lines))
+    def _write_to_rich_log(self, msg: ChatMessageData):
+        """Write a single formatted message to the RichLog widget."""
+        chat_log = self.query_one("#chat-log", RichLog)
+        line = self._format_message(msg)
+        chat_log.write(line)
+
+    def _clear_chat_log(self):
+        chat_log = self.query_one("#chat-log", RichLog)
+        chat_log.clear()
 
     def _format_message(self, msg: ChatMessageData) -> str:
         ts = msg.timestamp.strftime("%H:%M")
@@ -391,7 +396,7 @@ class CucumberTUI(App):
             self.exit()
         elif command in ("/clear", "/cls"):
             self.messages.clear()
-            self._render()
+            self._clear_chat_log()
             self.add_message("system", "Chat geleert.")
         elif command in ("/help", "/h", "/?"):
             self._show_help()
@@ -567,7 +572,7 @@ class CucumberTUI(App):
 
     def action_clear_chat(self):
         self.messages.clear()
-        self._render()
+        self._clear_chat_log()
         self.add_message("system", "Chat geleert.")
 
     def action_show_help(self):
