@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from cucumber_agent.session import Message, Role
+from cucumber_agent.tools import ToolRegistry
+
 if TYPE_CHECKING:
     from cucumber_agent.agent import Agent
     from cucumber_agent.session import Session
@@ -18,6 +21,7 @@ class SkillRunner:
         """
         Expand the skill prompt with `args` and run it through the agent.
         Returns the agent's response text.
+        Handles tool calls properly (unlike Agent.run which ignores them).
         """
         prompt = skill.prompt
         if "{args}" in prompt:
@@ -26,4 +30,25 @@ class SkillRunner:
             # Append args if no placeholder defined
             prompt = f"{prompt}\n\nArgument: {args.strip()}"
 
-        return await agent.run(session, prompt)
+        # Use run_with_tools to properly handle tool calls
+        response = await agent.run_with_tools(session, prompt)
+
+        # Process tool calls if any (similar to CLI's _handle_tool_approval)
+        while response.tool_calls:
+            for tc in response.tool_calls:
+                result = await ToolRegistry.execute(tc.name, **tc.arguments)
+
+                output_text = result.output if result.success else 'ERROR: ' + (result.error or result.output)
+
+                tool_result_msg = Message(
+                    role=Role.TOOL,
+                    content=output_text,
+                    name=tc.name,
+                    tool_call_id=tc.id
+                )
+                session.messages.append(tool_result_msg)
+
+            # Let agent continue with tool results
+            response = await agent.run_with_tools(session, "")
+
+        return response.content

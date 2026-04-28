@@ -84,6 +84,8 @@ class MiniMaxProvider(BaseProvider):
                 return self._parse_response(data, model)
 
             except httpx.HTTPStatusError as e:
+                if e.response.status_code == 400:
+                    console.print(f"[red]MiniMax API Error (400):[/red] {e.response.text}")
                 if e.response.status_code == 529 and attempt < max_retries - 1:
                     wait_time = 2 ** attempt
                     await asyncio.sleep(wait_time)
@@ -155,9 +157,14 @@ class MiniMaxProvider(BaseProvider):
     def _format_message(self, message: Message) -> dict:
         role = message.role.value
         content = self._extract_content(message.content)
-        result: dict = {"role": role, "content": content}
-        if message.name:
+        result: dict = {"role": role, "content": content or ""}
+        
+        # In OpenAI format, 'name' is only for 'user' or 'system' (rarely)
+        # and 'tool_call_id' is for 'tool' role.
+        # Strict providers like MiniMax might reject 'name' in 'tool' messages.
+        if message.name and role != "tool":
             result["name"] = message.name
+            
         if message.tool_call_id:
             result["tool_call_id"] = message.tool_call_id
         if message.tool_calls:
