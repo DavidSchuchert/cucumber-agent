@@ -157,25 +157,36 @@ class MiniMaxProvider(BaseProvider):
     def _format_message(self, message: Message) -> dict:
         """Format a Message as a MiniMax message dict."""
         role = message.role.value
-        content = self._extract_content(message.content)
 
-        result: dict = {"role": role, "content": content}
-        if message.name:
-            result["name"] = message.name
-        if message.tool_call_id:
-            result["tool_call_id"] = message.tool_call_id
+        if role == "tool":
+            return {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": message.tool_call_id,
+                        "content": self._extract_content(message.content)
+                    }
+                ]
+            }
+
+        content_blocks = []
+        if message.content:
+            content_blocks.append({"type": "text", "text": self._extract_content(message.content)})
+            
         if message.tool_calls:
-            import json
-            result["tool_calls"] = [
-                {
+            for tc in message.tool_calls:
+                content_blocks.append({
+                    "type": "tool_use",
                     "id": tc.id,
-                    "type": "function",
-                    "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
-                }
-                for tc in message.tool_calls
-            ]
+                    "name": tc.name,
+                    "input": tc.arguments
+                })
 
-        return result
+        return {
+            "role": role,
+            "content": content_blocks if (content_blocks and role != "system") else self._extract_content(message.content)
+        }
 
     def _extract_content(self, content: str | list[ContentBlock]) -> str:
         """Extract text content from a message."""
