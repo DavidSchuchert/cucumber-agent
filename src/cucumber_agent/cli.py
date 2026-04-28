@@ -408,31 +408,18 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
             self._session.messages.append(tool_result_msg)
 
             if result.success:
-                console.print("[green]✓ Done[/green]\n")
-                output_text = result.output[:500] if len(result.output) > 500 else result.output
-                if output_text.strip():
-                    console.print(f"[dim]{output_text}[/dim]\n")
-                # Now let AI respond to the result
-                resp = await self._agent.run_with_tools(self._session, "")
-                if resp.tool_calls:
-                    for tc in resp.tool_calls:
-                        self._print_tool_call({"name": tc.name, "arguments": tc.arguments})
-                        self._pending_tool_call = {"name": tc.name, "arguments": tc.arguments}
-                        return
-                else:
-                    console.print(resp.content)
+                console.print("[green]✓[/green]\n")
+                # Let AI synthesize a response based on the tool result
+                resp_text = await self._agent.synthesize(self._session)
+                if resp_text.strip():
+                    console.print(resp_text)
                     console.print()
             else:
                 console.print(f"[red]✗ Error:[/red] {result.error or result.output}\n")
                 # Let AI respond to the error
-                resp = await self._agent.run_with_tools(self._session, "")
-                if resp.tool_calls:
-                    for tc in resp.tool_calls:
-                        self._print_tool_call({"name": tc.name, "arguments": tc.arguments})
-                        self._pending_tool_call = {"name": tc.name, "arguments": tc.arguments}
-                        return
-                else:
-                    console.print(resp.content)
+                resp = await self._agent.synthesize(self._session, "Was kann ich wegen dieses Fehlers tun?")
+                if resp.strip():
+                    console.print(resp)
                     console.print()
 
         elif choice == "2":

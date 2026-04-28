@@ -13,6 +13,7 @@ from cucumber_agent.providers import (
     openrouter,  # noqa: F401
 )
 from cucumber_agent.session import Message, Role, Session
+from cucumber_agent.tools import ToolRegistry
 
 if TYPE_CHECKING:
     pass
@@ -162,6 +163,35 @@ class Agent:
             session.add_assistant_message(response.content)
 
         return response
+
+    async def synthesize(self, session: Session, prompt: str = "") -> str:
+        """Synthesize a response based on tool results already in session."""
+        if prompt:
+            session.add_user_message(prompt)
+
+        messages = self._build_messages(session)
+        tools = self.get_tools_spec()
+
+        response = await self._provider.complete(
+            messages=messages,
+            model=self._agent_config.model,
+            temperature=self._agent_config.temperature,
+            max_tokens=self._agent_config.max_tokens,
+            tools=tools if tools else None,
+        )
+
+        # If tool calls came back, handle them (but usually synthesis shouldn't trigger tools)
+        if response.tool_calls:
+            # Execute tools and recurse
+            for tc in response.tool_calls:
+                result = await ToolRegistry.execute(tc.name, **tc.arguments)
+                session.add_user_message(
+                    f"[TOOL_RESULT] {tc.name}: {result.output if result.success else 'ERROR: ' + (result.error or result.output)}"
+                )
+            return await self.synthesize(session)
+
+        session.add_assistant_message(response.content)
+        return response.content
 
     async def run_stream(
         self,
