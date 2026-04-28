@@ -166,31 +166,31 @@ class Agent:
 
     async def synthesize(self, session: Session, prompt: str = "") -> str:
         """Synthesize a response based on recent tool results in session."""
-        # Build messages using ONLY the recent tool results + optional prompt
+        # Build messages WITHOUT modifying session
         messages = []
 
         system_prompt = self._agent_config.system_prompt
         if system_prompt:
             messages.append(Message(role=Role.SYSTEM, content=system_prompt))
 
-        # Get last 4 messages (typically: user question, assistant+tool, tool result, empty user)
-        recent = session.messages[-4:] if len(session.messages) >= 4 else session.messages
-        messages.extend(recent)
+        # Get recent messages (skip any empty ones)
+        for m in session.messages[-4:]:
+            if m.content and str(m.content).strip():
+                messages.append(m)
 
         if prompt:
             messages.append(Message(role=Role.USER, content=prompt))
 
-        tools = self.get_tools_spec()
-
+        # Don't use tools for synthesis - just complete
         response = await self._provider.complete(
             messages=messages,
             model=self._agent_config.model,
             temperature=self._agent_config.temperature,
             max_tokens=self._agent_config.max_tokens,
-            tools=tools if tools else None,
+            tools=None,  # No tools for synthesis
         )
 
-        # If tool calls came back, handle them
+        # If tool calls came back, execute and get final response
         if response.tool_calls:
             for tc in response.tool_calls:
                 result = await ToolRegistry.execute(tc.name, **tc.arguments)
@@ -198,13 +198,13 @@ class Agent:
                     role=Role.USER,
                     content=f"[TOOL_RESULT] {tc.name}: {result.output if result.success else 'ERROR: ' + (result.error or result.output)}"
                 ))
-            # Recurse with updated messages
+            # Final completion without tools
             response = await self._provider.complete(
                 messages=messages,
                 model=self._agent_config.model,
                 temperature=self._agent_config.temperature,
                 max_tokens=self._agent_config.max_tokens,
-                tools=None,  # No tools on synthesis
+                tools=None,
             )
 
         return response.content
