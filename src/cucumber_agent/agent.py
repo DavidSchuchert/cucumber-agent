@@ -122,6 +122,28 @@ class Agent:
         """Access personality config."""
         return self._config.personality
 
+    async def summarize_messages(self, messages: list[Message]) -> str:
+        """Use the LLM to create a concise summary of the given messages."""
+        if not messages:
+            return ""
+        
+        # Simple text representation of messages
+        history_text = "\n".join([f"{m.role.value}: {self._extract_text(m.content)}" for m in messages])
+        
+        prompt = (
+            "Fasse den folgenden Gesprächsverlauf prägnant zusammen. "
+            "Konzentriere dich auf getroffene Entscheidungen, erledigte Aufgaben und wichtige Fakten. "
+            "Antworte auf DEUTSCH und halte dich kurz (max. 200 Wörter).\n\n"
+            f"HISTORIE:\n{history_text}"
+        )
+        
+        response = await self._provider.complete(
+            messages=[Message(role=Role.USER, content=prompt)],
+            model=self._agent_config.model,
+            temperature=0.3, # low temp for summarization
+        )
+        return response.content
+
     def get_tools_spec(self) -> list[dict] | None:
         """Get tool specifications for the current provider."""
         from cucumber_agent.tools import ToolRegistry

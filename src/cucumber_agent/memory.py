@@ -127,3 +127,19 @@ class FactsStore:
         for key, value in self._facts.items():
             lines.append(f"  - {key}: {value}")
         return "\n".join(lines)
+class SessionSummary:
+    """Persistent storage for the latest session summary."""
+
+    def __init__(self, summary_file: Path) -> None:
+        self._file = summary_file
+        self._file.parent.mkdir(parents=True, exist_ok=True)
+
+    def save(self, summary: str) -> None:
+        """Save a new summary to disk."""
+        self._file.write_text(summary.strip(), encoding="utf-8")
+
+    def load(self) -> str | None:
+        """Load the latest summary from disk."""
+        if self._file.exists():
+            return self._file.read_text(encoding="utf-8")
+        return None

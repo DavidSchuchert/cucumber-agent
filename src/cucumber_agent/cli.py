@@ -255,6 +255,8 @@ class CliSession:
         # Memory & persistence
         self._facts = FactsStore(config.memory.facts_file)
         self._logger = SessionLogger(config.memory.log_dir)
+        from cucumber_agent.memory import SessionSummary
+        self._summary_store = SessionSummary(config.memory.summary_file)
 
         # Skills & Custom Tools
         self._skill_loader = SkillLoader()
@@ -281,6 +283,17 @@ class CliSession:
             f"Custom Tools: {config_dir}/custom_tools | "
             f"Project Wiki: {wiki_dir}"
         )
+
+        # Long-term Memory: Load recent conversations from logs + latest session summary
+        if self._config.memory.enabled:
+            summary = self._summary_store.load()
+            if not summary:
+                # Fallback to logs if no specific session summary exists
+                summary = self._logger.get_recent_summary(days=3, max_entries=10)
+            
+            if summary:
+                self._session.metadata["summary"] = summary
+                console.print(f"  [dim]🧠 Vergangene Unterhaltungen geladen...[/dim]")
 
         print_welcome(self._config)
 
@@ -453,11 +466,36 @@ class CliSession:
             # Log the exchange (only if we have a user input to pair it with)
             if self._config.memory.enabled and user_input:
                 self._logger.log_exchange(user_input, clean_content)
+                # Auto-compress if history is getting too long
+                await self._maybe_compress_context()
 
-            # Auto-compress if session is getting long
-            if self._config.memory.enabled and len(self._session.messages) >= self._config.memory.max_session_messages:
-                with console.status("  [dim]Komprimiere Kontext...[/dim]", spinner="dots", spinner_style="dim"):
-                    await self._agent.compress_session(self._session)
+    async def _maybe_compress_context(self) -> None:
+        """Compress old messages into a summary if the history is too long."""
+        if not self._config.memory.enabled:
+            return
+        
+        # Trigger by message count
+        if len(self._session.messages) < self._config.memory.max_session_messages:
+            return
+            
+        console.print("  [dim]🔄 Komprimiere Gesprächsverlauf...[/dim]")
+        
+        # Keep the most recent messages, summarize the rest
+        keep_recent = self._config.memory.summarize_keep_recent
+        to_summarize = self._session.messages[:-keep_recent]
+        remaining = self._session.messages[-keep_recent:]
+        
+        # Create summary
+        new_summary = await self._agent.summarize_messages(to_summarize)
+        
+        # Update session
+        self._session.metadata["summary"] = new_summary
+        self._session.messages = remaining
+        
+        # Persist summary to disk
+        self._summary_store.save(new_summary)
+        console.print("  [dim]✓ Verlauf zusammengefasst und gespeichert.[/dim]")
+
 
     async def _handle_optimization_response(self, user_input: str) -> None:
         """Handle user's response to optimization offer."""

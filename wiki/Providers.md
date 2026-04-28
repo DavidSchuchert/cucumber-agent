@@ -96,6 +96,20 @@ class ToolCall:
 - **Cost**: Cheap
 - **Features**: Thinking blocks, tool use, 529 retry logic
 
+### MiniMax MCP Tools
+
+CucumberAgent unterstützt MiniMax MCP-Tools:
+
+#### web_search
+- Sucht im Internet nach aktuellen Informationen
+- Nutzt MiniMax API wenn `MINIMAX_API_KEY` gesetzt ist
+- Fallback auf DuckDuckGo wenn kein API Key
+
+#### understand_image
+- Analysiert Bilder und beschreibt deren Inhalt
+- Unterstützt HTTP/HTTPS URLs und lokale Dateien
+- Formate: JPEG, PNG, GIF, WebP (max 20MB)
+
 ### OpenRouter
 
 - **Name**: `openrouter`

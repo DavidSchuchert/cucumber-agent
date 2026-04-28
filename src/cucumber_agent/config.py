@@ -185,6 +185,7 @@ class MemoryConfig:
     facts_file: Path = field(default_factory=lambda: Path.home() / ".cucumber" / "memory" / "facts.json")
     max_session_messages: int = 20   # trigger context compression after this
     summarize_keep_recent: int = 6   # keep this many recent messages when compressing
+    summary_file: Path = field(default_factory=lambda: Path.home() / ".cucumber" / "memory" / "last_summary.txt")
 
 
 @dataclass
@@ -320,6 +321,7 @@ class Config:
             facts_file=Path(mem_data.get("facts_file", str(Path.home() / ".cucumber" / "memory" / "facts.json"))),
             max_session_messages=mem_data.get("max_session_messages", 20),
             summarize_keep_recent=mem_data.get("summarize_keep_recent", 6),
+            summary_file=Path(mem_data.get("summary_file", str(Path.home() / ".cucumber" / "memory" / "last_summary.txt"))),
         )
 
         # Load logging config
