@@ -54,9 +54,10 @@ class AgentTool(BaseTool):
 
     name = "agent"
     description = (
-        "Startet einen autonomen Sub-Agenten für komplexe, mehrstufige Aufgaben "
-        "(z.B. umfassende Recherchen, Code-Analysen oder Refactorings). "
-        "Der Sub-Agent arbeitet selbstständig und meldet sich am Ende mit einem Ergebnis."
+        "Delegiert eine komplexe, mehrstufige Aufgabe an einen autonomen Sub-Agenten. "
+        "Verwende dieses Tool immer dann, wenn eine Aufgabe viele Teilschritte erfordert "
+        "(z.B. 'Recherchiere X und schreibe dann Y', 'Analysiere das Projekt und erstelle ein Refactoring-Konzept'). "
+        "Dies hält den Haupt-Chat übersichtlich und ermöglicht spezialisierte Bearbeitung."
     )
     parameters = {
         "type": "object",

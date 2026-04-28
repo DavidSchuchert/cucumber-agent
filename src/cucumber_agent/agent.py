@@ -299,9 +299,19 @@ class Agent:
             system_parts.append(f"\n{facts}")
 
         if agent_ctx := session.metadata.get("agent_context"):
-            system_parts.append(f"\n[System Context - Path to your own files]\n{agent_ctx}")
+            system_parts.append(f"\n{agent_ctx}")
 
-        messages.append(Message(role=Role.SYSTEM, content="\n".join(system_parts)))
+        # Delegation Guideline
+        delegation_msg = (
+            "\n\n### Delegation Strategy\n"
+            "If a task is complex, multi-step, or requires deep research/analysis, "
+            "consider using the 'agent' tool to delegate it to a sub-agent. "
+            "This keeps the main conversation clean and allows for focused background work."
+        )
+        system_parts.append(delegation_msg)
+
+        system_content = "\n".join(system_parts)
+        messages.append(Message(role=Role.SYSTEM, content=system_content))
 
         # ── Tier 2: Historical summary ─────────────────────────────────
         if summary := session.metadata.get("summary"):
