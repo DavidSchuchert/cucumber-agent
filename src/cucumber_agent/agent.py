@@ -181,30 +181,33 @@ class Agent:
         if prompt:
             messages.append(Message(role=Role.USER, content=prompt))
 
-        # Don't use tools for synthesis - just complete
+        # Allow tools for synthesis (for follow-up actions)
+        tools = self.get_tools_spec()
+
         response = await self._provider.complete(
             messages=messages,
             model=self._agent_config.model,
             temperature=self._agent_config.temperature,
             max_tokens=self._agent_config.max_tokens,
-            tools=None,  # No tools for synthesis
+            tools=tools if tools else None,
         )
 
         # If tool calls came back, execute and get final response
         if response.tool_calls:
+            # Execute ALL tool calls in sequence
             for tc in response.tool_calls:
                 result = await ToolRegistry.execute(tc.name, **tc.arguments)
                 messages.append(Message(
                     role=Role.USER,
                     content=f"[TOOL_RESULT] {tc.name}: {result.output if result.success else 'ERROR: ' + (result.error or result.output)}"
                 ))
-            # Final completion without tools
+            # Final completion - no more tools to avoid loops
             response = await self._provider.complete(
                 messages=messages,
                 model=self._agent_config.model,
                 temperature=self._agent_config.temperature,
                 max_tokens=self._agent_config.max_tokens,
-                tools=None,
+                tools=None,  # No more tools to prevent loops
             )
 
         return response.content
