@@ -1060,10 +1060,9 @@ async def run_config_cmd() -> None:
 
 
 def run_tui() -> None:
-    """Launch the Textual TUI."""
+    """Launch the prompt_toolkit + Rich TUI."""
     from cucumber_agent.tui import CucumberTUI
     from cucumber_agent.agent import Agent
-    import asyncio
     import logging
 
     config = Config.load()
