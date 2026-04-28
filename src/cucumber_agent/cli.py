@@ -883,16 +883,38 @@ def run_init() -> None:
 def run_update() -> None:
     """Update CucumberAgent from GitHub."""
     import subprocess
+    import os
+
+    # ASCII Cucumber
+    cucumber_ascii = r"""
+           [bold green]_____ [/bold green]
+         [bold green]/       \ [/bold green]
+        [bold green]|  [white](O)(O)[/white] | [/bold green]
+        [bold green]|    [white]<[/white]    | [/bold green]
+        [bold green]|  [white]'---'[/white]  | [/bold green]
+        [bold green]|         | [/bold green]
+        [bold green]|         | [/bold green]
+        [bold green]|         | [/bold green]
+         [bold green]\_______/ [/bold green]
+    """
+    console.print(cucumber_ascii)
+    console.print("[bold]🔄 Updating CucumberAgent...[/bold]\n")
 
     install_dir = Path.home() / ".cucumber-agent"
-
-    console.print("[bold]🔄 Updating CucumberAgent...[/bold]\n")
+    update_script = install_dir / "installer" / "update.sh"
 
     if not install_dir.exists():
         console.print("[red]ERROR:[/red] Installation not found at ~/.cucumber-agent")
         console.print("Run the installer first: curl ... | sh")
         sys.exit(1)
 
+    # If the dedicated update script exists, use it
+    if update_script.exists():
+        os.chmod(update_script, 0o755)
+        result = subprocess.run([str(update_script)], cwd=install_dir)
+        sys.exit(result.returncode)
+
+    # Fallback legacy logic if script not found
     try:
         console.print("→ Pulling latest from GitHub...")
         result = subprocess.run(
@@ -902,6 +924,10 @@ def run_update() -> None:
             text=True,
         )
         if result.returncode == 0:
+            if "Already up to date" in result.stdout:
+                console.print("[green]✅ Already up to date![/green]\n")
+                return
+
             console.print("→ Reinstalling package...")
             subprocess.run(["uv", "tool", "install", "-e", "."], cwd=install_dir)
             console.print("\n[green]✅ Update complete![/green]\n")
