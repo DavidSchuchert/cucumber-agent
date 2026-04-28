@@ -299,9 +299,19 @@ class Agent:
             system_parts.append(f"\n{facts}")
 
         if agent_ctx := session.metadata.get("agent_context"):
-            system_parts.append(f"\n[System Context - Path to your own files]\n{agent_ctx}")
+            system_parts.append(f"\n{agent_ctx}")
 
-        messages.append(Message(role=Role.SYSTEM, content="\n".join(system_parts)))
+        # Delegation Guideline
+        delegation_msg = (
+            "\n\n### Delegation Strategy\n"
+            "If a task is complex, multi-step, or requires deep research/analysis, "
+            "consider using the 'agent' tool to delegate it to a sub-agent. "
+            "This keeps the main conversation clean and allows for focused background work."
+        )
+        system_parts.append(delegation_msg)
+
+        system_content = "\n".join(system_parts)
+        messages.append(Message(role=Role.SYSTEM, content=system_content))
 
         # ── Tier 2: Historical summary ─────────────────────────────────
         if summary := session.metadata.get("summary"):
@@ -320,3 +330,30 @@ class Agent:
         messages.extend(recent)
 
         return messages
+    def estimate_tokens(self, messages: list[Message]) -> int:
+        """Estimate token count for a list of messages."""
+        try:
+            import tiktoken
+            encoding = tiktoken.get_encoding("cl100k_base")  # Good default for GPT-4/MiniMax
+        except ImportError:
+            # Fallback to rough estimation
+            return sum(len(self._extract_text(m.content)) // 4 for m in messages)
+
+        count = 0
+        for m in messages:
+            count += 4  # message overhead
+            count += len(encoding.encode(self._extract_text(m.content)))
+            if m.name:
+                count += 1
+            if m.tool_calls:
+                for tc in m.tool_calls:
+                    count += len(encoding.encode(tc.name))
+                    count += len(encoding.encode(str(tc.arguments)))
+        count += 2  # priming
+        return count
+
+    def _extract_text(self, content: str | list[ContentBlock]) -> str:
+        """Helper to get text from various content formats."""
+        if isinstance(content, str):
+            return content
+        return "\n".join(b.text or b.content or "" for b in content if b.type in ("text", "tool_result"))

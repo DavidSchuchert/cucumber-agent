@@ -188,6 +188,16 @@ class MemoryConfig:
 
 
 @dataclass
+class LoggingConfig:
+    """Logging configuration."""
+
+    enabled: bool = True
+    log_dir: Path = field(default_factory=lambda: Path.home() / ".cucumber" / "logs")
+    level: str = "INFO"  # DEBUG, INFO, WARNING, ERROR
+    verbose: bool = False  # If True, enables DEBUG level + verbose console output
+
+
+@dataclass
 class ContextConfig:
     """Context/memory settings."""
 
@@ -218,6 +228,7 @@ class Config:
     preferences: PreferencesConfig = field(default_factory=PreferencesConfig)
     context: ContextConfig = field(default_factory=ContextConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
     workspace: Path | None = None
 
     @classmethod
@@ -311,6 +322,15 @@ class Config:
             summarize_keep_recent=mem_data.get("summarize_keep_recent", 6),
         )
 
+        # Load logging config
+        log_data = data.get("logging", {})
+        logging_cfg = LoggingConfig(
+            enabled=log_data.get("enabled", True),
+            log_dir=Path(log_data.get("log_dir", str(Path.home() / ".cucumber" / "logs"))),
+            level=log_data.get("level", "INFO"),
+            verbose=log_data.get("verbose", False),
+        )
+
         # Load workspace
         workspace = data.get("workspace")
         if workspace:
@@ -325,6 +345,7 @@ class Config:
             preferences=preferences,
             context=context,
             memory=memory,
+            logging=logging_cfg,
             workspace=workspace,
         )
 

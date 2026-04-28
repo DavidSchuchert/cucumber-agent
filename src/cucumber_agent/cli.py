@@ -26,11 +26,14 @@ from prompt_toolkit.styles import Style as PtkStyle
 
 from cucumber_agent.agent import Agent
 from cucumber_agent.config import Config
+from cucumber_agent.logging_config import setup_logging, get_logger, log_error
 from cucumber_agent.memory import FactsStore, SessionLogger
 from cucumber_agent.session import Session
 from cucumber_agent.skills import SkillLoader, SkillRunner
 from cucumber_agent.tools.registry import ToolRegistry
 from cucumber_agent.workspace import WorkspaceDetector
+
+logger = get_logger("cli")
 
 console = Console()
 
@@ -134,6 +137,7 @@ def print_help() -> None:
         ("/optimize",      "Persönlichkeit basierend auf Namen optimieren"),
         ("/debug",         "Debug-Modus ein/ausschalten"),
         ("/memory",        "Alle gemerkten Fakten anzeigen"),
+        ("/context",       "Aktuelle Context-Auslastung anzeigen"),
         ("/remember ...",  "Fakt merken, z.B. /remember name: David"),
         ("/forget ...",    "Fakt vergessen, z.B. /forget name"),
         ("/skills",        "Installierte Skills auflisten"),
@@ -366,6 +370,7 @@ class CliSession:
                 self._waiting_for_optimization_response = True
 
         except Exception as e:
+            logger.error(f"CLI error: {e}", exc_info=True)
             console.print(f"[bold red]Error:[/bold red] {e}")
             if self._debug_mode:
                 import traceback
@@ -423,14 +428,27 @@ class CliSession:
             pers = self._config.personality
             
             # Use a Panel for the response to make it look premium
-            console.print(Panel(
+            panel = Panel(
                 clean_content,
                 title=f"[bold green]{pers.emoji} {pers.name}[/bold green]",
                 title_align="left",
                 border_style="dim green",
                 padding=(1, 2)
-            ))
-            console.print()
+            )
+            console.print(panel)
+            
+            # Show context usage
+            current_messages = self._agent._build_messages(self._session)
+            total_tokens = self._agent.estimate_tokens(current_messages)
+            max_context = self._config.context.max_tokens
+            usage_pct = (total_tokens / max_context) * 100
+            
+            # Determine color based on usage
+            color = "green"
+            if usage_pct > 80: color = "red"
+            elif usage_pct > 50: color = "yellow"
+            
+            console.print(f"  [dim]Context: [{color}]{total_tokens}[/{color}] / {max_context} tokens ({usage_pct:.1f}%)[/dim]\n")
 
             # Log the exchange (only if we have a user input to pair it with)
             if self._config.memory.enabled and user_input:
@@ -531,8 +549,13 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
             console.print(f"  [dim magenta]⚡ Skill: {skill.name}[/dim magenta]\n")
             
             with console.status("  [dim]führe aus...[/dim]", spinner="dots", spinner_style="dim"):
-                result = await SkillRunner.run(skill, args, self._session, self._agent)
-                
+                try:
+                    result = await SkillRunner.run(skill, args, self._session, self._agent)
+                    logger.info(f"Skill executed: {skill.name} | args: '{args}'")
+                except Exception as e:
+                    logger.error(f"Skill failed: {skill.name} | args: '{args}' | error: {e}")
+                    result = f"[red]Fehler bei der Skill-Ausführung: {e}[/red]"
+
             pers = self._config.personality
             console.print(Rule(f"[dim green]{pers.emoji}[/dim green]", style="dim green"))
             console.print()
@@ -581,6 +604,32 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                     console.print()
                     console.print(Panel(table, title="[bold cyan]🧠 Gemerkte Fakten[/bold cyan]", border_style="cyan", padding=(0, 1)))
                     console.print()
+            case "/context":
+                current_messages = self._agent._build_messages(self._session)
+                total_tokens = self._agent.estimate_tokens(current_messages)
+                max_context = self._config.context.max_tokens
+                usage_pct = (total_tokens / max_context) * 100
+                
+                table = Table(show_header=False, box=None, padding=(0, 2))
+                table.add_row("Aktueller Context:", f"[bold]{total_tokens}[/bold] Tokens")
+                table.add_row("Maximaler Context:", f"{max_context} Tokens")
+                table.add_row("Auslastung:", f"{usage_pct:.1f}%")
+                
+                # Show a small progress bar
+                bar_width = 20
+                filled = int(usage_pct / (100 / bar_width)) if usage_pct < 100 else bar_width
+                bar = "█" * filled + "░" * (bar_width - filled)
+                color = "green"
+                if usage_pct > 80: color = "red"
+                elif usage_pct > 50: color = "yellow"
+                
+                console.print(Panel(
+                    table, 
+                    title="[bold cyan]📊 Context-Status[/bold cyan]", 
+                    border_style="cyan",
+                    subtitle=f"[{color}]{bar}[/{color}]"
+                ))
+                console.print()
             case "/remember":
                 if not arg:
                     console.print("  [dim]Verwendung: /remember key: wert[/dim]\n")
@@ -864,6 +913,16 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
 async def run_cli() -> None:
     """Run the CLI session."""
     config = Config.load()
+
+    # Initialize logging from config
+    import logging
+    log_level = getattr(logging, config.logging.level.upper(), logging.INFO)
+    setup_logging(
+        log_dir=config.logging.log_dir,
+        level=log_level,
+        verbose=config.logging.verbose,
+    )
+
     agent = Agent.from_config(config)
     session = CliSession(agent, config)
     await session.run()

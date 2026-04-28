@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from cucumber_agent.session import Message, Role
@@ -20,7 +21,7 @@ class SkillRunner:
     async def run(skill: Skill, args: str, session: Session, agent: Agent) -> str:
         """
         Expand the skill prompt with `args` and run it through the agent.
-        Returns the agent's response text.
+        Returns the agent's response text (cleaned of thinking blocks and verbose preambles).
         Handles tool calls properly by feeding results back until the task is complete.
         """
         prompt = skill.prompt
@@ -57,4 +58,28 @@ class SkillRunner:
             # Let agent continue with tool results
             response = await agent.run_with_tools(session, "")
 
-        return response.content
+        # Clean the final response
+        content = response.content or ""
+
+        # Remove thinking/reasoning blocks
+        content = re.sub(r'<(think|thinking|thought)>(.*?)</\1>', '', content, flags=re.DOTALL | re.IGNORECASE).strip()
+
+        # Remove "Ich werde..." / "I will..." type preambles (model talking about what it will do)
+        lines = content.split('\n')
+        cleaned_lines = []
+        skip_mode = False
+        for line in lines:
+            stripped = line.strip().lower()
+            # Skip lines that are just "Ich werde..." or "I will..." type preambles
+            if any(p in stripped for p in ['ich werde', 'i will', 'let me', 'jetzt werde', 'now i will', 'i\'ll']):
+                skip_mode = True
+                continue
+            # Skip very short lines that are likely preambles
+            if skip_mode and len(stripped) < 5:
+                continue
+            skip_mode = False
+            cleaned_lines.append(line)
+
+        content = '\n'.join(cleaned_lines).strip()
+
+        return content
