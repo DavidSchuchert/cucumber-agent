@@ -160,8 +160,17 @@ class Agent:
             tools=tools if tools else None,
         )
 
-        # Add assistant message (even with tool calls) so subsequent tool results can reference it
-        session.add_assistant_message(response.content)
+        # Add assistant message with tool_calls so MiniMax can reference them in tool results
+        from cucumber_agent.session import ToolCall as SessionToolCall
+        assistant_msg = Message(
+            role=Role.ASSISTANT,
+            content=response.content,
+            tool_calls=[
+                SessionToolCall(id=tc.id, name=tc.name, arguments=tc.arguments)
+                for tc in (response.tool_calls or [])
+            ]
+        )
+        session.messages.append(assistant_msg)
 
         return response
 
