@@ -22,7 +22,7 @@ class SkillRunner:
         """
         Expand the skill prompt with `args` and run it through the agent.
         Returns the agent's response text (cleaned of thinking blocks and verbose preambles).
-        Handles tool calls properly by feeding results back until the task is complete.
+        Handles tool calls by executing them and synthesizing results.
         """
         prompt = skill.prompt
         if "{args}" in prompt:
@@ -34,52 +34,58 @@ class SkillRunner:
         # Use run_with_tools to properly handle tool calls
         response = await agent.run_with_tools(session, prompt)
 
-        # Process tool calls if any (recursive reasoning loop)
-        loop_count = 0
-        max_loops = 10
-        while response.tool_calls and loop_count < max_loops:
-            loop_count += 1
+        # Process tool calls if any (but keep it simple to avoid MiniMax context issues)
+        if response.tool_calls:
+            # Execute all tool calls and collect results
+            tool_results = []
             for tc in response.tool_calls:
-                # Skills execute tools AUTOMATICALLY (no approval)
                 result = await ToolRegistry.execute(tc.name, **tc.arguments)
-
                 output_text = result.output if result.success else 'ERROR: ' + (result.error or result.output)
                 if len(output_text) > 3000:
                     output_text = output_text[:1500] + "\n... [TRUNCATED] ...\n" + output_text[-1500:]
+                tool_results.append((tc.name, tc.id, output_text))
 
-                tool_result_msg = Message(
-                    role=Role.TOOL,
-                    content=output_text,
-                    name=tc.name,
-                    tool_call_id=tc.id
-                )
-                session.messages.append(tool_result_msg)
+            # Build a summary of all tool results
+            results_lines = [f"[TOOL: {name}] {output}" for name, _, output in tool_results]
+            results_summary = "\n\n".join(results_lines)
 
-            # Let agent continue with tool results
-            response = await agent.run_with_tools(session, "")
+            # Ask the model to synthesize a response using synthesize() which disables tools
+            synthesize_prompt = (
+                f"Du hast folgende Werkzeuge ausgeführt:\n{results_summary}\n\n"
+                f"Gib dem Benutzer eine klare, prägnante Antwort. Keine weiteren Werkzeug-Aufrufe."
+            )
 
-        # Clean the final response
-        content = response.content or ""
+            try:
+                response_text = await agent.synthesize(session, synthesize_prompt)
+                return response_text
+            except Exception as e:
+                return f"[Error bei synthesize: {e}]\n\nTool-Ergebnisse:\n{results_summary}"
 
+        return response.content or ""
+
+    @staticmethod
+    def _clean_response(content: str) -> str:
+        """Clean the response by removing thinking blocks and verbose preambles."""
         # Remove thinking/reasoning blocks
-        content = re.sub(r'<(think|thinking|thought)>(.*?)</\1>', '', content, flags=re.DOTALL | re.IGNORECASE).strip()
+        content = re.sub(
+            r'<(think|thinking|thought)>(.*?)</\1>',
+            '',
+            content,
+            flags=re.DOTALL | re.IGNORECASE
+        ).strip()
 
-        # Remove "Ich werde..." / "I will..." type preambles (model talking about what it will do)
+        # Remove "Ich werde..." / "I will..." type preambles
         lines = content.split('\n')
         cleaned_lines = []
         skip_mode = False
         for line in lines:
             stripped = line.strip().lower()
-            # Skip lines that are just "Ich werde..." or "I will..." type preambles
             if any(p in stripped for p in ['ich werde', 'i will', 'let me', 'jetzt werde', 'now i will', 'i\'ll']):
                 skip_mode = True
                 continue
-            # Skip very short lines that are likely preambles
             if skip_mode and len(stripped) < 5:
                 continue
             skip_mode = False
             cleaned_lines.append(line)
 
-        content = '\n'.join(cleaned_lines).strip()
-
-        return content
+        return '\n'.join(cleaned_lines).strip()
