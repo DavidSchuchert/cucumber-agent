@@ -147,6 +147,7 @@ class PreferencesConfig:
     can_search_web: bool = True
     can_code: bool = True
     can_remember: bool = True
+    smart_retry: bool = True  # Auto-retry safe commands on path errors
 
 
 @dataclass
@@ -249,6 +250,7 @@ class Config:
             can_search_web=pref_data.get("can_search_web", True),
             can_code=pref_data.get("can_code", True),
             can_remember=pref_data.get("can_remember", True),
+            smart_retry=pref_data.get("smart_retry", True),
         )
 
         # Load context
@@ -318,6 +320,7 @@ class Config:
                 "can_search_web": self.preferences.can_search_web,
                 "can_code": self.preferences.can_code,
                 "can_remember": self.preferences.can_remember,
+                "smart_retry": self.preferences.smart_retry,
             },
             "context": {
                 "max_tokens": self.context.max_tokens,

@@ -185,6 +185,8 @@ class CliSession:
         self._waiting_for_optimization_response = False
         self._debug_mode = False
         self._pending_tool_call: dict | None = None  # For user confirmation
+        self._smart_retry = config.preferences.smart_retry
+        self._retry_count: dict[str, int] = {}  # Track retries per command
 
         # Import tools
         from cucumber_agent import tools  # noqa: F401
@@ -424,8 +426,30 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                     console.print(resp_text)
                     console.print()
             else:
-                console.print(f"[red]✗ Error:[/red] {result.error or result.output}\n")
-                # Let AI respond to the error
+                error = result.error or result.output
+                console.print(f"[red]✗ Error:[/red] {error}\n")
+
+                # Check if we should auto-retry
+                from cucumber_agent.smart_retry import should_auto_retry
+
+                decision = should_auto_retry(command, error, self._smart_retry)
+                retry_key = f"{tool_name}:{command}"
+
+                if decision.should_retry and self._retry_count.get(retry_key, 0) < 2:
+                    # Auto-retry!
+                    self._retry_count[retry_key] = self._retry_count.get(retry_key, 0) + 1
+
+                    if decision.alternatives:
+                        new_cmd = decision.alternatives[0]
+                        console.print(f"[yellow]↻ Auto-retrying with alternative...[/yellow]\n")
+                        args["command"] = new_cmd
+                    else:
+                        console.print(f"[yellow]↻ Auto-retrying same command...[/yellow]\n")
+
+                    await self._execute_auto_retry(tool_name, args, command, self._retry_count[retry_key])
+                    return
+
+                # Not retryable - let AI respond
                 resp = await self._agent.synthesize(self._session, "Was kann ich wegen dieses Fehlers tun?")
                 if resp.strip():
                     console.print(resp)
@@ -477,6 +501,66 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
         console.print("  [2] Cancel")
         console.print("  [3] Edit command")
         console.print()
+
+    async def _execute_auto_retry(
+        self,
+        tool_name: str,
+        args: dict,
+        original_cmd: str,
+        retry_num: int = 1,
+    ) -> None:
+        """Execute an auto-retry without requiring user approval."""
+        from cucumber_agent.session import Message, Role
+        from cucumber_agent.smart_retry import should_auto_retry, generate_retry_command
+
+        command = args.get("command", "")
+        console.print(f"[yellow]↻ Auto-retry ({retry_num}/2):[/yellow] {command}\n")
+
+        result = await ToolRegistry.execute(tool_name, **args)
+
+        # Add to session
+        assistant_msg = Message(
+            role=Role.ASSISTANT,
+            content=f"[AUTO-RETRY {retry_num}] Ich probiere: {command}"
+        )
+        self._session.messages.append(assistant_msg)
+
+        tool_result_msg = Message(
+            role=Role.USER,
+            content=f"[TOOL_RESULT] {tool_name}: {result.output if result.success else 'ERROR: ' + (result.error or result.output)}"
+        )
+        self._session.messages.append(tool_result_msg)
+
+        if result.success:
+            console.print("[green]✓[/green]\n")
+            resp = await self._agent.synthesize(self._session)
+            if resp.strip():
+                console.print(resp)
+                console.print()
+        else:
+            error = result.error or result.output
+            decision = should_auto_retry(command, error, self._smart_retry)
+
+            if decision.should_retry and retry_num < 2:
+                # Try alternative or retry
+                if decision.alternatives:
+                    new_cmd = decision.alternatives[0]
+                    console.print(f"[dim]Trying alternative:[/dim] {new_cmd}\n")
+                    args["command"] = new_cmd
+                    await self._execute_auto_retry(tool_name, args, original_cmd, retry_num + 1)
+                else:
+                    # Same command, just retry
+                    await self._execute_auto_retry(tool_name, args, original_cmd, retry_num + 1)
+            else:
+                # Give up
+                console.print(f"[red]✗ Command failed after auto-retry.[/red]\n")
+                resp = await self._agent.synthesize(
+                    self._session,
+                    "Der Befehl ist nach mehreren Versuchen fehlgeschlagen. Erkläre dem Benutzer die Situation."
+                )
+                if resp.strip():
+                    console.print(resp)
+                    console.print()
 
     def _print_debug_info(self) -> None:
         """Print debug information."""
