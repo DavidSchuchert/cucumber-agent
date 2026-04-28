@@ -25,19 +25,9 @@ ProviderRegistry
 
 ```python
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
 
-from cucumber_agent.provider import BaseProvider, ModelResponse, ProviderRegistry, Role
-from cucumber_agent.session import Message
-
-
-@dataclass
-class ModelResponse:
-    content: str
-    model: str
-    input_tokens: int = 0
-    output_tokens: int = 0
-    finish_reason: str | None = None
+from cucumber_agent.provider import BaseProvider, ModelResponse, ProviderRegistry, ToolCall
+from cucumber_agent.session import Message, Role
 
 
 @ProviderRegistry.register("myprovider")
@@ -53,6 +43,7 @@ class MyProvider(BaseProvider):
         *,
         temperature: float = 0.7,
         max_tokens: int | None = None,
+        tools: list[dict] | None = None,
     ) -> ModelResponse:
         # Make HTTP request, return ModelResponse
         ...
@@ -67,6 +58,31 @@ class MyProvider(BaseProvider):
     ) -> AsyncIterator[str]:
         # Yield text chunks
         ...
+
+    async def close(self) -> None:
+        # Cleanup if needed
+        ...
+```
+
+## ModelResponse
+
+Already defined in `provider.py`:
+
+```python
+@dataclass
+class ModelResponse:
+    content: str
+    model: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    finish_reason: str | None = None
+    tool_calls: list[ToolCall] | None = None
+
+@dataclass
+class ToolCall:
+    id: str
+    name: str
+    arguments: dict
 ```
 
 ## Supported Providers
@@ -78,6 +94,7 @@ class MyProvider(BaseProvider):
 - **Models**: MiniMax-M2.7
 - **Speed**: Fast, 204k context
 - **Cost**: Cheap
+- **Features**: Thinking blocks, tool use, 529 retry logic
 
 ### OpenRouter
 
@@ -86,6 +103,15 @@ class MyProvider(BaseProvider):
 - **Models**: openai/gpt-4o-mini, openai/gpt-4o, anthropic/claude-3.5-sonnet, etc.
 - **Speed**: Varies by model
 - **Cost**: Varies
+
+### Ollama
+
+- **Name**: `ollama`
+- **API URL**: `http://localhost:11434/v1`
+- **Models**: llama3.2, mistral, codellama, etc.
+- **Speed**: Depends on local hardware
+- **Cost**: Free (local)
+- **Setup**: `ollama serve` must be running
 
 ## Message Format
 
@@ -96,6 +122,8 @@ Messages are converted to provider format internally:
 class Message:
     role: Role  # SYSTEM, USER, ASSISTANT, TOOL
     content: str | list[ContentBlock]
+    name: str | None = None
+    tool_call_id: str | None = None
 ```
 
 Providers receive `list[Message]` and handle their own serialization.

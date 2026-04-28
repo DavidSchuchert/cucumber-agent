@@ -1,7 +1,5 @@
 # 🥒 CucumberAgent
 
-![CucumberAgent Logo](assets/logo.png)
-
 > A clean, modular AI agent framework. Built from scratch.
 
 ```bash
@@ -17,7 +15,7 @@ OpenClaw and Hermes are great but have grown into complex, brittle systems. Cucu
 - **Minimal** — Core only, features added as needed
 - **Clean** — Simple ABCs, no magic
 - **User-friendly** — `curl | sh` install, interactive setup wizard
-- **Extensible** — Provider, Skill, and Plugin systems
+- **Extensible** — Provider, Skill, and Tool systems
 
 ## Quick Start
 
@@ -38,7 +36,7 @@ The wizard asks for:
 - Language (English, German, or custom)
 - Communication tone (casual, friendly, professional, formal)
 - Greeting, strengths, interests
-- Provider selection (MiniMax, OpenRouter, DeepSeek, etc.)
+- Provider selection (MiniMax, OpenRouter, Ollama, etc.)
 - API key and model
 
 ### Run
@@ -56,7 +54,9 @@ cucumber run
 │   └── personality.md       # Agent name, tone, language, greeting
 ├── user/
 │   └── user.md              # Your info (name, bio, github)
-└── memory/                  # (future) Conversation memory
+├── memory/                  # Session logs + persistent facts
+├── custom_tools/            # Hot-reload custom Python tools
+└── skills/                  # YAML skill manifests
 ```
 
 ## Architecture
@@ -65,12 +65,17 @@ cucumber run
 cucumber-agent/
 ├── src/cucumber_agent/
 │   ├── __main__.py          # Entry point
-│   ├── provider.py          # BaseProvider + Registry
-│   ├── session.py           # Session + Message
+│   ├── provider.py          # BaseProvider ABC + Registry
+│   ├── session.py           # Session + Message types
 │   ├── agent.py             # Agent orchestration
 │   ├── config.py            # YAML + Markdown config
-│   ├── cli.py               # REPL
-│   └── providers/           # LLM backends
+│   ├── cli.py               # REPL interface
+│   ├── memory.py            # SessionLogger + FactsStore
+│   ├── workspace.py          # Project type detection
+│   ├── smart_retry.py       # Auto-retry logic
+│   ├── providers/            # LLM backend implementations
+│   ├── tools/               # Built-in + custom tools
+│   └── skills/              # YAML skill system
 ├── installer/
 │   ├── install.sh           # One-line installer
 │   └── init.py              # Setup wizard
@@ -78,24 +83,47 @@ cucumber-agent/
 └── pyproject.toml
 ```
 
-## Providers
-
-- [x] MiniMax (fast, cheap)
-- [x] OpenRouter (many models)
-- [ ] DeepSeek
-- [ ] NVIDIA NIM
-- [ ] LM Studio (local)
-
 ## Features
 
 - [x] Streaming responses
 - [x] Token budget management (context trimming)
 - [x] Personality system (name, tone, language)
-- [x] Multi-provider support
+- [x] Multi-provider support (MiniMax, OpenRouter, Ollama)
 - [x] Clean structured config (YAML + Markdown)
-- [ ] Skill system (`/slash` commands)
-- [ ] Plugin system (MCP integration)
-- [ ] Memory system
+- [x] **Tool system** — shell, search, web search, web reader, agent
+- [x] **Custom tools** — hot-reload from ~/.cucumber/custom_tools/
+- [x] **Skill system** — YAML manifests with {args} expansion
+- [x] **Memory system** — session logging + persistent facts
+- [x] **Smart retry** — auto-retry READ commands on path errors
+- [x] **Thinking blocks** — display agent internal thoughts
+- [x] **Workspace detection** — auto-detect Python, Node, Rust, etc.
+
+## Tools
+
+CucumberAgent comes with built-in tools:
+
+| Tool | Description |
+|------|-------------|
+| `shell` | Execute commands with user approval, auto-retry on path errors |
+| `search` | Find files/directories by name |
+| `web_search` | DuckDuckGo instant answers (no API key) |
+| `web_reader` | Extract content from URLs |
+| `agent` | Recursive sub-agent (max 15 steps) |
+| `create_tool` | Self-generating custom tools |
+
+Add custom tools to `~/.cucumber/custom_tools/*.py`
+
+## Skills
+
+Skills are YAML manifests in `~/.cucumber/skills/`:
+
+```yaml
+name: code_review
+description: Review code for bugs
+prompt: "Review this code: {args}\n\nFocus on: security, bugs, performance"
+```
+
+Use with `/code_review <file>`
 
 ## Documentation
 
@@ -104,6 +132,7 @@ Full docs in [wiki/](wiki/):
 - [Configuration](wiki/Configuration.md) — Config files explained
 - [Providers](wiki/Providers.md) — Adding new providers
 - [CLI](wiki/CLI.md) — Command reference
+- [AgentGuide](wiki/AgentGuide.md) — Agent system guide
 
 ## Development
 
@@ -122,3 +151,11 @@ uv run pytest
 # Run locally
 uv run cucumber run
 ```
+
+## Providers
+
+- [x] MiniMax (fast, cheap)
+- [x] OpenRouter (many models)
+- [x] Ollama (local models)
+- [ ] DeepSeek
+- [ ] NVIDIA NIM
