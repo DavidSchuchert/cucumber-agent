@@ -885,19 +885,6 @@ def run_update() -> None:
     import subprocess
     import os
 
-    # ASCII Cucumber
-    cucumber_ascii = r"""
-           [bold green]_____ [/bold green]
-         [bold green]/       \ [/bold green]
-        [bold green]|  [white](O)(O)[/white] | [/bold green]
-        [bold green]|    [white]<[/white]    | [/bold green]
-        [bold green]|  [white]'---'[/white]  | [/bold green]
-        [bold green]|         | [/bold green]
-        [bold green]|         | [/bold green]
-        [bold green]|         | [/bold green]
-         [bold green]\_______/ [/bold green]
-    """
-    console.print(cucumber_ascii)
     console.print("[bold]🔄 Updating CucumberAgent...[/bold]\n")
 
     install_dir = Path.home() / ".cucumber-agent"
