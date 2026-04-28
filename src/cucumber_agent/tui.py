@@ -313,24 +313,19 @@ class CucumberTUI:
         import sys as _sys
         if not text:
             return
-        _sys.stderr.write(f"DEBUG _cprint: {text[:50]}\n")
-        _sys.stderr.flush()
         buf = StringIO()
+        # NOTE: Rich auto-detects StringIO as non-terminal; no force_terminal needed.
+        # Using force_terminal=True can cause deadlocks during prompt_toolkit init.
         inner = Console(
             file=buf,
-            force_terminal=True,
             color_system="truecolor",
             highlight=False,
             width=self._w,
         )
         inner.print(text)
         ansi_str = buf.getvalue().rstrip()
-        _sys.stderr.write(f"DEBUG _cprint: ANSI len={len(ansi_str)}\n")
-        _sys.stderr.flush()
         if ansi_str:
             _pt_print(_PT_ANSI(ansi_str))
-        _sys.stderr.write("DEBUG _cprint: done\n")
-        _sys.stderr.flush()
 
     # ── Banner ─────────────────────────────────────────────────────────────
 
