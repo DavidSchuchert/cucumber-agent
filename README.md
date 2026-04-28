@@ -133,6 +133,7 @@ Full docs in [wiki/](wiki/):
 - [Providers](wiki/Providers.md) — Adding new providers
 - [CLI](wiki/CLI.md) — Command reference
 - [AgentGuide](wiki/AgentGuide.md) — Agent system guide
+- [Skills](wiki/Skills.md) — Built-in and custom skills
 
 ## Development
 

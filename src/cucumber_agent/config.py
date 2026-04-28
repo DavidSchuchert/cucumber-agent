@@ -125,6 +125,22 @@ class PersonalityConfig:
             "5. If a tool fails with an error, analyze the error and either try a fix or inform the user clearly."
         )
 
+        # Skills - loaded from ~/.cucumber/skills/
+        skills_dir = Path.home() / ".cucumber" / "skills"
+        if skills_dir.exists():
+            skill_files = list(skills_dir.glob("*.yaml")) + list(skills_dir.glob("*.yml"))
+            if skill_files:
+                parts.append("AVAILABLE SKILLS: The user can invoke these /commands:")
+                for sf in sorted(skill_files):
+                    try:
+                        import yaml
+                        data = yaml.safe_load(sf.read_text()) or {}
+                        name = data.get("name", sf.stem)
+                        desc = data.get("description", "")
+                        parts.append(f"- /{sf.stem}: {desc}")
+                    except Exception:
+                        pass
+
         parts.append("I'm here to help my human with whatever they need!")
 
         return " ".join(parts)
