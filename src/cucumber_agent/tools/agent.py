@@ -117,7 +117,8 @@ class AgentTool(BaseTool):
             )
 
             try:
-                response = await agent.run_with_tools(session, current_input)
+                with console.status("  [dim magenta]Sub-Agent denkt nach...[/dim magenta]", spinner="dots", spinner_style="dim magenta"):
+                    response = await agent.run_with_tools(session, current_input)
             except Exception as e:
                 elapsed = time.monotonic() - start_time
                 console.print(

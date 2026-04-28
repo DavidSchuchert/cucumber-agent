@@ -318,7 +318,9 @@ class CliSession:
         console.print()
         try:
             offer_optimization = self._agent.needs_optimization(user_input)
-            response = await self._agent.run_with_tools(self._session, user_input)
+            
+            with console.status("  [dim]denkt nach...[/dim]", spinner="dots", spinner_style="dim"):
+                response = await self._agent.run_with_tools(self._session, user_input)
 
             if response.tool_calls:
                 if response.content and response.content.strip():
@@ -345,8 +347,8 @@ class CliSession:
 
                 # Auto-compress if session is getting long
                 if self._config.memory.enabled and len(self._session.messages) >= self._config.memory.max_session_messages:
-                    console.print("  [dim]Komprimiere Kontext…[/dim]")
-                    await self._agent.compress_session(self._session)
+                    with console.status("  [dim]Komprimiere Kontext...[/dim]", spinner="dots", spinner_style="dim"):
+                        await self._agent.compress_session(self._session)
 
 
             # After first greeting, offer optimization
@@ -416,8 +418,11 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
 
         # Clear the session and send this prompt to the AI
         optimization_session = Session(id="optimize", model=self._config.agent.model)
-        stream = self._agent.run_stream(optimization_session, optimization_prompt)
-        full_response = await stream_print(stream)
+        
+        console.print()
+        with console.status("  [dim]Analysiere Persönlichkeit...[/dim]", spinner="dots", spinner_style="dim"):
+            stream = self._agent.run_stream(optimization_session, optimization_prompt)
+            full_response = await stream_print(stream)
 
         console.print()
 
@@ -451,7 +456,10 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
         if skill:
             args = parts[1] if len(parts) > 1 else ""
             console.print(f"  [dim magenta]⚡ Skill: {skill.name}[/dim magenta]\n")
-            result = await SkillRunner.run(skill, args, self._session, self._agent)
+            
+            with console.status("  [dim]führe aus...[/dim]", spinner="dots", spinner_style="dim"):
+                result = await SkillRunner.run(skill, args, self._session, self._agent)
+                
             pers = self._config.personality
             console.print(Rule(f"[dim green]{pers.emoji}[/dim green]", style="dim green"))
             console.print()
@@ -579,7 +587,9 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                     self._print_tool_call(self._pending_tool_calls[0])
                     return
                 # Let AI synthesize a response based on the tool result
-                resp_text = await self._agent.synthesize(self._session)
+                with console.status("  [dim]denkt nach...[/dim]", spinner="dots", spinner_style="dim"):
+                    resp_text = await self._agent.synthesize(self._session)
+                    
                 if resp_text.strip():
                     console.print(resp_text)
                     console.print()
