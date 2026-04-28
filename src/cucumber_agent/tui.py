@@ -291,7 +291,12 @@ class CucumberTUI:
         import sys as _sys
         _sys.stderr.write("DEBUG: run() gestartet\n")
         _sys.stderr.flush()
-        # NOTE: Banner printed INSIDE patch_stdout() context (see Hermes pattern)
+        # Banner needs real stdout — print BEFORE patch_stdout()
+        _sys.stderr.write("DEBUG: drucke banner vor patch_stdout\n")
+        _sys.stderr.flush()
+        self._print_banner_raw()
+        _sys.stderr.write("DEBUG: banner roh fertig\n")
+        _sys.stderr.flush()
         self._init_agent_session()
         _sys.stderr.write("DEBUG: session init fertig\n")
         _sys.stderr.flush()
@@ -299,9 +304,6 @@ class CucumberTUI:
         _sys.stderr.write("DEBUG: output refresh fertig, starte app.run()\n")
         _sys.stderr.flush()
         with patch_stdout():
-            self._print_banner()
-            _sys.stderr.write("DEBUG: banner fertig\n")
-            _sys.stderr.flush()
             self._running = True
             self._app.run()
         _sys.stderr.write("DEBUG: app beendet\n")
@@ -327,12 +329,32 @@ class CucumberTUI:
         if ansi_str:
             _pt_print(_PT_ANSI(ansi_str))
 
-    # ── Banner ─────────────────────────────────────────────────────────────
+    # ── Banner (raw — before PT starts) ───────────────────────────────────
+
+    def _print_banner_raw(self):
+        """Print banner directly to stdout (before PT app is running)."""
+        import sys as _sys
+        w = self._w
+        inner = w - 2
+        pers = self.config.personality
+        line1 = f"{pers.emoji} {pers.emoji} {pers.name} — CucumberAgent".ljust(inner)[:inner]
+        line2 = f"{self.config.agent.provider}/{self.config.agent.model}".ljust(inner)[:inner]
+        line3 = "Ctrl+L Clear  Ctrl+C Quit".ljust(inner)[:inner]
+
+        _sys.stdout.write("\n")
+        _sys.stdout.write(f"\033[1;32m╔{'═' * inner}╗\033[0m\n")
+        _sys.stdout.write(f"\033[1;32m║ \033[1;36m{line1}\033[0m \033[1;32m║\033[0m\n")
+        _sys.stdout.write(f"\033[1;32m║ \033[2;37m{line2}\033[0m \033[1;32m║\033[0m\n")
+        _sys.stdout.write(f"\033[1;32m║ \033[2;37m{line3}\033[0m \033[1;32m║\033[0m\n")
+        _sys.stdout.write(f"\033[1;32m╚{'═' * inner}╝\033[0m\n")
+        _sys.stdout.write(f"\n\033[1;32m{pers.emoji} {pers.name}\033[0m  \033[2;37m— Chat startklar. Sag was du brauchst!\033[0m\n")
+        _sys.stdout.write("\n")
+        _sys.stdout.flush()
+
+    # ── Banner (via PT — after app is running) ────────────────────────────
 
     def _print_banner(self):
-        import sys as _sys
-        _sys.stderr.write("DEBUG: _print_banner()\n")
-        _sys.stderr.flush()
+        """Print banner through prompt_toolkit's print_formatted_text (after app is live)."""
         w = self._w
         inner = w - 2
         pers = self.config.personality
