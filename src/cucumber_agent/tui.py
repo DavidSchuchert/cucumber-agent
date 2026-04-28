@@ -197,6 +197,9 @@ class CucumberTUI(App):
     def on_mount(self):
         self.title = f"CucumberAgent — {self.config.agent.model}"
         self.sub_title = f"{self.config.agent.provider} · {self.config.personality.name}"
+        # Enable markup on RichLog
+        chat_log = self.query_one("#chat-log", RichLog)
+        chat_log.markup = True
         self._print_header()
         self._print_welcome()
         self._focus_input()
