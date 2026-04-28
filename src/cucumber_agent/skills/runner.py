@@ -21,7 +21,7 @@ class SkillRunner:
         """
         Expand the skill prompt with `args` and run it through the agent.
         Returns the agent's response text.
-        Handles tool calls properly (unlike Agent.run which ignores them).
+        Handles tool calls properly by feeding results back until the task is complete.
         """
         prompt = skill.prompt
         if "{args}" in prompt:
@@ -33,12 +33,18 @@ class SkillRunner:
         # Use run_with_tools to properly handle tool calls
         response = await agent.run_with_tools(session, prompt)
 
-        # Process tool calls if any (similar to CLI's _handle_tool_approval)
-        while response.tool_calls:
+        # Process tool calls if any (recursive reasoning loop)
+        loop_count = 0
+        max_loops = 10
+        while response.tool_calls and loop_count < max_loops:
+            loop_count += 1
             for tc in response.tool_calls:
+                # Skills execute tools AUTOMATICALLY (no approval)
                 result = await ToolRegistry.execute(tc.name, **tc.arguments)
 
                 output_text = result.output if result.success else 'ERROR: ' + (result.error or result.output)
+                if len(output_text) > 3000:
+                    output_text = output_text[:1500] + "\n... [TRUNCATED] ...\n" + output_text[-1500:]
 
                 tool_result_msg = Message(
                     role=Role.TOOL,
