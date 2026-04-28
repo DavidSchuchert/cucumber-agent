@@ -192,14 +192,14 @@ def select_provider() -> tuple:
     )
 
     providers = {
-        "1": ("minimax", "MiniMax", "https://api.minimax.io/anthropic"),
+        "1": ("minimax", "MiniMax", "https://api.minimax.io/v1"),
         "2": ("openrouter", "OpenRouter", "https://openrouter.ai/api/v1"),
         "3": ("deepseek", "DeepSeek", "https://api.deepseek.com"),
         "4": ("nvidia_nim", "NVIDIA NIM", "https://integrate.api.nvidia.com/v1"),
         "5": ("lmstudio", "LM Studio", "http://localhost:1234/v1"),
     }
 
-    return providers.get(choice, ("minimax", "MiniMax", "https://api.minimax.io/anthropic"))
+    return providers.get(choice, ("minimax", "MiniMax", "https://api.minimax.io/v1"))
 
 
 def get_api_key(provider_name: str, display_name: str) -> str | None:

@@ -39,6 +39,14 @@ The wizard asks for:
 - Provider selection (MiniMax, OpenRouter, Ollama, etc.)
 - API key and model
 
+### Update
+
+Stay up to date with the latest features and fixes:
+
+```bash
+curl -LsSf https://raw.githubusercontent.com/DavidSchuchert/cucumber-agent/main/installer/update.sh | sh
+```
+
 ### Run
 
 ```bash

@@ -64,7 +64,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
         if [ -n "$MINIMAX_API_KEY" ]; then
             PROVIDER="minimax"
             MODEL="MiniMax-M2.7"
-            BASE_URL="https://api.minimax.io/anthropic"
+            BASE_URL="https://api.minimax.io/v1"
             API_KEY="$MINIMAX_API_KEY"
         elif [ -n "$OPENROUTER_API_KEY" ]; then
             PROVIDER="openrouter"
@@ -85,7 +85,7 @@ agent:
 providers:
   minimax:
     api_key: null
-    base_url: "https://api.minimax.io/anthropic"
+    base_url: "https://api.minimax.io/v1"
     model: "MiniMax-M2.7"
 EOF
             echo "   Created empty config at $CONFIG_FILE"
@@ -108,12 +108,14 @@ EOF
         fi
     fi
 else
-    echo "Config already exists at $CONFIG_FILE"
+    echo "✓ Config exists at $CONFIG_FILE"
 fi
 
 echo ""
 echo "=========================================="
+echo "  🚀  CucumberAgent is ready!"
 echo ""
-echo "  Run 'cucumber init' to set up your agent!"
-echo "  Then 'cucumber run' to start chatting!"
+echo "  Run 'cucumber run' to start chatting!"
+echo "  Run 'cucumber --help' for options."
+echo "=========================================="
 echo ""
