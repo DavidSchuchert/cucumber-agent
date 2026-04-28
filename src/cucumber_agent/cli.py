@@ -266,8 +266,8 @@ class CliSession:
         completer = WordCompleter(sorted(set(slash_commands)), sentence=True)
 
         ptk_style = PtkStyle.from_dict({
-            "prompt":       "bold ansibright  green",
-            "auto-suggest": "fg:ansibrightblack",
+            "prompt":       "bold ansibrightgreen",
+            "auto-suggest": "ansibrightblack",
         })
         history = InMemoryHistory()
         pt_session: PromptSession = PromptSession(
