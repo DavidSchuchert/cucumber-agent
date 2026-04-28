@@ -29,20 +29,13 @@ class BaseTool(ABC):
 
     def get_spec(self, provider: str = "openrouter") -> dict:
         """Get provider-specific tool specification."""
-        if provider == "minimax":
-            # MiniMax: direct fields without wrapper
-            return {
+        # MiniMax now uses the OpenAI-compatible v1 endpoint, so all use the same format
+        return {
+            "type": "function",
+            "function": {
                 "name": self.name,
                 "description": self.description,
-                "input_schema": self.parameters,
-            }
-        else:
-            # OpenAI-style
-            return {
-                "type": "function",
-                "function": {
-                    "name": self.name,
-                    "description": self.description,
-                    "parameters": self.parameters,
-                },
-            }
+                "parameters": self.parameters,
+            },
+        }
+

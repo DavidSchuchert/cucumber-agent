@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
@@ -18,12 +17,12 @@ if TYPE_CHECKING:
 
 @ProviderRegistry.register("minimax")
 class MiniMaxProvider(BaseProvider):
-    """Provider for MiniMax API."""
+    """Provider for MiniMax API using OpenAI compatibility layer."""
 
     def __init__(
         self,
         api_key: str,
-        base_url: str = "https://api.minimax.io/anthropic",
+        base_url: str = "https://api.minimax.io/v1",
         model: str = "MiniMax-M2.7",
     ):
         self._api_key = api_key
@@ -33,7 +32,6 @@ class MiniMaxProvider(BaseProvider):
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
-                "anthropic-version": "2023-06-01",
             },
             timeout=120.0,
         )
@@ -54,19 +52,23 @@ class MiniMaxProvider(BaseProvider):
         system_override: str | None = None,
     ) -> ModelResponse:
         """Send a complete request and return the full response."""
-        body = self._build_request(messages, model, temperature, max_tokens, tools, system_override)
-        body["stream"] = False
+        body = self._build_request(
+            messages, model, temperature, max_tokens, tools,
+            system_override=system_override, stream=False,
+        )
+
+        import asyncio
 
         for attempt in range(max_retries):
             try:
                 response = await self._client.post(
-                    f"{self._base_url}/v1/messages",
+                    f"{self._base_url}/chat/completions",
                     json=body,
                 )
 
                 # Handle 529 with retry
                 if response.status_code == 529:
-                    wait_time = 2 ** attempt  # 1, 2, 4 seconds
+                    wait_time = 2 ** attempt
                     if attempt < max_retries - 1:
                         await asyncio.sleep(wait_time)
                         continue
@@ -84,7 +86,9 @@ class MiniMaxProvider(BaseProvider):
                     continue
                 raise
 
-    def stream(
+        raise Exception("Max retries exceeded")
+
+    async def stream(
         self,
         messages: list[Message],
         model: str,
@@ -94,34 +98,24 @@ class MiniMaxProvider(BaseProvider):
         tools: list[dict] | None = None,
     ) -> AsyncIterator[str]:
         """Stream the response as an async iterator of text chunks."""
-
-        async def generate():
-            async with self._client.stream(
-                "POST",
-                f"{self._base_url}/v1/messages",
-                json=self._build_request(messages, model, temperature, max_tokens, tools),
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    data_str = line[6:]
-                    if data_str == "[DONE]":
-                        break
-                    try:
-                        data = json.loads(data_str)
-                        if data.get("type") == "content_block_delta":
-                            delta = data.get("delta", {})
-                            if content := delta.get("text"):
-                                yield content
-                    except json.JSONDecodeError:
-                        continue
-
-        async def runner():
-            async for chunk in generate():
-                yield chunk
-
-        return runner()
+        body = self._build_request(messages, model, temperature, max_tokens, tools, stream=True)
+        async with self._client.stream("POST", f"{self._base_url}/chat/completions", json=body) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    break
+                try:
+                    data = json.loads(data_str)
+                    choices = data.get("choices", [])
+                    if choices:
+                        delta = choices[0].get("delta", {})
+                        if content := delta.get("content"):
+                            yield content
+                except json.JSONDecodeError:
+                    continue
 
     def _build_request(
         self,
@@ -130,23 +124,23 @@ class MiniMaxProvider(BaseProvider):
         temperature: float,
         max_tokens: int | None,
         tools: list[dict] | None,
+        *,
         system_override: str | None = None,
+        stream: bool = False,
     ) -> dict:
         """Build the request body."""
-        formatted_messages = [self._format_message(m) for m in messages]
+        formatted = []
+        for m in messages:
+            if system_override and m.role.value == "system":
+                formatted.append({"role": "system", "content": system_override})
+            else:
+                formatted.append(self._format_message(m))
 
-        # Override system message if specified
-        if system_override:
-            for msg in formatted_messages:
-                if msg.get("role") == "system":
-                    msg["content"] = system_override
-                    break
-
-        body = {
+        body: dict = {
             "model": model,
-            "messages": formatted_messages,
+            "messages": formatted,
             "temperature": temperature,
-            "stream": True,
+            "stream": stream,
         }
         if max_tokens:
             body["max_tokens"] = max_tokens
@@ -155,41 +149,25 @@ class MiniMaxProvider(BaseProvider):
         return body
 
     def _format_message(self, message: Message) -> dict:
-        """Format a Message as a MiniMax message dict."""
         role = message.role.value
-
-        if role == "tool":
-            return {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": message.tool_call_id,
-                        "content": self._extract_content(message.content)
-                    }
-                ]
-            }
-
-        content_blocks = []
-        if message.content:
-            content_blocks.append({"type": "text", "text": self._extract_content(message.content)})
-            
+        content = self._extract_content(message.content)
+        result: dict = {"role": role, "content": content}
+        if message.name:
+            result["name"] = message.name
+        if message.tool_call_id:
+            result["tool_call_id"] = message.tool_call_id
         if message.tool_calls:
-            for tc in message.tool_calls:
-                content_blocks.append({
-                    "type": "tool_use",
+            result["tool_calls"] = [
+                {
                     "id": tc.id,
-                    "name": tc.name,
-                    "input": tc.arguments
-                })
-
-        return {
-            "role": role,
-            "content": content_blocks if (content_blocks and role != "system") else self._extract_content(message.content)
-        }
+                    "type": "function",
+                    "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
+                }
+                for tc in message.tool_calls
+            ]
+        return result
 
     def _extract_content(self, content: str | list[ContentBlock]) -> str:
-        """Extract text content from a message."""
         if isinstance(content, str):
             return content
         parts = []
@@ -201,33 +179,29 @@ class MiniMaxProvider(BaseProvider):
         return "\n".join(parts) if parts else ""
 
     def _parse_response(self, data: dict, model: str) -> ModelResponse:
-        """Parse a MiniMax response into a ModelResponse."""
-        content = ""
-        tool_calls: list[ToolCall] | None = None
+        choices = data.get("choices", [{}])
+        choice = choices[0] if choices else {}
+        message = choice.get("message", {})
+        content = message.get("content", "") or ""
 
-        content_blocks = data.get("content", [])
-        if isinstance(content_blocks, list):
-            for block in content_blocks:
-                if block.get("type") == "text":
-                    content = block.get("text", "")
-                elif block.get("type") == "thinking":
-                    # Skip thinking blocks - not part of final response
-                    continue
-                elif block.get("type") in ("tool_call", "tool_use"):
-                    # Parse tool call (MiniMax uses "tool_use" or "tool_call")
-                    tool_calls = tool_calls or []
-                    tool_calls.append(ToolCall(
-                        id=block.get("id", ""),
-                        name=block.get("name", ""),
-                        arguments=block.get("input", {}),
-                    ))
+        tool_calls_data = message.get("tool_calls", [])
+        tool_calls: list[ToolCall] | None = None
+        if tool_calls_data:
+            tool_calls = []
+            for tc in tool_calls_data:
+                func = tc.get("function", {})
+                tool_calls.append(ToolCall(
+                    id=tc.get("id", ""),
+                    name=func.get("name", ""),
+                    arguments=json.loads(func.get("arguments", "{}")),
+                ))
 
         usage = data.get("usage", {})
         return ModelResponse(
             content=content,
             model=model,
-            input_tokens=usage.get("input_tokens", 0),
-            output_tokens=usage.get("output_tokens", 0),
-            finish_reason=data.get("stop_reason"),
+            input_tokens=usage.get("prompt_tokens", 0),
+            output_tokens=usage.get("completion_tokens", 0),
+            finish_reason=choice.get("finish_reason"),
             tool_calls=tool_calls,
         )
