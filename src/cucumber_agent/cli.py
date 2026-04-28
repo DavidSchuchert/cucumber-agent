@@ -685,13 +685,27 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
 
         elif choice == "2":
             # Cancel this tool call
-            self._pending_tool_calls.pop(0)
+            tool_call = self._pending_tool_calls.pop(0)
             console.print("[dim]Tool call cancelled.[/dim]\n")
+            
+            # Add a "cancelled" result to satisfy API requirements
+            from cucumber_agent.session import Message, Role
+            self._session.messages.append(Message(
+                role=Role.TOOL,
+                content="Cancelled by user.",
+                name=tool_name,
+                tool_call_id=tool_call.get("id", "")
+            ))
+            
             # Show next if available
             if self._pending_tool_calls:
                 self._print_tool_call(self._pending_tool_calls[0])
-
-        elif choice == "3":
+                return
+            
+            # Continue if no more pending
+            with console.status("  [dim]denkt nach...[/dim]", spinner="dots", spinner_style="dim"):
+                response = await self._agent.run_with_tools(self._session, "")
+            await self._process_agent_response(response)
             # Edit command - ask for new command, pre-filled for easy editing
             if command:
                 from prompt_toolkit import prompt as ptk_prompt
