@@ -15,6 +15,18 @@ CONFIG_FILE = CONFIG_DIR / "config.yaml"
 
 
 def print_banner() -> None:
+    cucumber_ascii = """
+           _____ 
+         /       \ 
+        |  (O)(O) | 
+        |    <    | 
+        |  '---'  | 
+        |         | 
+        |         | 
+        |         | 
+         \_______/ 
+    """
+    console.print(f"[bold green]{cucumber_ascii}[/bold green]")
     console.print(
         Panel.fit(
             "[bold cyan]🥒 CucumberAgent Setup[/bold cyan]\n\nLet's get you set up!",

@@ -14,6 +14,16 @@ if [ -t 0 ]; then
 fi
 
 echo ""
+echo "           _____"
+echo "         /       \\"
+echo "        |  (O)(O) |"
+echo "        |    <    |"
+echo "        |  '---'  |"
+echo "        |         |"
+echo "        |         |"
+echo "        |         |"
+echo "         \_______/"
+echo ""
 echo "🥒 CucumberAgent Installer"
 echo "=========================="
 echo ""

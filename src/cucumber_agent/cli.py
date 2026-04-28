@@ -83,6 +83,20 @@ def print_welcome(config: Config) -> None:
     pers = config.personality
     agent_cfg = config.agent
 
+    # ASCII Cucumber with Glubschaugen
+    cucumber_ascii = """
+           [bold green]_____ [/bold green]
+         [bold green]/       \ [/bold green]
+        [bold green]|  [white](O)(O)[/white] | [/bold green]
+        [bold green]|    [white]<[/white]    | [/bold green]
+        [bold green]|  [white]'---'[/white]  | [/bold green]
+        [bold green]|         | [/bold green]
+        [bold green]|         | [/bold green]
+        [bold green]|         | [/bold green]
+         [bold green]\_______/ [/bold green]
+    """
+    console.print(cucumber_ascii)
+
     # Create a nice header with a border
     header_text = Text.assemble(
         (f"{pers.emoji} ", "bold"),
