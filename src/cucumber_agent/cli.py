@@ -399,8 +399,17 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
             console.print(f"\n[dim]⚡ Executing {tool_name}...[/dim]\n")
             result = await ToolRegistry.execute(tool_name, **args)
 
-            # Add tool result to session so AI can see it
+            # Add assistant + tool result to session so AI has context
             from cucumber_agent.session import Message, Role
+
+            # First add what the AI was trying to do
+            assistant_msg = Message(
+                role=Role.ASSISTANT,
+                content=f"Ich führe den Befehl aus: {args.get('command', tool_name)}"
+            )
+            self._session.messages.append(assistant_msg)
+
+            # Then add the tool result
             tool_result_msg = Message(
                 role=Role.USER,
                 content=f"[TOOL_RESULT] {tool_name}: {result.output if result.success else 'ERROR: ' + (result.error or result.output)}"
