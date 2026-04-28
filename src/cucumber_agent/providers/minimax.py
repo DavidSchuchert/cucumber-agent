@@ -188,6 +188,11 @@ class MiniMaxProvider(BaseProvider):
         message = choice.get("message", {})
         content = message.get("content", "") or ""
 
+        # Strip thinking blocks from content
+        import re
+        content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+        content = re.sub(r'<thinking>.*?</thinking>', '', content, flags=re.DOTALL | re.IGNORECASE).strip()
+
         tool_calls_data = message.get("tool_calls", [])
         tool_calls: list[ToolCall] | None = None
         if tool_calls_data:

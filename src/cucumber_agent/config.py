@@ -141,6 +141,16 @@ class PersonalityConfig:
                     except Exception:
                         pass
 
+        # Self-awareness - know where the project and wiki are
+        project_path = Path.home() / "cucumber-agent"
+        if project_path.exists():
+            parts.append(f"PROJECT WIKI LOCATION: {project_path}/wiki/")
+            wiki_files = list((project_path / "wiki").glob("*.md")) if (project_path / "wiki").exists() else []
+            if wiki_files:
+                parts.append("AVAILABLE WIKI DOCS:")
+                for wf in sorted(wiki_files):
+                    parts.append(f"- {wf.stem}: {wf}")
+
         parts.append("I'm here to help my human with whatever they need!")
 
         return " ".join(parts)
