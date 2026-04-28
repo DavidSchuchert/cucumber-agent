@@ -16,6 +16,11 @@ class ToolRegistry:
         cls._tools[tool.name] = tool
 
     @classmethod
+    def unregister(cls, name: str) -> None:
+        """Unregister a tool."""
+        cls._tools.pop(name, None)
+
+    @classmethod
     def get(cls, name: str) -> BaseTool | None:
         """Get a tool by name."""
         return cls._tools.get(name)

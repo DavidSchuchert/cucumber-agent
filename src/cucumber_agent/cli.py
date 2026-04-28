@@ -239,12 +239,14 @@ class CliSession:
         self._facts = FactsStore(config.memory.facts_file)
         self._logger = SessionLogger(config.memory.log_dir)
 
-        # Skills
+        # Skills & Custom Tools
         self._skill_loader = SkillLoader()
         self._skill_loader.load_all()
 
         # Import tools
         from cucumber_agent import tools  # noqa: F401
+        self._custom_tool_loader = tools.CustomToolLoader()
+        self._custom_tool_loader.load_all()
 
     async def run(self) -> None:
         """Run the REPL."""
@@ -316,6 +318,11 @@ class CliSession:
 
         # Regular chat
         console.print()
+        
+        # Hot-reload custom tools if needed
+        if self._custom_tool_loader.needs_reload():
+            self._custom_tool_loader.load_all()
+
         try:
             offer_optimization = self._agent.needs_optimization(user_input)
             
