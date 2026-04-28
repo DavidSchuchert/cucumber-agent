@@ -184,7 +184,7 @@ class CliSession:
         self._running = False
         self._waiting_for_optimization_response = False
         self._debug_mode = False
-        self._pending_tool_call: dict | None = None  # For user confirmation
+        self._pending_tool_calls: list[dict] = []  # Queue of pending tool calls
         self._smart_retry = config.preferences.smart_retry
         self._retry_count: dict[str, int] = {}  # Track retries per command
 
@@ -232,7 +232,7 @@ class CliSession:
             return
 
         # Handle tool call approval
-        if self._pending_tool_call:
+        if self._pending_tool_calls:
             await self._handle_tool_approval(user_input)
             return
 
@@ -255,17 +255,13 @@ class CliSession:
                         console.print(response.content)
                     console.print()
 
-                # Show tool call approval
-                for tc in response.tool_calls:
-                    self._print_tool_call({
-                        "name": tc.name,
-                        "arguments": tc.arguments,
-                    })
-                    self._pending_tool_call = {
-                        "name": tc.name,
-                        "arguments": tc.arguments,
-                    }
-                    return
+                # Queue ALL tool calls, show first one
+                self._pending_tool_calls = [
+                    {"name": tc.name, "arguments": tc.arguments}
+                    for tc in response.tool_calls
+                ]
+                self._print_tool_call(self._pending_tool_calls[0])
+                return
             else:
                 console.print(response.content)
                 console.print()
@@ -282,6 +278,9 @@ class CliSession:
 
         except Exception as e:
             console.print(f"[bold red]Error:[/bold red] {e}")
+            if self._debug_mode:
+                import traceback
+                console.print(f"[dim red]{traceback.format_exc()}[/dim red]")
 
     async def _handle_optimization_response(self, user_input: str) -> None:
         """Handle user's response to optimization offer."""
@@ -384,11 +383,11 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
 
     async def _handle_tool_approval(self, user_input: str) -> None:
         """Handle user's response to a tool call."""
-        tool_call = self._pending_tool_call
-        if not tool_call:
+        if not self._pending_tool_calls:
             console.print("[dim]No pending tool call.[/dim]\n")
             return
 
+        tool_call = self._pending_tool_calls[0]
         choice = user_input.strip()
         tool_name = tool_call.get("name", "unknown")
         args = tool_call.get("arguments", {})
@@ -396,7 +395,7 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
 
         if choice == "1":
             # Execute
-            self._pending_tool_call = None
+            self._pending_tool_calls.pop(0)
             console.print(f"\n[dim]⚡ Executing {tool_name}...[/dim]\n")
             result = await ToolRegistry.execute(tool_name, **args)
 
@@ -404,21 +403,29 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
             from cucumber_agent.session import Message, Role
 
             # First add what the AI was trying to do
+            desc = args.get('command', args.get('task', tool_name))
             assistant_msg = Message(
                 role=Role.ASSISTANT,
-                content=f"Ich führe den Befehl aus: {args.get('command', tool_name)}"
+                content=f"Ich führe {tool_name} aus: {desc}"
             )
             self._session.messages.append(assistant_msg)
 
-            # Then add the tool result
+            # Then add the tool result (truncate large outputs)
+            output_text = result.output if result.success else 'ERROR: ' + (result.error or result.output)
+            if len(output_text) > 3000:
+                output_text = output_text[:1500] + "\n... [TRUNCATED] ...\n" + output_text[-1500:]
             tool_result_msg = Message(
                 role=Role.USER,
-                content=f"[TOOL_RESULT] {tool_name}: {result.output if result.success else 'ERROR: ' + (result.error or result.output)}"
+                content=f"[TOOL_RESULT] {tool_name}: {output_text}"
             )
             self._session.messages.append(tool_result_msg)
 
             if result.success:
                 console.print("[green]✓[/green]\n")
+                # If more tool calls queued, show next one
+                if self._pending_tool_calls:
+                    self._print_tool_call(self._pending_tool_calls[0])
+                    return
                 # Let AI synthesize a response based on the tool result
                 resp_text = await self._agent.synthesize(self._session)
                 if resp_text.strip():
@@ -428,25 +435,25 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                 error = result.error or result.output
                 console.print(f"[red]✗ Error:[/red] {error}\n")
 
-                # Check if we should auto-retry
-                from cucumber_agent.smart_retry import should_auto_retry
+                # Check if we should auto-retry (only for shell commands)
+                if command:
+                    from cucumber_agent.smart_retry import should_auto_retry
 
-                decision = should_auto_retry(command, error, self._smart_retry)
-                retry_key = f"{tool_name}:{command}"
+                    decision = should_auto_retry(command, error, self._smart_retry)
+                    retry_key = f"{tool_name}:{command}"
 
-                if decision.should_retry and self._retry_count.get(retry_key, 0) < 2:
-                    # Auto-retry!
-                    self._retry_count[retry_key] = self._retry_count.get(retry_key, 0) + 1
+                    if decision.should_retry and self._retry_count.get(retry_key, 0) < 2:
+                        self._retry_count[retry_key] = self._retry_count.get(retry_key, 0) + 1
 
-                    if decision.alternatives:
-                        new_cmd = decision.alternatives[0]
-                        console.print(f"[yellow]↻ Auto-retrying with alternative...[/yellow]\n")
-                        args["command"] = new_cmd
-                    else:
-                        console.print(f"[yellow]↻ Auto-retrying same command...[/yellow]\n")
+                        if decision.alternatives:
+                            new_cmd = decision.alternatives[0]
+                            console.print(f"[yellow]↻ Auto-retrying with alternative...[/yellow]\n")
+                            args["command"] = new_cmd
+                        else:
+                            console.print(f"[yellow]↻ Auto-retrying same command...[/yellow]\n")
 
-                    await self._execute_auto_retry(tool_name, args, command, self._retry_count[retry_key])
-                    return
+                        await self._execute_auto_retry(tool_name, args, command, self._retry_count[retry_key])
+                        return
 
                 # Not retryable - let AI respond
                 resp = await self._agent.synthesize(self._session, "Was kann ich wegen dieses Fehlers tun?")
@@ -455,50 +462,73 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                     console.print()
 
         elif choice == "2":
-            # Cancel
-            self._pending_tool_call = None
+            # Cancel this tool call
+            self._pending_tool_calls.pop(0)
             console.print("[dim]Tool call cancelled.[/dim]\n")
+            # Show next if available
+            if self._pending_tool_calls:
+                self._print_tool_call(self._pending_tool_calls[0])
 
         elif choice == "3":
             # Edit command - ask for new command
-            console.print(f"[dim]Current:[/dim] {command}")
-            new_cmd = await asyncio.to_thread(
-                lambda: console.input("[yellow]Enter new command: [/yellow]")
-            )
-            if new_cmd.strip():
-                tool_call["arguments"]["command"] = new_cmd.strip()
-                self._pending_tool_call = tool_call
-                console.print()
-                self._print_tool_call(tool_call)
-                return  # Wait for next choice
+            if command:
+                console.print(f"[dim]Current:[/dim] {command}")
+                new_cmd = await asyncio.to_thread(
+                    lambda: console.input("[yellow]Enter new command: [/yellow]")
+                )
+                if new_cmd.strip():
+                    self._pending_tool_calls[0]["arguments"]["command"] = new_cmd.strip()
+                    console.print()
+                    self._print_tool_call(self._pending_tool_calls[0])
+                    return  # Wait for next choice
+                else:
+                    console.print("[dim]Command unchanged.[/dim]\n")
+                    self._print_tool_call(self._pending_tool_calls[0])
             else:
-                console.print("[dim]Command unchanged.[/dim]\n")
-                console.print("[1] Execute [2] Cancel [3] Edit again")
+                console.print("[dim]Edit not supported for this tool type.[/dim]")
+                self._print_tool_call(self._pending_tool_calls[0])
 
         else:
-            self._pending_tool_call = None
-            console.print("[dim]Invalid choice. Tool call cancelled.[/dim]\n")
+            self._pending_tool_calls.clear()
+            console.print("[dim]Invalid choice. All pending tool calls cancelled.[/dim]\n")
 
     def _print_tool_call(self, tool_call: dict) -> None:
         """Display a tool call with approval options."""
         tool_name = tool_call.get("name", "unknown")
         args = tool_call.get("arguments", {})
-        command = args.get("command", "")
-        reason = args.get("reason", "No description provided")
+        reason = args.get("reason", "")
+
+        # Build a generic display of arguments
+        arg_lines = []
+        for key, value in args.items():
+            if key == "reason":
+                continue
+            display_val = str(value)
+            if len(display_val) > 120:
+                display_val = display_val[:120] + "…"
+            arg_lines.append(f"[bold]{key}:[/bold] {display_val}")
+
+        panel_content = f"[bold]Tool:[/bold] [cyan]{tool_name}[/cyan]\n" + "\n".join(arg_lines)
+        if reason:
+            panel_content += f"\n[bold]Reason:[/bold] [dim]{reason}[/dim]"
+
+        # Show queue info if multiple calls pending
+        queue_info = ""
+        if len(self._pending_tool_calls) > 1:
+            queue_info = f" ({len(self._pending_tool_calls)} queued)"
 
         console.print(
             Panel(
-                f"[bold]Tool:[/bold] {tool_name}\n"
-                f"[bold]Command:[/bold] {command}\n"
-                f"[bold]Reason:[/bold] {reason}",
-                title="⚡ Tool Call Approval Required",
+                panel_content,
+                title=f"⚡ Tool Call Approval Required{queue_info}",
                 border_style="yellow",
             )
         )
         console.print("[bold]Choose:[/bold]")
         console.print("  [1] Execute")
         console.print("  [2] Cancel")
-        console.print("  [3] Edit command")
+        if args.get("command"):
+            console.print("  [3] Edit command")
         console.print()
 
     async def _execute_auto_retry(

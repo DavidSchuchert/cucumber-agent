@@ -29,23 +29,24 @@ def trim_messages(
     max_tokens: int,
     system_prompt_tokens: int,
 ) -> list[Message]:
-    """Trim messages to fit within token budget."""
+    """Trim messages to fit within token budget, keeping the most recent."""
     budget = max_tokens - system_prompt_tokens - 200  # buffer
 
     if budget <= 0:
         return []
 
-    current_tokens = sum(estimate_tokens(str(m.content)) for m in messages)
-    if current_tokens <= budget:
+    total_tokens = sum(estimate_tokens(str(m.content)) for m in messages)
+    if total_tokens <= budget:
         return messages
 
-    # Keep messages fitting in budget, oldest first
+    # Keep most recent messages that fit in budget
     trimmed: list[Message] = []
+    used_tokens = 0
     for msg in reversed(messages):
         msg_tokens = estimate_tokens(str(msg.content))
-        if current_tokens + msg_tokens <= budget:
+        if used_tokens + msg_tokens <= budget:
             trimmed.insert(0, msg)
-            current_tokens += msg_tokens
+            used_tokens += msg_tokens
         else:
             break
 

@@ -1,0 +1,329 @@
+"""Sub-agent tool for delegating complex tasks."""
+
+from __future__ import annotations
+
+import asyncio
+import time
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.table import Table
+
+from cucumber_agent.config import Config
+from cucumber_agent.session import Session, Message, Role
+from cucumber_agent.tools.base import BaseTool, ToolResult
+from cucumber_agent.tools.registry import ToolRegistry
+
+console = Console()
+
+# Max characters of tool output to keep in session context (prevents blowup)
+MAX_TOOL_OUTPUT_CHARS = 3000
+
+
+def _truncate_output(text: str, max_chars: int = MAX_TOOL_OUTPUT_CHARS) -> str:
+    """Truncate long tool output to prevent context window overflow."""
+    if len(text) <= max_chars:
+        return text
+    half = max_chars // 2
+    return (
+        text[:half]
+        + f"\n\n... [TRUNCATED {len(text) - max_chars} chars] ...\n\n"
+        + text[-half:]
+    )
+
+
+def _format_args_display(args: dict) -> str:
+    """Format tool arguments for display in a readable way."""
+    lines = []
+    for key, value in args.items():
+        if key == "reason":
+            continue  # shown separately
+        display_val = str(value)
+        if len(display_val) > 120:
+            display_val = display_val[:120] + "…"
+        lines.append(f"  [cyan]{key}:[/cyan] {display_val}")
+    return "\n".join(lines)
+
+
+class AgentTool(BaseTool):
+    """Delegate a complex task to a sub-agent."""
+
+    name = "agent"
+    description = (
+        "Startet einen autonomen Sub-Agenten für komplexe, mehrstufige Aufgaben "
+        "(z.B. umfassende Recherchen, Code-Analysen oder Refactorings). "
+        "Der Sub-Agent arbeitet selbstständig und meldet sich am Ende mit einem Ergebnis."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "task": {
+                "type": "string",
+                "description": "Die genaue Aufgabenbeschreibung für den Sub-Agenten.",
+            }
+        },
+        "required": ["task"],
+    }
+
+    async def execute(self, task: str) -> ToolResult:
+        """Execute the sub-agent loop."""
+        start_time = time.monotonic()
+
+        console.print()
+        console.print(
+            Panel(
+                f"[bold magenta]🤖 Sub-Agent gestartet[/bold magenta]\n\n"
+                f"[italic]Aufgabe:[/italic] {task}",
+                border_style="magenta",
+                padding=(1, 2),
+            )
+        )
+
+        config = Config.load()
+        from cucumber_agent.agent import Agent
+
+        agent = Agent.from_config(config)
+        session = Session(id="subagent", model=config.agent.model)
+
+        # Give the sub-agent context about its role
+        system_prompt = config.agent.system_prompt or ""
+        subagent_prompt = (
+            f"{system_prompt}\n\n"
+            "WICHTIG: Du bist ein SUB-AGENT. Dir wurde eine komplexe Aufgabe übertragen. "
+            "Nutze deine Tools (shell, search), um die Aufgabe Schritt für Schritt zu lösen. "
+            "BENUTZE NIEMALS das 'agent' Tool — du bist selbst der Sub-Agent! "
+            "Wenn du fertig bist, fasse das Ergebnis zusammen und beende deine Arbeit "
+            "ohne weitere Tool-Aufrufe. Mache keine Konversation, liefere nur Ergebnisse."
+        )
+        agent._agent_config.system_prompt = subagent_prompt
+
+        max_steps = 15
+        step = 0
+        current_input = task
+        final_response = ""
+        aborted = False
+
+        while step < max_steps:
+            step += 1
+            # Step progress indicator
+            progress_bar = "█" * step + "░" * (max_steps - step)
+            console.print(
+                f"  [dim magenta]Schritt {step}/{max_steps}[/dim magenta]  "
+                f"[magenta]{progress_bar}[/magenta]"
+            )
+
+            try:
+                response = await agent.run_with_tools(session, current_input)
+            except Exception as e:
+                elapsed = time.monotonic() - start_time
+                console.print(
+                    Panel(
+                        f"[bold red]Sub-Agent Fehler:[/bold red] {e}",
+                        border_style="red",
+                    )
+                )
+                return ToolResult(
+                    success=False,
+                    output="",
+                    error=f"Sub-agent crashed after {elapsed:.1f}s: {e}",
+                )
+
+            # No tool calls → agent is done
+            if not response.tool_calls:
+                final_response = response.content or ""
+                if final_response.strip():
+                    console.print()
+                    console.print(
+                        Panel(
+                            final_response,
+                            title="[magenta]Sub-Agent Ergebnis[/magenta]",
+                            border_style="magenta",
+                            padding=(1, 2),
+                        )
+                    )
+                break
+
+            # Show thinking text (dimmed)
+            if response.content and response.content.strip():
+                console.print(
+                    f"  [dim magenta]💭 {response.content.strip()}[/dim magenta]"
+                )
+
+            # Handle each tool call
+            for tc in response.tool_calls:
+                tc_name = tc.name
+                tc_args = tc.arguments
+
+                # Safety: prevent recursive agent calls
+                if tc_name == "agent":
+                    console.print(
+                        "  [yellow]⚠ Sub-Agent versuchte sich selbst aufzurufen "
+                        "— übersprungen.[/yellow]"
+                    )
+                    session.messages.append(Message(
+                        role=Role.USER,
+                        content=(
+                            "[TOOL_RESULT] agent: FEHLER — Rekursive Sub-Agent-Aufrufe "
+                            "sind nicht erlaubt. Nutze shell oder search direkt."
+                        ),
+                    ))
+                    continue
+
+                reason = tc_args.get("reason", "")
+                command = tc_args.get("command", "")
+
+                # Build a nice tool call display
+                tool_info = _format_args_display(tc_args)
+                panel_content = (
+                    f"[bold]Tool:[/bold] [cyan]{tc_name}[/cyan]\n"
+                    f"{tool_info}"
+                )
+                if reason:
+                    panel_content += f"\n[bold]Grund:[/bold] [dim]{reason}[/dim]"
+
+                console.print(
+                    Panel(
+                        panel_content,
+                        title="[yellow]⚡ Sub-Agent Tool-Aufruf[/yellow]",
+                        border_style="yellow",
+                        padding=(0, 1),
+                    )
+                )
+
+                # Ask user for approval — capture current values to avoid closure bug
+                choice = await self._ask_approval()
+
+                if choice == "1":
+                    result = await self._execute_tool(tc_name, tc_args, session)
+                elif choice == "3" and "command" in tc_args:
+                    result = await self._edit_and_execute(
+                        tc_name, tc_args, command, session
+                    )
+                elif choice == "4":
+                    # Abort entire sub-agent
+                    console.print("  [red]Sub-Agent abgebrochen.[/red]")
+                    session.messages.append(Message(
+                        role=Role.USER,
+                        content=f"[TOOL_RESULT] {tc_name} wurde vom Benutzer abgebrochen. Die gesamte Aufgabe wird beendet.",
+                    ))
+                    aborted = True
+                    break
+                else:
+                    # Cancel this tool (choice == "2" or anything else)
+                    console.print("  [dim]Übersprungen.[/dim]")
+                    session.messages.append(Message(
+                        role=Role.USER,
+                        content=f"[TOOL_RESULT] {tc_name} wurde vom Benutzer übersprungen.",
+                    ))
+
+            if aborted:
+                final_response = "Sub-Agent wurde vom Benutzer abgebrochen."
+                break
+
+            # Prompt the agent to continue
+            current_input = (
+                "Analysiere die bisherigen Tool-Ergebnisse. "
+                "Fahre fort, falls nötig, oder schließe die Aufgabe mit einer Zusammenfassung ab."
+            )
+
+        if step >= max_steps and not final_response:
+            console.print(
+                "  [bold yellow]⚠ Schritt-Limit erreicht.[/bold yellow]"
+            )
+            # Ask the agent for a final summary
+            try:
+                summary_response = await agent.synthesize(session, "Fasse zusammen was bisher erreicht wurde.")
+                final_response = summary_response
+            except Exception:
+                final_response = "Sub-Agent hat das Schritt-Limit erreicht, ohne eine Zusammenfassung zu liefern."
+
+        elapsed = time.monotonic() - start_time
+
+        # Summary table
+        summary = Table.grid(padding=(0, 2))
+        summary.add_row("[bold]Schritte:[/bold]", f"{step}/{max_steps}")
+        summary.add_row("[bold]Dauer:[/bold]", f"{elapsed:.1f}s")
+        summary.add_row(
+            "[bold]Status:[/bold]",
+            "[green]✓ Abgeschlossen[/green]" if not aborted else "[red]✗ Abgebrochen[/red]",
+        )
+
+        console.print()
+        console.print(
+            Panel(
+                summary,
+                title="[bold magenta]🏁 Sub-Agent beendet[/bold magenta]",
+                border_style="magenta",
+                padding=(0, 1),
+            )
+        )
+
+        return ToolResult(
+            success=not aborted,
+            output=(
+                f"Sub-Agent Ergebnis ({step} Schritte, {elapsed:.1f}s):\n\n"
+                f"{final_response}"
+            ),
+        )
+
+    # ── Helper methods ──────────────────────────────────────────────────
+
+    async def _ask_approval(self) -> str:
+        """Prompt user for tool approval. Returns the choice string."""
+        console.print("  [bold]Aktion:[/bold]  [1] Ausführen  [2] Überspringen  [3] Bearbeiten  [4] Abbrechen")
+        choice = await asyncio.to_thread(
+            console.input, "  [bold yellow]Wahl:[/bold yellow] "
+        )
+        return choice.strip()
+
+    async def _execute_tool(
+        self, name: str, args: dict, session: Session
+    ) -> ToolResult:
+        """Execute a tool and record result in session."""
+        console.print(f"  [dim]⚡ Führe [cyan]{name}[/cyan] aus...[/dim]")
+        result = await ToolRegistry.execute(name, **args)
+
+        session.messages.append(Message(
+            role=Role.ASSISTANT,
+            content=f"Tool {name} ausgeführt mit: {args}",
+        ))
+
+        if result.success:
+            console.print("  [green]✓ Erfolg[/green]")
+            truncated = _truncate_output(result.output)
+            session.messages.append(Message(
+                role=Role.USER,
+                content=f"[TOOL_RESULT] {name}:\n{truncated}",
+            ))
+        else:
+            error_msg = result.error or result.output
+            console.print(f"  [red]✗ Fehler:[/red] {error_msg[:200]}")
+            session.messages.append(Message(
+                role=Role.USER,
+                content=f"[TOOL_RESULT] {name} ERROR: {error_msg}",
+            ))
+        return result
+
+    async def _edit_and_execute(
+        self, name: str, args: dict, original_cmd: str, session: Session
+    ) -> ToolResult:
+        """Let user edit a command, then execute."""
+        console.print(f"  [dim]Aktuell:[/dim] {original_cmd}")
+        new_cmd = await asyncio.to_thread(
+            console.input, "  [yellow]Neuer Befehl:[/yellow] "
+        )
+        if new_cmd.strip():
+            args["command"] = new_cmd.strip()
+            return await self._execute_tool(name, args, session)
+        else:
+            console.print("  [dim]Leere Eingabe — übersprungen.[/dim]")
+            session.messages.append(Message(
+                role=Role.USER,
+                content=f"[TOOL_RESULT] {name} wurde vom Benutzer übersprungen.",
+            ))
+            return ToolResult(success=False, output="", error="User cancelled edit")
+
+
+# Register the tool
+ToolRegistry.register(AgentTool())
