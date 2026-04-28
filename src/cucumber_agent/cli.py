@@ -263,7 +263,7 @@ class CliSession:
         slash_commands = [
             "/help", "/exit", "/quit", "/clear",
             "/config", "/model", "/debug", "/optimize",
-            "/memory", "/remember", "/forget", "/skills",
+            "/memory", "/remember", "/forget", "/skills", "/tools",
         ] + [s.command for s in self._skill_loader.skills]
         completer = WordCompleter(sorted(set(slash_commands)), sentence=True)
 
@@ -276,7 +276,7 @@ class CliSession:
             history=history,
             auto_suggest=AutoSuggestFromHistory(),
             completer=completer,
-            complete_while_typing=False,
+            complete_while_typing=True,
             style=ptk_style,
         )
 
