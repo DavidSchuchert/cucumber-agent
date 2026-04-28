@@ -158,14 +158,16 @@ class MiniMaxProvider(BaseProvider):
             for block in content_blocks:
                 if block.get("type") == "text":
                     content = block.get("text", "")
-                elif block.get("type") == "tool_call":
-                    # Parse tool call
-                    tool_call_block = block.get("tool_call", {})
+                elif block.get("type") == "thinking":
+                    # Skip thinking blocks - not part of final response
+                    continue
+                elif block.get("type") in ("tool_call", "tool_use"):
+                    # Parse tool call (MiniMax uses "tool_use" or "tool_call")
                     tool_calls = tool_calls or []
                     tool_calls.append(ToolCall(
-                        id=tool_call_block.get("id", ""),
-                        name=tool_call_block.get("name", ""),
-                        arguments=tool_call_block.get("input", {}),
+                        id=block.get("id", ""),
+                        name=block.get("name", ""),
+                        arguments=block.get("input", {}),
                     ))
 
         usage = data.get("usage", {})
