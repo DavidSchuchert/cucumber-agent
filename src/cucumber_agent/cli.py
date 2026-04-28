@@ -83,26 +83,25 @@ def print_welcome(config: Config) -> None:
     pers = config.personality
     agent_cfg = config.agent
 
-    # Header banner
-    console.print()
-    console.print(Rule(style="bold green"))
-    console.print(
-        f"  [bold green]{pers.emoji}  {pers.name}[/bold green]  "
-        f"[dim green]· powered by {agent_cfg.provider}/{agent_cfg.model}[/dim green]"
+    # Create a nice header with a border
+    header_text = Text.assemble(
+        (f"{pers.emoji} ", "bold"),
+        (f"{pers.name} ", "bold green"),
+        (f"· powered by {agent_cfg.provider}/{agent_cfg.model}", "dim green")
     )
-    console.print(Rule(style="bold green"))
+    console.print(Panel(header_text, border_style="green", expand=False))
     console.print()
 
-    # Capabilities row
-    caps = []
+    # Capabilities as a row of badges
+    badges = []
     if config.preferences.can_search_web:
-        caps.append("[dim]🔍 search[/dim]")
+        badges.append("[reverse green] 🔍 SEARCH [/reverse green]")
     if config.preferences.can_code:
-        caps.append("[dim]💻 shell[/dim]")
-    caps.append("[dim]🤖 subagent[/dim]")
-    console.print("  " + "   ".join(caps))
-    console.print()
-    console.print("  [dim]Tippe [bold white]/help[/bold white] für Befehle oder einfach loslegen![/dim]")
+        badges.append("[reverse cyan] 💻 SHELL [/reverse cyan]")
+    badges.append("[reverse blue] 🤖 SUBAGENT [/reverse blue]")
+    
+    console.print(Columns(badges, spacing=2))
+    console.print(f"\n[dim]Tippe [bold]/help[/bold] für Befehle oder einfach loslegen![/dim]")
     console.print()
 
 
@@ -408,9 +407,15 @@ class CliSession:
                 return
 
             pers = self._config.personality
-            console.print(Rule(f"[dim green]{pers.emoji}[/dim green]", style="dim green"))
-            console.print()
-            console.print(clean_content)
+            
+            # Use a Panel for the response to make it look premium
+            console.print(Panel(
+                clean_content,
+                title=f"[bold green]{pers.emoji} {pers.name}[/bold green]",
+                title_align="left",
+                border_style="dim green",
+                padding=(1, 2)
+            ))
             console.print()
 
             # Log the exchange (only if we have a user input to pair it with)
@@ -726,15 +731,22 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
         console.print(
             Panel(
                 panel_content,
-                title=f"⚡ Tool Call Approval Required{queue_info}",
+                title=f"⚡ [bold yellow]Tool Approval Required[/bold yellow]{queue_info}",
                 border_style="yellow",
+                subtitle="[dim]Press [bold yellow]1[/bold yellow] to approve[/dim]"
             )
         )
-        console.print("[bold]Choose:[/bold]")
-        console.print("  [1] Execute")
-        console.print("  [2] Cancel")
+        
+        # Nicer menu display
+        menu_text = Text.assemble(
+            ("  [1] ", "bold yellow"), ("Execute  ", "default"),
+            ("  [2] ", "bold red"), ("Cancel   ", "default"),
+        )
         if args.get("command"):
-            console.print("  [3] Edit command")
+            menu_text.append("  [3] ", style="bold cyan")
+            menu_text.append("Edit command", style="default")
+            
+        console.print(menu_text)
         console.print()
 
     async def _execute_auto_retry(
