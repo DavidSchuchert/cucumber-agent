@@ -36,6 +36,7 @@ preferences:
   can_search_web: true
   can_code: true
   can_remember: true
+  smart_retry: true       # Auto-retry READ commands on path errors
 
 context:
   max_tokens: 8000        # Max tokens for context window
