@@ -370,6 +370,11 @@ class Agent:
         if agent_ctx := session.metadata.get("agent_context"):
             operational_parts.append(f"\n{agent_ctx}")
 
+        if pinned := session.metadata.get("pinned"):
+            operational_parts.append(
+                f"\n\n### Gepinnter Kontext (IMMER beachten, höchste Priorität):\n{pinned}"
+            )
+
         operational_parts.append(
             "\n\n### Delegation Strategy\n"
             "If a task is complex, multi-step, or requires deep research/analysis, "

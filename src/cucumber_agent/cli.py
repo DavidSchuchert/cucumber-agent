@@ -152,6 +152,11 @@ def print_help() -> None:
         ("/forget ...", "Fakt vergessen, z.B. /forget name"),
         ("/skills", "Installierte Skills auflisten"),
         ("/autoapprove", "Tool-Auto-Approve für diese Session ein/ausschalten"),
+        ("/compact", "Gesprächsverlauf jetzt manuell komprimieren"),
+        ("/pin <text>", "Text dauerhaft in System-Prompt pinnen (überlebt Komprimierung)"),
+        ("/unpin <nr>", "Gepinnten Eintrag entfernen (/pin ohne Arg zeigt Liste)"),
+        ("/cost", "Token-Verbrauch und geschätzte Kosten dieser Session anzeigen"),
+        ("Mehrzeilig", "Zeile mit \\ beenden → nächste Zeile eingeben (beliebig viele)"),
     ]
     for cmd, desc in commands:
         table.add_row(cmd, desc)
@@ -302,6 +307,7 @@ class CliSession:
         self._auto_approve_session: bool = False
         self._smart_retry = config.preferences.smart_retry
         self._retry_count: dict[str, int] = {}
+        self._session_tokens: dict[str, int] = {"input": 0, "output": 0, "calls": 0}
 
         # Memory & persistence
         self._facts = FactsStore(config.memory.facts_file)
@@ -365,6 +371,10 @@ class CliSession:
             "/memory",
             "/context",
             "/autoapprove",
+            "/compact",
+            "/pin",
+            "/unpin",
+            "/cost",
             "/remember",
             "/forget",
             "/skills",
@@ -401,6 +411,15 @@ class CliSession:
                     prompt_text = HTML(f"<b><ansired>🔧 {pers.name} [DEBUG]&gt;</ansired></b> ")
 
                 user_input = await pt_session.prompt_async(prompt_text)
+
+                # Multi-line continuation: trailing \ means "more to come"
+                while user_input.endswith("\\"):
+                    user_input = user_input[:-1] + "\n"
+                    cont = await pt_session.prompt_async(
+                        HTML("<b><ansicyan>  ...</ansicyan></b> ")
+                    )
+                    user_input += cont
+
                 await self._handle_input(user_input)
             except KeyboardInterrupt:
                 console.print(
@@ -455,6 +474,7 @@ class CliSession:
             with console.status("  [dim]denkt nach...[/dim]", spinner="dots", spinner_style="dim"):
                 response = await self._agent.run_with_tools(self._session, user_input)
 
+            self._track_tokens(response)
             await self._process_agent_response(response, user_input)
 
             # After first greeting, offer optimization
@@ -553,6 +573,7 @@ class CliSession:
                         "  [dim]denkt nach...[/dim]", spinner="dots", spinner_style="dim"
                     ):
                         follow_up = await self._agent.run_with_tools(self._session, "")
+                    self._track_tokens(follow_up)
                     await self._process_agent_response(follow_up)
                 return
 
@@ -841,6 +862,97 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                     )
                 else:
                     console.print("  [dim]Auto-Approve AUS — Tool-Aufrufe wieder manuell bestätigen.[/dim]\n")
+            case "/compact":
+                keep_recent = self._config.memory.summarize_keep_recent
+                msgs = self._session.messages
+                if len(msgs) <= keep_recent:
+                    console.print(
+                        f"  [dim]Nicht genug Nachrichten zum Komprimieren ({len(msgs)} ≤ {keep_recent}).[/dim]\n"
+                    )
+                else:
+                    old_count = len(msgs)
+                    console.print("  [dim]🔄 Komprimiere...[/dim]")
+                    to_summarize = msgs[:-keep_recent]
+                    remaining = msgs[-keep_recent:]
+                    new_summary = await self._agent.summarize_messages(to_summarize)
+                    existing = self._session.metadata.get("summary", "")
+                    combined = (
+                        existing.strip() + "\n\n[Manuell komprimiert:]\n" + new_summary.strip()
+                        if existing.strip()
+                        else new_summary.strip()
+                    )
+                    self._session.metadata["summary"] = combined
+                    self._session.messages = remaining
+                    self._summary_store.save(combined)
+                    console.print(
+                        f"  [green]✓ {old_count} → {len(remaining)} Nachrichten "
+                        f"({old_count - len(remaining)} komprimiert und gespeichert)[/green]\n"
+                    )
+            case "/pin":
+                if not arg:
+                    pins = self._session.metadata.get("pinned_items", [])
+                    if not pins:
+                        console.print("  [dim]Kein gepinnter Kontext. Verwendung: /pin <text>[/dim]\n")
+                    else:
+                        console.print()
+                        for i, p in enumerate(pins, 1):
+                            console.print(f"  [bold cyan]{i}.[/bold cyan] {p}")
+                        console.print()
+                else:
+                    pins = self._session.metadata.get("pinned_items", [])
+                    pins.append(arg.strip())
+                    self._session.metadata["pinned_items"] = pins
+                    self._session.metadata["pinned"] = "\n".join(f"- {p}" for p in pins)
+                    console.print(f'  [green]✓ Gepinnt:[/green] „{arg.strip()}"\n')
+            case "/unpin":
+                pins = self._session.metadata.get("pinned_items", [])
+                if not pins:
+                    console.print("  [dim]Kein gepinnter Kontext vorhanden.[/dim]\n")
+                elif not arg:
+                    console.print("  [dim]Verwendung: /unpin <nr>  (Nummern mit /pin anzeigen)[/dim]\n")
+                else:
+                    try:
+                        idx = int(arg) - 1
+                        if 0 <= idx < len(pins):
+                            removed = pins.pop(idx)
+                            self._session.metadata["pinned_items"] = pins
+                            self._session.metadata["pinned"] = (
+                                "\n".join(f"- {p}" for p in pins) if pins else ""
+                            )
+                            console.print(f'  [green]✓ Entfernt:[/green] „{removed}"\n')
+                        else:
+                            console.print(f"  [dim]Index {arg} ungültig. Zeige Pins mit /pin[/dim]\n")
+                    except ValueError:
+                        console.print(f"  [dim]Bitte eine Zahl eingeben, z.B. /unpin 1[/dim]\n")
+            case "/cost":
+                tok = self._session_tokens
+                provider = self._config.agent.provider
+                # Approximate price per 1M tokens (input, output) in USD
+                price_table: dict[str, tuple[float, float]] = {
+                    "minimax":    (0.80,  2.40),
+                    "openrouter": (1.00,  3.00),
+                    "ollama":     (0.00,  0.00),
+                    "deepseek":   (0.14,  0.28),
+                }
+                in_p, out_p = price_table.get(provider, (1.00, 3.00))
+                cost_usd = (tok["input"] / 1_000_000 * in_p) + (tok["output"] / 1_000_000 * out_p)
+
+                t = Table(show_header=False, box=None, padding=(0, 2))
+                t.add_column("Key",   style="dim")
+                t.add_column("Value", style="white")
+                t.add_row("Provider",      f"[cyan]{provider}[/cyan]")
+                t.add_row("API-Aufrufe",   str(tok["calls"]))
+                t.add_row("Input Tokens",  f"[yellow]{tok['input']:,}[/yellow]")
+                t.add_row("Output Tokens", f"[yellow]{tok['output']:,}[/yellow]")
+                t.add_row("Gesamt",        f"[bold]{tok['input'] + tok['output']:,}[/bold]")
+                t.add_row("~Kosten",       f"[green]${cost_usd:.5f} USD[/green]")
+                if in_p == 0:
+                    t.add_row("",  "[dim]Lokal — kostenlos[/dim]")
+                console.print()
+                console.print(
+                    Panel(t, title="[bold cyan]💰 Token-Kosten[/bold cyan]", border_style="cyan", padding=(0, 1))
+                )
+                console.print()
             case "/memory":
                 facts = self._facts.all()
                 if not facts:
@@ -1194,6 +1306,7 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
             # Let AI respond or continue reasoning based on tool result
             with console.status("  [dim]denkt nach...[/dim]", spinner="dots", spinner_style="dim"):
                 response = await self._agent.run_with_tools(self._session, "")
+            self._track_tokens(response)
             await self._process_agent_response(response)
 
         elif choice == "2":
@@ -1221,6 +1334,7 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
             # Continue if no more pending
             with console.status("  [dim]denkt nach...[/dim]", spinner="dots", spinner_style="dim"):
                 response = await self._agent.run_with_tools(self._session, "")
+            self._track_tokens(response)
             await self._process_agent_response(response)
 
         elif choice == "3":
@@ -1367,6 +1481,12 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                 if resp.strip():
                     console.print(resp)
                     console.print()
+
+    def _track_tokens(self, response) -> None:
+        """Accumulate token counts from a ModelResponse."""
+        self._session_tokens["input"] += response.input_tokens or 0
+        self._session_tokens["output"] += response.output_tokens or 0
+        self._session_tokens["calls"] += 1
 
     def _print_debug_info(self) -> None:
         """Print debug information."""
