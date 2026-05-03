@@ -3,7 +3,9 @@
 # Import built-in tools to register them
 from cucumber_agent.tools import (  # noqa: F401
     agent,
+    calculator,
     create_tool,
+    datetime_tool,
     read_file,
     remember,
     search,

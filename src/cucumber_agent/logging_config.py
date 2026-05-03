@@ -12,57 +12,71 @@ DEFAULT_LOG_FILE = DEFAULT_LOG_DIR / "cucumber.log"
 DEFAULT_MAX_BYTES = 5 * 1024 * 1024  # 5 MB
 DEFAULT_BACKUP_COUNT = 3
 
+# Install a NullHandler by default so that library code never emits log records
+# unless the consuming application explicitly calls setup_logging().
+# This prevents log spam during tests and in library usage.
+logging.getLogger("cucumber_agent").addHandler(logging.NullHandler())
+
 
 def setup_logging(
     log_dir: Path | None = None,
     level: int = logging.INFO,
     verbose: bool = False,
+    enable_file: bool = True,
 ) -> logging.Logger:
     """
-    Setup logging with file rotation and console output.
+    Setup logging with file rotation and optional console output.
+
+    This function is intended to be called once by the CLI entry point, NOT by
+    library code or tests.  Library code should use ``get_logger()`` only.
 
     Args:
-        log_dir: Directory for log files (default: ~/.cucumber/logs)
-        level: Logging level (default: INFO)
-        verbose: If True, set level to DEBUG and enable verbose console output
+        log_dir: Directory for log files (default: ~/.cucumber/logs).
+        level: Logging level (default: INFO).
+        verbose: If True, set level to DEBUG.
+        enable_file: If False, skip file-handler creation (useful for testing
+                     or environments without a writable home directory).
 
     Returns:
-        The configured logger instance
+        The configured logger instance.
     """
     if verbose:
         level = logging.DEBUG
 
-    log_dir = log_dir or DEFAULT_LOG_DIR
-    log_dir.mkdir(parents=True, exist_ok=True)
-
     logger = logging.getLogger("cucumber_agent")
     logger.setLevel(level)
-    logger.handlers.clear()  # Remove any existing handlers
+    # Remove NullHandler and any previously installed handlers.
+    logger.handlers.clear()
 
-    # File handler with rotation
-    log_file = log_dir / "cucumber.log"
-    file_handler = RotatingFileHandler(
-        log_file,
-        maxBytes=DEFAULT_MAX_BYTES,
-        backupCount=DEFAULT_BACKUP_COUNT,
-        encoding="utf-8",
-    )
-    file_handler.setLevel(level)
-    file_formatter = logging.Formatter(
-        fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    file_handler.setFormatter(file_formatter)
-    logger.addHandler(file_handler)
+    if enable_file:
+        resolved_log_dir = log_dir or DEFAULT_LOG_DIR
+        resolved_log_dir.mkdir(parents=True, exist_ok=True)
 
-    # Also log uncaught exceptions to file
-    def handle_exception(exc_type, exc_value, exc_traceback):
-        if issubclass(exc_type, KeyboardInterrupt):
-            sys.__excepthook__(exc_type, exc_value, exc_traceback)
-            return
-        logger.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
+        log_file = resolved_log_dir / "cucumber.log"
+        file_handler = RotatingFileHandler(
+            log_file,
+            maxBytes=DEFAULT_MAX_BYTES,
+            backupCount=DEFAULT_BACKUP_COUNT,
+            encoding="utf-8",
+        )
+        file_handler.setLevel(level)
+        file_formatter = logging.Formatter(
+            fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+        file_handler.setFormatter(file_formatter)
+        logger.addHandler(file_handler)
 
-    sys.excepthook = handle_exception
+    # Propagate uncaught exceptions to the log file when file logging is active.
+    if enable_file:
+
+        def handle_exception(exc_type, exc_value, exc_traceback):
+            if issubclass(exc_type, KeyboardInterrupt):
+                sys.__excepthook__(exc_type, exc_value, exc_traceback)
+                return
+            logger.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
+
+        sys.excepthook = handle_exception
 
     return logger
 

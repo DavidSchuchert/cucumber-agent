@@ -1,4 +1,4 @@
-"""OpenRouter provider - routes to OpenRouter compatible models."""
+"""DeepSeek provider — OpenAI-compatible API for DeepSeek-V3 and friends."""
 
 from __future__ import annotations
 
@@ -18,15 +18,15 @@ if TYPE_CHECKING:
 _RETRY_STATUSES = {429, 500, 502, 503}
 
 
-@ProviderRegistry.register("openrouter")
-class OpenRouterProvider(BaseProvider):
-    """Provider for OpenRouter API."""
+@ProviderRegistry.register("deepseek")
+class DeepSeekProvider(BaseProvider):
+    """Provider for DeepSeek models via the OpenAI-compatible API."""
 
     def __init__(
         self,
         api_key: str,
-        base_url: str = "https://openrouter.ai/api/v1",
-        model: str = "openai/gpt-4o-mini",
+        base_url: str = "https://api.deepseek.com/v1",
+        model: str = "deepseek-chat",
     ):
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
@@ -40,6 +40,7 @@ class OpenRouterProvider(BaseProvider):
         )
 
     async def close(self) -> None:
+        """Close the underlying HTTP client."""
         await self._client.aclose()
 
     async def complete(
@@ -53,6 +54,7 @@ class OpenRouterProvider(BaseProvider):
         system_override: str | None = None,
         max_retries: int = 3,
     ) -> ModelResponse:
+        """Send a completion request with exponential-backoff retry."""
         body = self._build_request(
             messages,
             model,
@@ -91,6 +93,7 @@ class OpenRouterProvider(BaseProvider):
         max_tokens: int | None = None,
         tools: list[dict] | None = None,
     ) -> AsyncIterator[str]:
+        """Stream the response as an async iterator of text chunks."""
         body = self._build_request(messages, model, temperature, max_tokens, tools, stream=True)
         async with self._client.stream(
             "POST", f"{self._base_url}/chat/completions", json=body

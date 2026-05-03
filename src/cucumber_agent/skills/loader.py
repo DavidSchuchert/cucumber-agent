@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
+
+logger = logging.getLogger(__name__)
+
+# Required fields for a valid skill YAML
+_REQUIRED_FIELDS = ("name", "command", "description", "steps")
 
 
 @dataclass
@@ -16,8 +22,10 @@ class Skill:
     name: str
     command: str  # e.g. "/wetter"
     description: str
-    prompt: str  # May contain {args} placeholder
+    steps: list[str]  # Ordered list of steps the skill performs
+    prompt: str = ""  # May contain {args} placeholder
     args_hint: str = ""  # e.g. "[Stadt]" shown in /skills list
+    timeout: float = 30.0  # Per-step timeout in seconds
 
     @property
     def command_key(self) -> str:
@@ -37,6 +45,10 @@ class SkillLoader:
     @property
     def skills(self) -> list[Skill]:
         return list(self._skills.values())
+
+    def _validate(self, data: dict, yaml_file: Path) -> list[str]:
+        """Return list of missing required fields (empty = valid)."""
+        return [f for f in _REQUIRED_FIELDS if not data.get(f)]
 
     def load_all(self) -> list[Skill]:
         """Load (or reload if changed) all skills from the skills directory."""
@@ -58,17 +70,35 @@ class SkillLoader:
                 continue  # unchanged
             try:
                 data = yaml.safe_load(yaml_file.read_text(encoding="utf-8")) or {}
+
+                # Schema validation
+                missing = self._validate(data, yaml_file)
+                if missing:
+                    logger.warning(
+                        "Skill %s skipped — missing required fields: %s",
+                        yaml_file.name,
+                        ", ".join(missing),
+                    )
+                    self._mtimes[yaml_file] = mtime  # mark so we don't warn repeatedly
+                    continue
+
+                steps = data["steps"]
+                if not isinstance(steps, list):
+                    steps = [str(steps)]
+
                 skill = Skill(
-                    name=data.get("name", yaml_file.stem),
-                    command=data.get("command", f"/{yaml_file.stem}"),
-                    description=data.get("description", ""),
+                    name=data["name"],
+                    command=data["command"],
+                    description=data["description"],
+                    steps=[str(s) for s in steps],
                     prompt=data.get("prompt", ""),
                     args_hint=data.get("args_hint", ""),
+                    timeout=float(data.get("timeout", 30.0)),
                 )
                 self._skills[yaml_file.stem] = skill
                 self._mtimes[yaml_file] = mtime
-            except Exception:
-                pass  # silently skip malformed skills
+            except Exception as exc:
+                logger.warning("Skill %s could not be loaded: %s", yaml_file.name, exc)
 
         self._last_scan = time.monotonic()
         return self.skills
@@ -85,7 +115,26 @@ class SkillLoader:
         """True if any skill file has changed since last load (mtime check)."""
         if not self._dir.exists():
             return False
-        for yaml_file in self._dir.glob("*.yaml"):
-            if self._mtimes.get(yaml_file) != yaml_file.stat().st_mtime:
-                return True
+        for pattern in ("*.yaml", "*.yml"):
+            for yaml_file in self._dir.glob(pattern):
+                if self._mtimes.get(yaml_file) != yaml_file.stat().st_mtime:
+                    return True
         return False
+
+    def get_all_descriptions(self) -> str:
+        """Return a formatted string of all loaded skills for system-prompt injection.
+
+        Example output::
+
+            Available skills:
+            - /git_commit [msg]: Helps craft a good Git commit message.
+            - /code_review [path]: Runs a structured code-review workflow.
+        """
+        if not self._skills:
+            return ""
+
+        lines = ["Available skills:"]
+        for skill in sorted(self._skills.values(), key=lambda s: s.command_key):
+            hint = f" {skill.args_hint}" if skill.args_hint else ""
+            lines.append(f"  - /{skill.command_key}{hint}: {skill.description}")
+        return "\n".join(lines)

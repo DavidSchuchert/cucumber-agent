@@ -56,8 +56,7 @@ class BaseProvider(ABC):
         """Send a complete request and return the full response."""
         ...
 
-    @abstractmethod
-    def stream(
+    async def stream(
         self,
         messages: list[Message],
         model: str,
@@ -66,8 +65,24 @@ class BaseProvider(ABC):
         max_tokens: int | None = None,
         tools: list[dict] | None = None,
     ) -> AsyncIterator[str]:
-        """Stream the response as an async iterator of text chunks."""
-        ...
+        """Stream the response as an async iterator of text chunks.
+
+        Default implementation falls back to complete() and yields the full
+        response as a single chunk. Subclasses should override this for true
+        streaming support.
+        """
+        response = await self.complete(
+            messages,
+            model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            tools=tools,
+        )
+        if response.content:
+            yield response.content
+
+    async def close(self) -> None:
+        """Release any held resources (e.g. HTTP clients). Override as needed."""
 
 
 class ProviderRegistry:

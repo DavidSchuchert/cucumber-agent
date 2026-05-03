@@ -1,15 +1,34 @@
-"""Web search tool — MiniMax API with DuckDuckGo fallback."""
+"""Web search tool — DuckDuckGo HTML search."""
 
 from __future__ import annotations
+
+import re
+from urllib.parse import unquote
 
 import httpx
 
 from cucumber_agent.tools.base import BaseTool, ToolResult
 from cucumber_agent.tools.registry import ToolRegistry
 
+_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+    "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
+}
+
+# Matches: <a class="result__a" href="URL">Title</a>  — attribute order varies across DDG versions
+_TITLE_RE = re.compile(
+    r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>',
+    re.DOTALL,
+)
+# Matches: <a class="result__snippet" href="...">Snippet</a>
+_SNIPPET_RE = re.compile(
+    r'class="result__snippet"[^>]*>(.*?)</a>',
+    re.DOTALL,
+)
+
 
 class WebSearchTool(BaseTool):
-    """Search the web using MiniMax API or DuckDuckGo fallback."""
+    """Search the web using DuckDuckGo."""
 
     name = "web_search"
     description = (
@@ -20,10 +39,7 @@ class WebSearchTool(BaseTool):
     parameters = {
         "type": "object",
         "properties": {
-            "query": {
-                "type": "string",
-                "description": "Die Suchanfrage (auf Englisch für beste Ergebnisse).",
-            },
+            "query": {"type": "string", "description": "Die Suchanfrage."},
             "max_results": {
                 "type": "integer",
                 "description": "Maximale Anzahl Ergebnisse (Standard: 5).",
@@ -33,122 +49,56 @@ class WebSearchTool(BaseTool):
     }
 
     async def execute(self, query: str, max_results: int = 5) -> ToolResult:
-        """Search the web using MiniMax API or DuckDuckGo fallback."""
-        import os
-
-        # Try env var first, then fall back to config
-        api_key = os.environ.get("MINIMAX_API_KEY")
-        if not api_key:
-            from cucumber_agent.config import Config
-
-            config = Config.load()
-            prov_cfg = config.get_provider_config("minimax")
-            if prov_cfg and prov_cfg.api_key:
-                api_key = prov_cfg.api_key
-
-        if api_key:
-            return await self._minimax_search(query, max_results, api_key)
-        else:
-            return await self._duckduckgo_search(query, max_results)
-
-    async def _minimax_search(self, query: str, max_results: int, api_key: str) -> ToolResult:
-        """Search using MiniMax API (MCP protocol)."""
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
                 resp = await client.post(
-                    "https://api.minimax.io/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": "MiniMax-M2.7",
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": f"Search the web for: {query}\n\n"
-                                f"Return the search results with titles, snippets, and URLs. "
-                                f"Max {max_results} results.",
-                            }
-                        ],
-                        "max_tokens": 1000,
-                    },
+                    "https://html.duckduckgo.com/html/",
+                    data={"q": query, "kl": "de-de"},
+                    headers=_HEADERS,
                 )
                 resp.raise_for_status()
-                data = resp.json()
+                html = resp.text
 
-            choices = data.get("choices", [{}])
-            content = choices[0].get("message", {}).get("content", "")
-            if content:
-                return ToolResult(success=True, output=content)
-            else:
-                return ToolResult(success=True, output="Keine Suchergebnisse erhalten.")
+            titles = _TITLE_RE.findall(html)
+            snippets = [_strip_tags(s) for s in _SNIPPET_RE.findall(html)]
 
-        except httpx.TimeoutException:
-            return ToolResult(success=False, output="", error="MiniMax Web-Suche Timeout (30s).")
-        except Exception:
-            # Fall back to DuckDuckGo on error
-            return await self._duckduckgo_search(query, max_results)
+            results = []
+            for i, (raw_url, raw_title) in enumerate(titles[:max_results]):
+                url = _extract_real_url(raw_url)
+                title = _strip_tags(raw_title)
+                snippet = snippets[i] if i < len(snippets) else ""
+                if title and url:
+                    results.append({"title": title, "url": url, "snippet": snippet})
 
-    async def _duckduckgo_search(self, query: str, max_results: int) -> ToolResult:
-        """Search using DuckDuckGo instant answer API (fallback/no API key)."""
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(
-                    "https://api.duckduckgo.com/",
-                    params={
-                        "q": query,
-                        "format": "json",
-                        "no_redirect": "1",
-                        "no_html": "1",
-                        "skip_disambig": "1",
-                    },
-                    headers={"User-Agent": "CucumberAgent/1.0"},
-                )
-                resp.raise_for_status()
-                data = resp.json()
+            if not results:
+                return ToolResult(success=True, output=f"Keine Ergebnisse für '{query}'.")
 
-            results: list[str] = []
+            lines = [f"**Suchergebnisse: {query}**\n"]
+            for i, r in enumerate(results, 1):
+                lines.append(f"**{i}. {r['title']}**")
+                if r["snippet"]:
+                    lines.append(r["snippet"])
+                lines.append(f"🔗 {r['url']}\n")
 
-            if data.get("Abstract"):
-                source = data.get("AbstractSource", "")
-                url = data.get("AbstractURL", "")
-                results.append(
-                    f"📋 **{data.get('Heading', query)}**\n"
-                    f"{data['Abstract']}\n"
-                    f"Quelle: {source} — {url}"
-                )
+            return ToolResult(success=True, output="\n".join(lines))
 
-            if data.get("Answer"):
-                results.append(f"✅ **Direkte Antwort:** {data['Answer']}")
-
-            for topic in data.get("RelatedTopics", [])[:max_results]:
-                if isinstance(topic, dict) and topic.get("Text"):
-                    url = topic.get("FirstURL", "")
-                    text = topic["Text"][:200]
-                    results.append(f"• {text}\n  {url}")
-                elif isinstance(topic, dict) and topic.get("Topics"):
-                    for sub in topic["Topics"][:2]:
-                        if isinstance(sub, dict) and sub.get("Text"):
-                            results.append(f"• {sub['Text'][:200]}")
-
-            for r in data.get("Results", [])[:3]:
-                if r.get("Text"):
-                    results.append(f"• {r['Text'][:200]}\n  {r.get('FirstURL', '')}")
-
-            if results:
-                return ToolResult(success=True, output="\n\n".join(results[:max_results]))
-
-            return ToolResult(
-                success=True,
-                output=f"Keine Ergebnisse für '{query}' gefunden.",
-            )
-
-        except httpx.TimeoutException:
-            return ToolResult(success=False, output="", error="Web-Suche Timeout (10s).")
         except Exception as e:
-            return ToolResult(success=False, output="", error=str(e))
+            return ToolResult(success=False, output="", error=f"Suche fehlgeschlagen: {e}")
 
 
-# Register the tool
+def _strip_tags(text: str) -> str:
+    text = re.sub(r"<[^>]+>", "", text)
+    text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+    text = text.replace("&quot;", '"').replace("&#39;", "'").replace("&nbsp;", " ")
+    return text.strip()
+
+
+def _extract_real_url(url: str) -> str:
+    """DuckDuckGo wraps URLs in redirects — extract the real destination."""
+    m = re.search(r"uddg=([^&]+)", url)
+    if m:
+        return unquote(m.group(1))
+    return url.strip()
+
+
 ToolRegistry.register(WebSearchTool())

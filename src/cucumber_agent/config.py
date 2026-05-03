@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -10,6 +12,33 @@ from typing import Any
 import yaml
 
 DEFAULT_CONFIG_DIR = Path.home() / ".cucumber"
+
+_KNOWN_TOP_LEVEL_KEYS = frozenset(
+    {"agent", "providers", "user", "preferences", "context", "memory", "logging", "workspace"}
+)
+
+# Mapping of env-var name → (provider_name, field)
+_PROVIDER_ENV_KEYS: dict[str, tuple[str, str]] = {
+    "MINIMAX_API_KEY": ("minimax", "api_key"),
+    "OPENROUTER_API_KEY": ("openrouter", "api_key"),
+    "DEEPSEEK_API_KEY": ("deepseek", "api_key"),
+    "OLLAMA_BASE_URL": ("ollama", "base_url"),
+}
+
+# Known-valid model prefixes / providers (used for validation heuristics)
+_KNOWN_MODEL_PREFIXES = (
+    "openai/",
+    "anthropic/",
+    "google/",
+    "meta-llama/",
+    "mistralai/",
+    "deepseek/",
+    "qwen/",
+    "minimax/",
+    "ollama/",
+    "nousresearch/",
+    "cohere/",
+)
 
 
 @dataclass
@@ -239,17 +268,26 @@ class Config:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     workspace: Path | None = None
 
+    # ------------------------------------------------------------------ #
+    # Loading
+    # ------------------------------------------------------------------ #
+
     @classmethod
     def load(cls, config_dir: Path | None = None) -> Config:
-        """Load configuration from YAML file."""
+        """Load configuration from YAML file, then apply env-var overrides."""
         config_dir = config_dir or DEFAULT_CONFIG_DIR
         config_file = config_dir / "config.yaml"
 
         if not config_file.exists():
-            return cls(config_dir=config_dir)
+            cfg = cls(config_dir=config_dir)
+            cfg._apply_env_overrides()
+            return cfg
 
         with open(config_file) as f:
-            data = yaml.safe_load(f) or {}
+            raw = yaml.safe_load(f) or {}
+
+        # Warn about unknown top-level keys instead of crashing
+        data = _strip_unknown_keys(raw)
 
         # Load providers
         providers = {}
@@ -349,7 +387,7 @@ class Config:
         if workspace:
             workspace = Path(workspace)
 
-        return cls(
+        cfg = cls(
             config_dir=config_dir,
             providers=providers,
             agent=agent,
@@ -361,6 +399,116 @@ class Config:
             logging=logging_cfg,
             workspace=workspace,
         )
+
+        # Apply env-var overrides on top of YAML values
+        cfg._apply_env_overrides()
+        return cfg
+
+    @classmethod
+    def from_env(cls) -> Config:
+        """Create a Config purely from environment variables (no YAML file).
+
+        Useful for container / CI environments where no config directory exists.
+        """
+        cfg = cls()
+        cfg._apply_env_overrides()
+        return cfg
+
+    # ------------------------------------------------------------------ #
+    # Env-var overrides
+    # ------------------------------------------------------------------ #
+
+    def _apply_env_overrides(self) -> None:
+        """Apply all supported environment-variable overrides in place."""
+        # Provider API keys / base URLs
+        for env_var, (provider_name, field_name) in _PROVIDER_ENV_KEYS.items():
+            value = os.environ.get(env_var)
+            if not value:
+                continue
+            existing = self.providers.get(provider_name)
+            if existing is None:
+                existing = ProviderConfig(name=provider_name)
+                self.providers[provider_name] = existing
+            setattr(existing, field_name, value)
+
+        # Agent model override
+        model_env = os.environ.get("CUCUMBER_MODEL")
+        if model_env:
+            self.agent.model = model_env
+
+        # Agent provider override
+        provider_env = os.environ.get("CUCUMBER_PROVIDER")
+        if provider_env:
+            self.agent.provider = provider_env
+
+    # ------------------------------------------------------------------ #
+    # Validation
+    # ------------------------------------------------------------------ #
+
+    def validate(self) -> list[str]:
+        """Return a list of warning / error strings for the current config.
+
+        An empty list means no problems were found.
+        """
+        issues: list[str] = []
+
+        provider_name = self.agent.provider
+        provider_cfg = self.providers.get(provider_name)
+
+        # Provider configured but has no API key (skip ollama — it uses base_url)
+        if provider_name != "ollama":
+            if provider_cfg is None:
+                issues.append(
+                    f"Provider '{provider_name}' is selected but has no config entry in providers."
+                )
+            elif not provider_cfg.api_key:
+                env_hint = {
+                    "minimax": "MINIMAX_API_KEY",
+                    "openrouter": "OPENROUTER_API_KEY",
+                    "deepseek": "DEEPSEEK_API_KEY",
+                }.get(provider_name, f"{provider_name.upper()}_API_KEY")
+                issues.append(
+                    f"Provider '{provider_name}' has no api_key. "
+                    f"Set it in config.yaml or via {env_hint}."
+                )
+
+        # Ollama needs a base_url
+        if provider_name == "ollama":
+            ollama_cfg = self.providers.get("ollama")
+            if ollama_cfg is None or not ollama_cfg.base_url:
+                issues.append(
+                    "Provider 'ollama' has no base_url. "
+                    "Set it in config.yaml or via OLLAMA_BASE_URL (default: http://localhost:11434)."
+                )
+
+        # Model name sanity check — warn if it looks unusual
+        model = self.agent.model
+        if model and not any(model.startswith(p) for p in _KNOWN_MODEL_PREFIXES):
+            issues.append(
+                f"Model name '{model}' doesn't match any known prefix "
+                f"({', '.join(_KNOWN_MODEL_PREFIXES)}). "
+                "It may be incorrect."
+            )
+
+        # Memory directory writable?
+        if self.memory.enabled:
+            mem_dir = self.memory.log_dir
+            if mem_dir.exists() and not os.access(mem_dir, os.W_OK):
+                issues.append(f"Memory log_dir '{mem_dir}' exists but is not writable.")
+            elif not mem_dir.exists():
+                # Try to determine if parent is writable (dir will be created on first use)
+                parent = mem_dir.parent
+                if parent.exists() and not os.access(parent, os.W_OK):
+                    issues.append(
+                        f"Memory log_dir '{mem_dir}' does not exist and parent '{parent}' "
+                        "is not writable — memory persistence will fail."
+                    )
+
+        return issues
+
+    # ------------------------------------------------------------------ #
+    # Persistence
+    # ------------------------------------------------------------------ #
 
     def save(self) -> None:
         """Save configuration to YAML file."""
@@ -425,6 +573,26 @@ class Config:
         return self.providers.get(name)
 
 
+# ------------------------------------------------------------------ #
+# Helpers
+# ------------------------------------------------------------------ #
+
+
+def _strip_unknown_keys(data: dict[str, Any]) -> dict[str, Any]:
+    """Remove unknown top-level YAML keys with a warning, return clean dict."""
+    unknown = set(data.keys()) - _KNOWN_TOP_LEVEL_KEYS
+    if unknown:
+        logging.getLogger(__name__).warning(
+            "config.yaml contains unknown top-level key(s) %s — they will be ignored.",
+            sorted(unknown),
+        )
+        warnings.warn(
+            f"config.yaml contains unknown key(s) {sorted(unknown)} — ignored.",
+            stacklevel=5,
+        )
+    return {k: v for k, v in data.items() if k in _KNOWN_TOP_LEVEL_KEYS}
+
+
 def ensure_config_dir() -> Path:
     """Ensure config directory exists."""
     config_dir = DEFAULT_CONFIG_DIR
@@ -438,7 +606,8 @@ def get_default_provider() -> tuple[str, ProviderConfig]:
     provider_name = config.agent.provider
     provider_config = config.get_provider_config(provider_name)
 
-    # Check environment for API key
+    # Check environment for API key (legacy path — Config.load() already does this,
+    # but kept here for callers that bypassed load()).
     if provider_config and provider_config.api_key is None:
         env_key_map = {
             "openrouter": "OPENROUTER_API_KEY",

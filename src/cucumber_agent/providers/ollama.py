@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
@@ -13,6 +14,8 @@ from cucumber_agent.session import Message
 
 if TYPE_CHECKING:
     from cucumber_agent.session import ContentBlock
+
+_RETRY_STATUSES = {429, 500, 502, 503}
 
 
 @ProviderRegistry.register("ollama")
@@ -47,8 +50,9 @@ class OllamaProvider(BaseProvider):
         max_tokens: int | None = None,
         tools: list[dict] | None = None,
         system_override: str | None = None,
+        max_retries: int = 3,
     ) -> ModelResponse:
-        """Non-streaming completion."""
+        """Non-streaming completion with exponential-backoff retry."""
         body = self._build_request(
             messages,
             model,
@@ -58,12 +62,25 @@ class OllamaProvider(BaseProvider):
             system_override=system_override,
             stream=False,
         )
-        response = await self._client.post(
-            f"{self._base_url}/chat/completions",
-            json=body,
-        )
-        response.raise_for_status()
-        return self._parse_response(response.json(), model)
+        last_exc: Exception | None = None
+        for attempt in range(max_retries):
+            try:
+                response = await self._client.post(
+                    f"{self._base_url}/chat/completions",
+                    json=body,
+                )
+                if response.status_code in _RETRY_STATUSES and attempt < max_retries - 1:
+                    await asyncio.sleep(2**attempt)
+                    continue
+                response.raise_for_status()
+                return self._parse_response(response.json(), model)
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code in _RETRY_STATUSES and attempt < max_retries - 1:
+                    last_exc = exc
+                    await asyncio.sleep(2**attempt)
+                    continue
+                raise
+        raise last_exc or Exception("Max retries exceeded")
 
     async def stream(
         self,

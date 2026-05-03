@@ -1,0 +1,547 @@
+"""Tests for the cucumber-agent tool system."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
+# ── Calculator ───────────────────────────────────────────────────────────────
+
+
+from cucumber_agent.tools.calculator import CalculatorTool, safe_calculate
+
+
+class TestSafeCalculate:
+    """Unit tests for the safe_calculate() function."""
+
+    def test_basic_addition(self):
+        assert safe_calculate("2 + 3") == pytest.approx(5.0)
+
+    def test_basic_subtraction(self):
+        assert safe_calculate("10 - 4") == pytest.approx(6.0)
+
+    def test_multiplication(self):
+        assert safe_calculate("3 * 7") == pytest.approx(21.0)
+
+    def test_division(self):
+        assert safe_calculate("10 / 4") == pytest.approx(2.5)
+
+    def test_floor_division(self):
+        assert safe_calculate("10 // 3") == pytest.approx(3.0)
+
+    def test_modulo(self):
+        assert safe_calculate("10 % 3") == pytest.approx(1.0)
+
+    def test_power(self):
+        assert safe_calculate("2 ** 10") == pytest.approx(1024.0)
+
+    def test_negative_unary(self):
+        assert safe_calculate("-5 + 3") == pytest.approx(-2.0)
+
+    def test_positive_unary(self):
+        assert safe_calculate("+5") == pytest.approx(5.0)
+
+    def test_nested_expression(self):
+        assert safe_calculate("(2 + 3) * (4 - 1)") == pytest.approx(15.0)
+
+    def test_sqrt(self):
+        assert safe_calculate("sqrt(4)") == pytest.approx(2.0)
+
+    def test_sqrt_non_perfect(self):
+        assert safe_calculate("sqrt(2)") == pytest.approx(1.41421356, rel=1e-6)
+
+    def test_sin_pi_over_2(self):
+        assert safe_calculate("sin(pi / 2)") == pytest.approx(1.0)
+
+    def test_cos_zero(self):
+        assert safe_calculate("cos(0)") == pytest.approx(1.0)
+
+    def test_pi_constant(self):
+        import math
+
+        assert safe_calculate("pi") == pytest.approx(math.pi)
+
+    def test_e_constant(self):
+        import math
+
+        assert safe_calculate("e") == pytest.approx(math.e)
+
+    def test_log_base_e(self):
+        import math
+
+        assert safe_calculate("log(e)") == pytest.approx(1.0)
+
+    def test_abs_negative(self):
+        assert safe_calculate("abs(-42)") == pytest.approx(42.0)
+
+    def test_floor(self):
+        assert safe_calculate("floor(3.9)") == pytest.approx(3.0)
+
+    def test_ceil(self):
+        assert safe_calculate("ceil(3.1)") == pytest.approx(4.0)
+
+    def test_factorial(self):
+        assert safe_calculate("factorial(5)") == pytest.approx(120.0)
+
+    def test_combined_expression(self):
+        # sqrt(3^2 + 4^2) = 5
+        assert safe_calculate("sqrt(3**2 + 4**2)") == pytest.approx(5.0)
+
+    # ── Error cases ──────────────────────────────────────────────────────────
+
+    def test_division_by_zero(self):
+        with pytest.raises(ValueError, match="[Dd]ivision by zero"):
+            safe_calculate("1 / 0")
+
+    def test_unknown_name(self):
+        with pytest.raises(ValueError, match="Unknown name"):
+            safe_calculate("x + 1")
+
+    def test_unknown_function(self):
+        with pytest.raises(ValueError, match="Unknown function"):
+            safe_calculate("eval('1')")
+
+    def test_disallowed_operator_bitwise(self):
+        with pytest.raises((ValueError, SyntaxError)):
+            safe_calculate("1 & 2")
+
+    def test_empty_expression(self):
+        with pytest.raises(ValueError, match="Empty expression"):
+            safe_calculate("")
+
+    def test_string_literal_rejected(self):
+        with pytest.raises(ValueError):
+            safe_calculate("'hello'")
+
+    def test_builtin_import_rejected(self):
+        with pytest.raises(ValueError):
+            safe_calculate("__import__('os')")
+
+    def test_too_long_expression(self):
+        with pytest.raises(ValueError, match="too long"):
+            safe_calculate("1 + " * 200)
+
+
+@pytest.mark.asyncio
+class TestCalculatorTool:
+    """Integration tests for the CalculatorTool."""
+
+    async def test_simple_calculation(self):
+        tool = CalculatorTool()
+        result = await tool.execute(expression="2 + 2")
+        assert result.success is True
+        assert "4" in result.output
+
+    async def test_integer_result_formatted_without_decimal(self):
+        tool = CalculatorTool()
+        result = await tool.execute(expression="10 / 2")
+        assert result.success is True
+        assert "5" in result.output
+        assert "5.0" not in result.output  # Should be "5", not "5.0"
+
+    async def test_float_result(self):
+        tool = CalculatorTool()
+        result = await tool.execute(expression="1 / 3")
+        assert result.success is True
+        assert "0.333" in result.output
+
+    async def test_error_returns_failure(self):
+        tool = CalculatorTool()
+        result = await tool.execute(expression="1 / 0")
+        assert result.success is False
+        assert result.error is not None
+
+    async def test_expression_in_output(self):
+        """Output should show the original expression alongside the result."""
+        tool = CalculatorTool()
+        result = await tool.execute(expression="3 * 3")
+        assert result.success is True
+        assert "3 * 3" in result.output
+        assert "9" in result.output
+
+
+# ── Datetime Tool ────────────────────────────────────────────────────────────
+
+
+from cucumber_agent.tools.datetime_tool import DatetimeTool
+
+
+@pytest.mark.asyncio
+class TestDatetimeTool:
+    """Tests for the DatetimeTool."""
+
+    async def test_returns_current_time_local(self):
+        tool = DatetimeTool()
+        result = await tool.execute()
+        assert result.success is True
+        assert "ISO-8601" in result.output
+
+    async def test_utc_timezone(self):
+        tool = DatetimeTool()
+        result = await tool.execute(timezone="UTC")
+        assert result.success is True
+        assert "UTC" in result.output
+
+    async def test_cet_timezone(self):
+        tool = DatetimeTool()
+        result = await tool.execute(timezone="CET")
+        assert result.success is True
+        assert result.error is None
+
+    async def test_jst_timezone(self):
+        tool = DatetimeTool()
+        result = await tool.execute(timezone="JST")
+        assert result.success is True
+
+    async def test_unknown_timezone_returns_error(self):
+        tool = DatetimeTool()
+        result = await tool.execute(timezone="NOTREAL")
+        assert result.success is False
+        assert "Unknown timezone" in (result.error or "")
+
+    async def test_custom_format(self):
+        tool = DatetimeTool()
+        result = await tool.execute(timezone="UTC", format="%Y-%m-%d")
+        assert result.success is True
+        # Should contain a date in YYYY-MM-DD form
+        import re
+
+        assert re.search(r"\d{4}-\d{2}-\d{2}", result.output)
+
+    async def test_iana_timezone_if_available(self):
+        """Test IANA timezone names work when zoneinfo is available."""
+        try:
+            from zoneinfo import ZoneInfo  # noqa: F401
+
+            tool = DatetimeTool()
+            result = await tool.execute(timezone="Europe/Berlin")
+            assert result.success is True
+        except ImportError:
+            pytest.skip("zoneinfo not available")
+
+
+# ── ReadFileTool ─────────────────────────────────────────────────────────────
+
+
+from cucumber_agent.tools.read_file import ReadFileTool
+
+
+@pytest.mark.asyncio
+class TestReadFileTool:
+    """Tests for the ReadFileTool."""
+
+    async def test_reads_existing_file(self, tmp_path):
+        f = tmp_path / "hello.txt"
+        f.write_text("Hello, World!", encoding="utf-8")
+        tool = ReadFileTool()
+        result = await tool.execute(path=str(f))
+        assert result.success is True
+        assert "Hello, World!" in result.output
+
+    async def test_missing_file_returns_error(self, tmp_path):
+        tool = ReadFileTool()
+        result = await tool.execute(path=str(tmp_path / "nonexistent.txt"))
+        assert result.success is False
+        assert result.error is not None
+
+    async def test_empty_file(self, tmp_path):
+        f = tmp_path / "empty.txt"
+        f.write_text("", encoding="utf-8")
+        tool = ReadFileTool()
+        result = await tool.execute(path=str(f))
+        assert result.success is True
+        assert result.output == ""
+
+    async def test_truncation_at_max_lines(self, tmp_path):
+        f = tmp_path / "long.txt"
+        f.write_text("\n".join(f"line {i}" for i in range(100)), encoding="utf-8")
+        tool = ReadFileTool()
+        result = await tool.execute(path=str(f), max_lines=10)
+        assert result.success is True
+        assert "abgeschnitten" in result.output  # truncation notice in German
+        assert "line 9" in result.output
+        assert "line 10" not in result.output.split("abgeschnitten")[0]
+
+    async def test_binary_like_content_with_replace_errors(self, tmp_path):
+        """Verify binary-ish files don't crash — errors='replace' used."""
+        f = tmp_path / "binary.bin"
+        f.write_bytes(b"\xff\xfe hello \x00\x01")
+        tool = ReadFileTool()
+        result = await tool.execute(path=str(f))
+        # Should succeed (replacement chars) or succeed
+        assert result.success is True
+
+    async def test_directory_path_returns_error(self, tmp_path):
+        tool = ReadFileTool()
+        result = await tool.execute(path=str(tmp_path))
+        assert result.success is False
+        assert result.error is not None
+
+
+# ── WriteFileTool ────────────────────────────────────────────────────────────
+
+
+from cucumber_agent.tools.write_file import WriteFileTool
+
+
+@pytest.mark.asyncio
+class TestWriteFileTool:
+    """Tests for the WriteFileTool."""
+
+    async def test_creates_new_file(self, tmp_path):
+        tool = WriteFileTool()
+        dest = tmp_path / "out.txt"
+        result = await tool.execute(path=str(dest), content="test content")
+        assert result.success is True
+        assert dest.read_text(encoding="utf-8") == "test content"
+
+    async def test_overwrites_existing_file(self, tmp_path):
+        dest = tmp_path / "out.txt"
+        dest.write_text("old content", encoding="utf-8")
+        tool = WriteFileTool()
+        result = await tool.execute(path=str(dest), content="new content")
+        assert result.success is True
+        assert dest.read_text(encoding="utf-8") == "new content"
+
+    async def test_append_mode(self, tmp_path):
+        dest = tmp_path / "out.txt"
+        dest.write_text("first\n", encoding="utf-8")
+        tool = WriteFileTool()
+        result = await tool.execute(path=str(dest), content="second\n", mode="append")
+        assert result.success is True
+        assert dest.read_text(encoding="utf-8") == "first\nsecond\n"
+
+    async def test_creates_parent_directories(self, tmp_path):
+        dest = tmp_path / "a" / "b" / "c" / "out.txt"
+        tool = WriteFileTool()
+        result = await tool.execute(path=str(dest), content="deep content")
+        assert result.success is True
+        assert dest.exists()
+
+    async def test_empty_content_allowed(self, tmp_path):
+        dest = tmp_path / "empty.txt"
+        tool = WriteFileTool()
+        result = await tool.execute(path=str(dest), content="")
+        assert result.success is True
+        assert dest.read_text(encoding="utf-8") == ""
+
+
+# ── RememberTool ─────────────────────────────────────────────────────────────
+
+
+from cucumber_agent.tools.remember import RememberTool
+
+
+@pytest.mark.asyncio
+class TestRememberTool:
+    """Tests for the RememberTool."""
+
+    async def test_stores_fact(self, tmp_path):
+        facts_file = tmp_path / "facts.json"
+        tool = RememberTool()
+        # Patch the module-level _FACTS_FILE path
+        with patch("cucumber_agent.tools.remember._FACTS_FILE", facts_file):
+            result = await tool.execute(key="name", value="David")
+        assert result.success is True
+        data = json.loads(facts_file.read_text(encoding="utf-8"))
+        assert data.get("name") == "David"
+
+    async def test_normalizes_key(self, tmp_path):
+        facts_file = tmp_path / "facts.json"
+        tool = RememberTool()
+        with patch("cucumber_agent.tools.remember._FACTS_FILE", facts_file):
+            result = await tool.execute(key="My Project", value="CucumberAgent")
+        assert result.success is True
+        data = json.loads(facts_file.read_text(encoding="utf-8"))
+        assert "my_project" in data
+
+    async def test_updates_existing_key(self, tmp_path):
+        facts_file = tmp_path / "facts.json"
+        tool = RememberTool()
+        with patch("cucumber_agent.tools.remember._FACTS_FILE", facts_file):
+            await tool.execute(key="lang", value="Python")
+            await tool.execute(key="lang", value="Rust")
+        data = json.loads(facts_file.read_text(encoding="utf-8"))
+        assert data["lang"] == "Rust"
+
+    async def test_preserves_existing_facts(self, tmp_path):
+        facts_file = tmp_path / "facts.json"
+        facts_file.write_text(json.dumps({"city": "Berlin"}), encoding="utf-8")
+        tool = RememberTool()
+        with patch("cucumber_agent.tools.remember._FACTS_FILE", facts_file):
+            await tool.execute(key="name", value="David")
+        data = json.loads(facts_file.read_text(encoding="utf-8"))
+        assert data["city"] == "Berlin"
+        assert data["name"] == "David"
+
+
+# ── ToolRegistry ─────────────────────────────────────────────────────────────
+
+
+from cucumber_agent.tools.base import BaseTool, ToolResult
+from cucumber_agent.tools.registry import ToolRegistry
+
+
+class _DummyTool(BaseTool):
+    name = "dummy_test_tool"
+    description = "A dummy tool for testing"
+    parameters = {"type": "object", "properties": {}, "required": []}
+
+    async def execute(self, **kwargs) -> ToolResult:
+        return ToolResult(success=True, output="dummy")
+
+
+class TestToolRegistry:
+    """Tests for the ToolRegistry."""
+
+    def setup_method(self):
+        """Ensure the dummy tool is unregistered before each test."""
+        ToolRegistry.unregister("dummy_test_tool")
+
+    def teardown_method(self):
+        ToolRegistry.unregister("dummy_test_tool")
+
+    def test_register_and_get(self):
+        tool = _DummyTool()
+        ToolRegistry.register(tool)
+        assert ToolRegistry.get("dummy_test_tool") is tool
+
+    def test_unregister(self):
+        tool = _DummyTool()
+        ToolRegistry.register(tool)
+        ToolRegistry.unregister("dummy_test_tool")
+        assert ToolRegistry.get("dummy_test_tool") is None
+
+    def test_list_includes_registered_tool(self):
+        tool = _DummyTool()
+        ToolRegistry.register(tool)
+        assert "dummy_test_tool" in ToolRegistry.list_tools()
+
+    def test_get_unknown_tool_returns_none(self):
+        assert ToolRegistry.get("this_does_not_exist_xyz") is None
+
+    def test_re_register_replaces_old_instance(self):
+        """Re-registering a tool by same name replaces it (no duplicates)."""
+        tool1 = _DummyTool()
+        tool2 = _DummyTool()
+        ToolRegistry.register(tool1)
+        count_before = ToolRegistry.list_tools().count("dummy_test_tool")
+        ToolRegistry.register(tool2)
+        count_after = ToolRegistry.list_tools().count("dummy_test_tool")
+        assert count_before == 1
+        assert count_after == 1
+        assert ToolRegistry.get("dummy_test_tool") is tool2
+
+    @pytest.mark.asyncio
+    async def test_execute_unknown_tool_returns_error(self):
+        result = await ToolRegistry.execute("definitely_not_a_real_tool_xyz")
+        assert result.success is False
+        assert "Unknown tool" in (result.error or "")
+
+    @pytest.mark.asyncio
+    async def test_execute_registered_tool(self):
+        ToolRegistry.register(_DummyTool())
+        result = await ToolRegistry.execute("dummy_test_tool")
+        assert result.success is True
+        assert result.output == "dummy"
+
+    def test_get_tools_spec_contains_registered(self):
+        ToolRegistry.register(_DummyTool())
+        specs = ToolRegistry.get_tools_spec()
+        names = [s["function"]["name"] for s in specs]
+        assert "dummy_test_tool" in names
+
+
+# ── CustomToolLoader hot-reload ───────────────────────────────────────────────
+
+
+from cucumber_agent.tools.loader import CustomToolLoader
+
+
+class TestCustomToolLoader:
+    """Tests for hot-reload behaviour in CustomToolLoader."""
+
+    def _write_tool(self, path: Path, tool_name: str) -> None:
+        path.write_text(
+            f"""\
+from cucumber_agent.tools.base import BaseTool, ToolResult
+from cucumber_agent.tools.registry import ToolRegistry
+
+class _Hot{tool_name.title()}Tool(BaseTool):
+    name = "{tool_name}"
+    description = "hot reload test"
+    parameters = {{"type": "object", "properties": {{}}, "required": []}}
+
+    async def execute(self, **kwargs) -> ToolResult:
+        return ToolResult(success=True, output="{tool_name}")
+
+ToolRegistry.register(_Hot{tool_name.title()}Tool())
+""",
+            encoding="utf-8",
+        )
+
+    def teardown_method(self):
+        for name in ("hot_tool_a", "hot_tool_b"):
+            ToolRegistry.unregister(name)
+
+    def test_load_all_registers_tool(self, tmp_path):
+        self._write_tool(tmp_path / "tool_a.py", "hot_tool_a")
+        loader = CustomToolLoader(tools_dir=tmp_path)
+        loader.load_all()
+        assert ToolRegistry.get("hot_tool_a") is not None
+
+    def test_load_all_unregisters_deleted_tool(self, tmp_path):
+        f = tmp_path / "tool_a.py"
+        self._write_tool(f, "hot_tool_a")
+        loader = CustomToolLoader(tools_dir=tmp_path)
+        loader.load_all()
+        assert ToolRegistry.get("hot_tool_a") is not None
+
+        # Delete the file and reload
+        f.unlink()
+        loader.load_all()
+        assert ToolRegistry.get("hot_tool_a") is None
+
+    def test_reload_replaces_not_duplicates(self, tmp_path):
+        """After a file changes, re-loading must not duplicate the tool."""
+        f = tmp_path / "tool_a.py"
+        self._write_tool(f, "hot_tool_a")
+        loader = CustomToolLoader(tools_dir=tmp_path)
+        loader.load_all()
+
+        # Simulate a mtime change by touching the file
+        import time
+
+        time.sleep(0.01)
+        f.touch()
+
+        loader.load_all()
+        # Tool should appear exactly once
+        assert ToolRegistry.list_tools().count("hot_tool_a") == 1
+
+    def test_needs_reload_false_when_unchanged(self, tmp_path):
+        f = tmp_path / "tool_a.py"
+        self._write_tool(f, "hot_tool_a")
+        loader = CustomToolLoader(tools_dir=tmp_path)
+        loader.load_all()
+        assert loader.needs_reload() is False
+
+    def test_needs_reload_true_after_touch(self, tmp_path):
+        import time
+
+        f = tmp_path / "tool_a.py"
+        self._write_tool(f, "hot_tool_a")
+        loader = CustomToolLoader(tools_dir=tmp_path)
+        loader.load_all()
+        time.sleep(0.01)
+        f.touch()
+        assert loader.needs_reload() is True
+
+    def test_get_tools_returns_loaded_names(self, tmp_path):
+        self._write_tool(tmp_path / "tool_a.py", "hot_tool_a")
+        loader = CustomToolLoader(tools_dir=tmp_path)
+        loader.load_all()
+        assert "hot_tool_a" in loader.get_tools()

@@ -8,6 +8,7 @@ import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+import httpx
 from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.completion import WordCompleter
@@ -116,6 +117,12 @@ def print_welcome(config: Config) -> None:
     badges.append("[reverse blue] 🤖 SUBAGENT [/reverse blue]")
 
     console.print(Columns(badges, padding=(0, 2)))
+
+    # Show active provider and model clearly
+    console.print(
+        f"\n  [dim]Provider:[/dim] [bold cyan]{agent_cfg.provider}[/bold cyan]  "
+        f"[dim]Modell:[/dim] [bold cyan]{agent_cfg.model}[/bold cyan]"
+    )
     console.print("\n[dim]Tippe [bold]/help[/bold] für Befehle oder einfach loslegen![/dim]")
     console.print()
 
@@ -136,6 +143,9 @@ def print_help() -> None:
         ("/debug", "Debug-Modus ein/ausschalten"),
         ("/memory", "Alle gemerkten Fakten anzeigen"),
         ("/context", "Aktuelle Context-Auslastung anzeigen"),
+        ("/history [N]", "Letzte N Nachrichten anzeigen (Standard: 10)"),
+        ("/undo", "Letzte Benutzer+Assistenten-Nachricht entfernen"),
+        ("/export", "Session als Markdown-Datei exportieren"),
         ("/remember ...", "Fakt merken, z.B. /remember name: David"),
         ("/forget ...", "Fakt vergessen, z.B. /forget name"),
         ("/skills", "Installierte Skills auflisten"),
@@ -238,11 +248,41 @@ def apply_personality_update(params: dict, config: Config) -> None:
     if "interests" in params:
         pers.interests = params["interests"]
 
-    # Save to personality.md
-    pers.to_markdown(config.config_dir / "personality" / "personality.md")
+    # Backup before overwriting — so a bad AI output can be recovered
+    import shutil
+
+    personality_file = config.config_dir / "personality" / "personality.md"
+    if personality_file.exists():
+        shutil.copy2(personality_file, personality_file.with_suffix(".md.bak"))
+
+    pers.to_markdown(personality_file)
     # Update system prompt in agent config
     config.agent.system_prompt = pers.to_system_prompt()
     config.save()
+
+
+def _format_http_error(e: Exception) -> str:
+    """Return a friendly, actionable message for HTTP provider errors."""
+    if isinstance(e, httpx.HTTPStatusError):
+        code = e.response.status_code
+        hints: dict[int, str] = {
+            400: "Ungültige Anfrage — prüfe deine Eingabe oder den Modellnamen.",
+            401: "Authentifizierung fehlgeschlagen — API-Key prüfen (`cucumber config`).",
+            403: "Zugriff verweigert — API-Key hat keine Berechtigung für dieses Modell.",
+            404: "Endpunkt nicht gefunden — Basis-URL oder Modellname prüfen.",
+            429: "Zu viele Anfragen — kurz warten, dann erneut versuchen.",
+            500: "Server-Fehler beim Provider — bitte später erneut versuchen.",
+            502: "Bad Gateway — der Provider ist möglicherweise kurzzeitig nicht erreichbar.",
+            503: "Service nicht verfügbar — der Provider ist überlastet oder in Wartung.",
+            529: "Provider überlastet (529) — kurz warten und erneut versuchen.",
+        }
+        hint = hints.get(code, f"HTTP {code} — Details: {e.response.text[:200]}")
+        return f"[bold red]Provider-Fehler {code}:[/bold red] {hint}"
+
+    if isinstance(e, httpx.ConnectError | httpx.TimeoutException):
+        return "[bold red]Verbindungsfehler:[/bold red] Der Provider ist nicht erreichbar. Internetverbindung und Base-URL prüfen."
+
+    return f"[bold red]Fehler:[/bold red] {e}"
 
 
 class CliSession:
@@ -323,6 +363,9 @@ class CliSession:
             "/forget",
             "/skills",
             "/tools",
+            "/history",
+            "/undo",
+            "/export",
         ] + [s.command for s in self._skill_loader.skills]
         completer = WordCompleter(sorted(set(slash_commands)), sentence=True)
 
@@ -358,6 +401,19 @@ class CliSession:
                     "\n  [dim]Strg+C erkannt. Tippe [bold]/exit[/bold] zum Beenden.[/dim]"
                 )
             except EOFError:
+                if self._config.memory.enabled and self._session.messages:
+                    try:
+                        exit_summary = await self._agent.summarize_messages(self._session.messages)
+                        if exit_summary.strip():
+                            existing = self._summary_store.load() or ""
+                            combined = (
+                                existing.strip() + "\n\n[Neue Sitzung:]\n" + exit_summary.strip()
+                                if existing.strip()
+                                else exit_summary.strip()
+                            )
+                            self._summary_store.save(combined)
+                    except Exception:
+                        pass
                 console.print(f"\n[bold green]{pers.emoji}  Tschüss![/bold green]\n")
                 break
 
@@ -414,7 +470,7 @@ class CliSession:
 
         except Exception as e:
             logger.error(f"CLI error: {e}", exc_info=True)
-            console.print(f"[bold red]Error:[/bold red] {e}")
+            console.print(_format_http_error(e))
             if self._debug_mode:
                 import traceback
 
@@ -577,8 +633,8 @@ class CliSession:
         if not self._config.memory.enabled:
             return
 
-        # Trigger by message count
-        if len(self._session.messages) < self._config.memory.max_session_messages:
+        # Trigger one message BEFORE the hard limit to avoid context overflow
+        if len(self._session.messages) < self._config.memory.max_session_messages - 1:
             return
 
         console.print("  [dim]🔄 Komprimiere Gesprächsverlauf...[/dim]")
@@ -591,12 +647,17 @@ class CliSession:
         # Create summary
         new_summary = await self._agent.summarize_messages(to_summarize)
 
-        # Update session
-        self._session.metadata["summary"] = new_summary
+        # Update session — append to existing summary instead of overwriting
+        existing = self._session.metadata.get("summary", "")
+        if existing:
+            combined = existing.strip() + "\n\n[Neuere Zusammenfassung:]\n" + new_summary.strip()
+        else:
+            combined = new_summary.strip()
+        self._session.metadata["summary"] = combined
         self._session.messages = remaining
 
         # Persist summary to disk
-        self._summary_store.save(new_summary)
+        self._summary_store.save(combined)
         console.print("  [dim]✓ Verlauf zusammengefasst und gespeichert.[/dim]")
 
     async def _handle_optimization_response(self, user_input: str) -> None:
@@ -732,6 +793,21 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                 print_help()
             case "/exit" | "/quit":
                 pers = self._config.personality
+                if self._config.memory.enabled and self._session.messages:
+                    try:
+                        console.print("  [dim]💾 Speichere Gesprächszusammenfassung...[/dim]")
+                        exit_summary = await self._agent.summarize_messages(self._session.messages)
+                        if exit_summary.strip():
+                            existing = self._summary_store.load() or ""
+                            combined = (
+                                existing.strip() + "\n\n[Neue Sitzung:]\n" + exit_summary.strip()
+                                if existing.strip()
+                                else exit_summary.strip()
+                            )
+                            self._summary_store.save(combined)
+                            console.print("  [dim green]✓ Zusammenfassung gespeichert.[/dim green]")
+                    except Exception:
+                        pass
                 console.print(f"[bold green]{pers.emoji}  Tschüss![/bold green]\n")
                 self._running = False
             case "/clear":
@@ -884,6 +960,116 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                         )
                     )
                     console.print()
+            case "/history":
+                # Parse optional N argument (default 10)
+                try:
+                    n = int(arg) if arg else 10
+                except ValueError:
+                    n = 10
+                n = max(1, n)
+                messages = self._session.messages
+                if not messages:
+                    console.print("  [dim]Keine Nachrichten in dieser Session.[/dim]\n")
+                else:
+                    recent = messages[-n:]
+                    console.print()
+                    console.print(
+                        Panel(
+                            f"[dim]Letzte {len(recent)} von {len(messages)} Nachrichten[/dim]",
+                            title="[bold blue]📜 Verlauf[/bold blue]",
+                            border_style="blue",
+                            padding=(0, 1),
+                        )
+                    )
+                    for msg in recent:
+                        role_val = msg.role.value if hasattr(msg.role, "value") else str(msg.role)
+                        content_text = (
+                            msg.content if isinstance(msg.content, str) else str(msg.content)
+                        )
+                        # Truncate long messages for display
+                        if len(content_text) > 300:
+                            content_text = content_text[:300] + " [dim]…[/dim]"
+                        role_colors = {
+                            "user": "bold green",
+                            "assistant": "bold cyan",
+                            "system": "bold yellow",
+                            "tool": "bold magenta",
+                        }
+                        color = role_colors.get(role_val, "white")
+                        console.print(f"  [{color}]{role_val.upper()}:[/{color}] {content_text}")
+                    console.print()
+            case "/undo":
+                # Remove last user + assistant message pair
+                msgs = self._session.messages
+                if not msgs:
+                    console.print("  [dim]Keine Nachrichten zum Rückgängigmachen.[/dim]\n")
+                else:
+                    from cucumber_agent.session import Role as SessionRole
+
+                    # Find and remove the last assistant message
+                    removed = 0
+                    if msgs and msgs[-1].role == SessionRole.ASSISTANT:
+                        msgs.pop()
+                        removed += 1
+                    # Then remove the last user message
+                    if msgs and msgs[-1].role == SessionRole.USER:
+                        msgs.pop()
+                        removed += 1
+                    if removed:
+                        console.print(
+                            f"  [green]✓ {removed} Nachricht(en) entfernt.[/green] "
+                            f"[dim]({len(msgs)} verbleibend)[/dim]\n"
+                        )
+                    else:
+                        console.print("  [dim]Nichts zum Rückgängigmachen gefunden.[/dim]\n")
+            case "/export":
+                import datetime
+
+                msgs = self._session.messages
+                if not msgs:
+                    console.print("  [dim]Keine Nachrichten zum Exportieren.[/dim]\n")
+                else:
+                    cfg = self._config.agent
+                    pers = self._config.personality
+                    now = datetime.datetime.now()
+                    date_str = now.strftime("%Y-%m-%d_%H-%M-%S")
+                    filename = f"cucumber-session-{date_str}.md"
+                    downloads = Path.home() / "Downloads"
+                    downloads.mkdir(parents=True, exist_ok=True)
+                    export_path = downloads / filename
+
+                    lines: list[str] = [
+                        f"# CucumberAgent Session — {now.strftime('%Y-%m-%d %H:%M')}",
+                        "",
+                        f"**Agent:** {pers.emoji} {pers.name}  ",
+                        f"**Provider:** {cfg.provider} / {cfg.model}  ",
+                        f"**Nachrichten:** {len(msgs)}",
+                        "",
+                        "---",
+                        "",
+                    ]
+                    for msg in msgs:
+                        role_val = msg.role.value if hasattr(msg.role, "value") else str(msg.role)
+                        content_text = (
+                            msg.content if isinstance(msg.content, str) else str(msg.content)
+                        )
+                        role_header = {
+                            "user": "## Benutzer",
+                            "assistant": f"## {pers.emoji} {pers.name}",
+                            "system": "## System",
+                            "tool": "## Tool",
+                        }.get(role_val, f"## {role_val.capitalize()}")
+                        lines.append(role_header)
+                        lines.append("")
+                        lines.append(content_text)
+                        lines.append("")
+                        lines.append("---")
+                        lines.append("")
+
+                    export_path.write_text("\n".join(lines), encoding="utf-8")
+                    console.print(
+                        f"  [green]✓ Session exportiert:[/green] [bold]{export_path}[/bold]\n"
+                    )
             case _:
                 console.print(
                     f"  [dim]Unbekannter Befehl: [bold]{cmd}[/bold]. Tippe /help für Hilfe.[/dim]\n"
@@ -1285,8 +1471,20 @@ def run_update() -> None:
 
 
 async def run_config_cmd() -> None:
-    """Show configuration."""
+    """Show configuration or run a sub-command (e.g. 'validate')."""
+    sub = sys.argv[2] if len(sys.argv) > 2 else None
     config = Config.load()
+
+    if sub == "validate":
+        issues = config.validate()
+        if not issues:
+            console.print("[bold green]✓ Config looks good — no problems found.[/bold green]")
+        else:
+            console.print(f"[bold yellow]Found {len(issues)} issue(s):[/bold yellow]\n")
+            for i, msg in enumerate(issues, 1):
+                console.print(f"  [yellow]{i}.[/yellow] {msg}")
+        return
+
     print_config(config)
 
 
@@ -1334,7 +1532,8 @@ def main() -> None:
             console.print("  [cyan]cucumber run[/cyan]     Start chat session (legacy REPL)")
             console.print("  [cyan]cucumber tui[/cyan]     Start chat session (new Textual TUI)")
             console.print("  [cyan]cucumber init[/cyan]    Run setup wizard")
-            console.print("  [cyan]cucumber config[/cyan]  Show configuration")
+            console.print("  [cyan]cucumber config[/cyan]           Show configuration")
+            console.print("  [cyan]cucumber config validate[/cyan]  Validate configuration")
             console.print("  [cyan]cucumber --help[/cyan]  Show this help")
             return
 

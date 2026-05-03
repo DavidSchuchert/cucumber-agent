@@ -170,20 +170,8 @@ class MiniMaxProvider(BaseProvider):
         if max_tokens:
             body["max_tokens"] = max_tokens
 
-        # Build tools list: inject MiniMax native web_search MCP tool,
-        # and exclude our custom web_search function tool (MiniMax handles it natively)
-        all_tools: list[dict] = [{"type": "web_search"}]
         if tools:
-            func_tools = [
-                t
-                for t in tools
-                if not (
-                    t.get("type") == "function"
-                    and t.get("function", {}).get("name") == "web_search"
-                )
-            ]
-            all_tools.extend(func_tools)
-        body["tools"] = all_tools
+            body["tools"] = tools
 
         return body
 

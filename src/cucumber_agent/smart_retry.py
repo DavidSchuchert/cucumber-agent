@@ -36,7 +36,7 @@ READ_PATTERNS = [
     r"\bfind\b",
     r"\bgrep\b",
     r"\bwhich\b",
-    r"\bfile\b",
+    r"^\s*file\b",  # file command — only at start to avoid matching filenames
     r"\bstat\b",
     r"\bmd5sum\b",
     r"\bsha256sum\b",
@@ -44,7 +44,7 @@ READ_PATTERNS = [
     r"\bgit\s+show\b",
     r"\bgit\s+diff\b",
     r"\bgit\s+status\b",
-    r"\bopen\b",
+    r"^\s*open\b",  # macOS open — only at start of command, avoids URLs
     r"\bstat\b",
 ]
 
@@ -83,36 +83,75 @@ RETRYABLE_ERROR_PATTERNS = [
     r"doesn't exist",
 ]
 
-# German ↔ English path mappings (macOS default)
+# German ↔ English path mappings (macOS default folder names)
 PATH_MAPPINGS = {
+    # Images
     "bilder": "pictures",
     "pictures": "bilder",
+    # Documents
     "dokumente": "documents",
     "documents": "dokumente",
-    "desktop": "schreibtisch",
+    # Desktop
     "schreibtisch": "desktop",
+    "desktop": "schreibtisch",
+    # Music
     "musik": "music",
     "music": "musik",
+    # Movies / Videos
+    "filme": "movies",
+    "movies": "filme",
+    # Public
+    "öffentlich": "public",
+    "public": "öffentlich",
+    # Downloads (same in both languages, kept for completeness)
     "downloads": "downloads",
 }
 
+# Shell-specific syntax patterns that should be treated as READ operations
+# (variable expansions, pipeline reads, etc.)
+_ZSH_FISH_READ_PATTERNS = [
+    r"\bprint\b",  # fish/zsh print
+    r"\bprintenv\b",  # environment variable read
+    r"\benv\b",  # environment dump
+    r"\btype\b",  # fish/zsh: show command type
+    r"\bfunctions\b",  # fish: list functions
+    r"\bset\b(?!\s+-[eEx])",  # zsh/fish: show vars (not set -e which exits)
+    r"\babbr\b",  # fish: list abbreviations
+    r"\bpwd\b",  # print working directory
+]
+
+_ZSH_FISH_WRITE_PATTERNS = [
+    r"\bset\s+-[eEx]\b",  # zsh/fish: set -e (exit on error) — env modification
+    r"\bsource\b",  # source / . — modifies shell state
+    r"\.\s+\S+",  # POSIX source
+    r"\bexport\b",  # export variable
+    r"\bunset\b",  # unset variable
+    r"\babbr\s+--add\b",  # fish: add abbreviation
+    r"\bfuncsave\b",  # fish: persist function to disk
+]
+
 
 def classify_command(command: str) -> CommandCategory:
-    """Classify a shell command by its potential for harm."""
+    """Classify a shell command by its potential for harm.
+
+    Handles bash, zsh, and fish shell-specific syntax.
+    Evaluation order: DESTRUCTIVE > READ > WRITE > UNKNOWN
+    so that dangerous operations are never silently retried.
+    """
     cmd = command.strip().lower()
 
-    # Check destructive first - these never auto-retry
+    # Check destructive first — these never auto-retry
     for pattern in DESTRUCTIVE_PATTERNS:
         if re.search(pattern, cmd):
             return CommandCategory.DESTRUCTIVE
 
-    # Check read operations
-    for pattern in READ_PATTERNS:
+    # Check read operations (core + shell-specific)
+    for pattern in READ_PATTERNS + _ZSH_FISH_READ_PATTERNS:
         if re.search(pattern, cmd):
             return CommandCategory.READ
 
-    # Check write operations
-    for pattern in WRITE_PATTERNS:
+    # Check write operations (core + shell-specific)
+    for pattern in WRITE_PATTERNS + _ZSH_FISH_WRITE_PATTERNS:
         if re.search(pattern, cmd):
             return CommandCategory.WRITE
 

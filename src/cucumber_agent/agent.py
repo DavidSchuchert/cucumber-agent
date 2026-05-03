@@ -223,7 +223,10 @@ class Agent:
         compression_system = (
             "Du fasst ein Gespräch präzise zusammen. "
             "Halte alle wichtigen Fakten, Ergebnisse, getroffene Entscheidungen "
-            "und ausgeführte Befehle fest. Maximal 150 Wörter. Kein Smalltalk."
+            "und ausgeführte Befehle fest. Maximal 150 Wörter. Kein Smalltalk.\n\n"
+            "KRITISCHE REGEL: Schreibe NIEMALS über die Persönlichkeit, den Namen, den Ton "
+            "oder das Verhalten des Assistenten. Die Identität des Assistenten ist unveränderlich "
+            "und wird separat verwaltet — sie gehört NICHT in die Zusammenfassung."
         )
         try:
             response = await self._provider.complete(
@@ -247,16 +250,11 @@ class Agent:
 
     async def synthesize(self, session: Session, prompt: str = "", max_depth: int = 1) -> str:
         """Synthesize a response based on recent tool results in session."""
-        # Build messages WITHOUT modifying session
-        messages = []
-
-        # Override system prompt to prevent tool calls
         system_override = (
             "Du fasst Tool-Ergebnisse für den Benutzer zusammen. "
             "Antworte direkt und klar. KEINE Werkzeug-Aufrufe mehr."
         )
 
-        # Get full session context (respecting 3-tier memory)
         messages = self._build_messages(session)
 
         if prompt:
@@ -411,6 +409,15 @@ class Agent:
                     count += len(encoding.encode(str(tc.arguments)))
         count += 2  # priming
         return count
+
+    def _validate_identity_preserved(self, messages: list[Message]) -> bool:
+        """Return True if the CORE IDENTITY block is present in the system prompt."""
+        for m in messages:
+            if m.role == Role.SYSTEM:
+                content = self._extract_text(m.content)
+                if "=== CORE IDENTITY (IMMUTABLE) ===" in content:
+                    return True
+        return False
 
     def _extract_text(self, content: str | list[ContentBlock]) -> str:
         """Helper to get text from various content formats."""
