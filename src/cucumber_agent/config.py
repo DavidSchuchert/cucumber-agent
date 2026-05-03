@@ -34,6 +34,7 @@ class PersonalityConfig:
     greeting: str = ""
     strengths: str = ""
     interests: str = ""
+    _raw_content: str = field(default="", repr=False, compare=False)
 
     @classmethod
     def from_markdown(cls, path: Path) -> PersonalityConfig:
@@ -41,9 +42,9 @@ class PersonalityConfig:
         if not path.exists():
             return cls()
 
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
         data = cls._parse_md_dict(content)
-        return cls(
+        obj = cls(
             name=data.get("name", "Cucumber"),
             emoji=data.get("emoji", "🤖"),
             tone=data.get("tone", "friendly"),
@@ -52,26 +53,31 @@ class PersonalityConfig:
             strengths=data.get("strengths", ""),
             interests=data.get("interests", ""),
         )
+        obj._raw_content = content
+        return obj
 
     @staticmethod
     def _parse_md_dict(content: str) -> dict[str, str]:
-        """Parse markdown key: value pairs."""
+        """Parse markdown key: value pairs (top-level only)."""
         result: dict[str, str] = {}
         for line in content.splitlines():
             line = line.strip()
-            if not line or line.startswith("#"):
+            if not line or line.startswith("#") or line.startswith("-"):
                 continue
             if ": " in line:
                 key, value = line.split(": ", 1)
                 result[key.strip()] = value.strip()
-            elif ":" in line:
+            elif ":" in line and not line.endswith(":"):
                 key, value = line.split(":", 1)
                 result[key.strip()] = value.strip()
         return result
 
     def to_markdown(self, path: Path) -> None:
-        """Save to personality.md file."""
+        """Save to personality.md — preserve raw content if available."""
         path.parent.mkdir(parents=True, exist_ok=True)
+        if self._raw_content:
+            path.write_text(self._raw_content, encoding="utf-8")
+            return
         lines = [
             "# Personality",
             f"name: {self.name}",
@@ -83,10 +89,22 @@ class PersonalityConfig:
             f"interests: {self.interests}",
             "",
         ]
-        path.write_text("\n".join(lines))
+        path.write_text("\n".join(lines), encoding="utf-8")
+
+    def to_core_identity_block(self) -> str:
+        """Return the full raw personality as a pinned identity block."""
+        if self._raw_content:
+            return self._raw_content.strip()
+        # Fallback for configs without a personality.md
+        lines = [f"name: {self.name}", f"tone: {self.tone}", f"language: {self.language}"]
+        if self.greeting:
+            lines.append(f"greeting: {self.greeting}")
+        if self.strengths:
+            lines.append(f"strengths: {self.strengths}")
+        return "\n".join(lines)
 
     def to_system_prompt(self) -> str:
-        """Build system prompt from personality."""
+        """Build operational system prompt (tool rules, skills, etc.)."""
         parts = []
 
         lang = self.language or "en"
@@ -96,33 +114,14 @@ class PersonalityConfig:
             f"I ALWAYS communicate in {language_name}. ALL my responses must be in {language_name}."
         )
 
-        parts.append(f"My name is {self.name}.")
-
-        tone_desc = {
-            "casual": "I'm casual and relaxed in my communication.",
-            "friendly": "I'm warm and friendly in my communication.",
-            "professional": "I'm professional and concise in my communication.",
-            "formal": "I'm formal and respectful in my communication.",
-        }
-        parts.append(tone_desc.get(self.tone, f"I communicate in a {self.tone} manner."))
-
-        if self.greeting:
-            parts.append(f'My typical greeting is: "{self.greeting}"')
-
-        if self.strengths:
-            parts.append(f"My strengths include: {self.strengths}.")
-
-        if self.interests:
-            parts.append(f"I'm particularly interested in: {self.interests}.")
-
-        # Tool instructions - be more direct
+        # Tool instructions
         parts.append(
-            "CRITICAL TOOL USAGE RULES:"
-            "1. When the user asks to execute commands, create files, read files, or perform system operations, use the 'shell' tool IMMEDIATELY."
-            "2. If a path doesn't exist (file/directory not found), use the 'search' tool to find the correct name - German macOS uses 'Bilder', English uses 'Pictures'."
-            "3. When using tools, output MINIMAL text - just the tool call. Do NOT say things like 'I will now...' or 'Let me...'"
-            "4. Only provide explanatory text AFTER the tool has executed and returned results."
-            "5. If a tool fails with an error, analyze the error and either try a fix or inform the user clearly."
+            "CRITICAL TOOL USAGE RULES: "
+            "1. When the user asks to execute commands, create files, read files, or perform system operations, use the 'shell' tool IMMEDIATELY. "
+            "2. If a path doesn't exist, use the 'search' tool to find the correct name — German macOS uses 'Bilder', English uses 'Pictures'. "
+            "3. When using tools, output MINIMAL text — just the tool call. Do NOT say 'I will now...' or 'Let me...'. "
+            "4. Only provide explanatory text AFTER the tool has executed and returned results. "
+            "5. If a tool fails, analyze the error and either try a fix or inform the user clearly."
         )
 
         # Skills - loaded from ~/.cucumber/skills/
@@ -141,7 +140,7 @@ class PersonalityConfig:
                     except Exception:
                         pass
 
-        # Self-awareness - know where the project and wiki are
+        # Self-awareness
         project_path = Path.home() / "cucumber-agent"
         if project_path.exists():
             parts.append(f"PROJECT WIKI LOCATION: {project_path}/wiki/")

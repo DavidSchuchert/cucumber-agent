@@ -560,6 +560,15 @@ class CliSession:
             # Log the exchange (only if we have a user input to pair it with)
             if self._config.memory.enabled and user_input:
                 self._logger.log_exchange(user_input, clean_content)
+                # Passive learning: detect facts in user message
+                from cucumber_agent.memory import detect_learnable_facts
+
+                learnable = detect_learnable_facts(user_input)
+                for key, value in learnable:
+                    if not self._facts.get(key):
+                        self._facts.set(key, value)
+                        self._session.metadata["facts_context"] = self._facts.to_context_string()
+                        console.print(f"  [dim]🧠 Gemerkt: {key} = {value}[/dim]")
                 # Auto-compress if history is getting too long
                 await self._maybe_compress_context()
 

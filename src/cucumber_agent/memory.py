@@ -3,8 +3,34 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
+
+# Patterns that suggest learnable user facts
+_LEARN_PATTERNS = [
+    (r"\bich hei(?:ße|sse)\s+(\w+)", "name"),
+    (r"\bmein name ist\s+(\w+)", "name"),
+    (r"\bcall me\s+(\w+)", "name"),
+    (r"\bich bin\s+(\d+)\s+jahre?", "alter"),
+    (r"\bich wohne in\s+([^,.!?]+)", "wohnort"),
+    (r"\bich arbeite (?:als|bei)\s+([^,.!?]+)", "beruf"),
+    (r"\bich mag\s+(?:lieber\s+)?([^,.!?]+)", "vorliebe"),
+    (r"\bich bevorzuge\s+([^,.!?]+)", "vorliebe"),
+    (r"\bmein projekt (?:heißt|ist)\s+([^,.!?]+)", "projekt"),
+]
+
+
+def detect_learnable_facts(text: str) -> list[tuple[str, str]]:
+    """Scan user text for facts worth remembering. Returns [(key, value)]."""
+    found: list[tuple[str, str]] = []
+    text_lower = text.lower()
+    for pattern, key in _LEARN_PATTERNS:
+        m = re.search(pattern, text_lower)
+        if m:
+            value = m.group(1).strip().rstrip(".,!?")
+            found.append((key, value))
+    return found
 
 
 class SessionLogger:

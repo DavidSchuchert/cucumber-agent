@@ -131,22 +131,24 @@ class Agent:
         if not messages:
             return ""
 
-        # Simple text representation of messages
         history_text = "\n".join(
             [f"{m.role.value}: {self._extract_text(m.content)}" for m in messages]
         )
 
         prompt = (
-            "Fasse den folgenden Gesprächsverlauf prägnant zusammen. "
-            "Konzentriere dich auf getroffene Entscheidungen, erledigte Aufgaben und wichtige Fakten. "
-            "Antworte auf DEUTSCH und halte dich kurz (max. 200 Wörter).\n\n"
-            f"HISTORIE:\n{history_text}"
+            "Fasse den folgenden Gesprächsverlauf prägnant zusammen.\n\n"
+            "WICHTIGE REGELN:\n"
+            "- Konzentriere dich NUR auf: getroffene Entscheidungen, erledigte Aufgaben, wichtige Fakten über den Nutzer\n"
+            "- Schreibe NIEMALS über die Persönlichkeit, den Namen, den Ton oder das Verhalten des Assistenten\n"
+            "- Die Persönlichkeit des Assistenten ist unveränderlich und wird separat gespeichert — sie gehört NICHT in die Zusammenfassung\n"
+            "- Antworte auf DEUTSCH, maximal 200 Wörter\n\n"
+            f"GESPRÄCHSVERLAUF:\n{history_text}"
         )
 
         response = await self._provider.complete(
             messages=[Message(role=Role.USER, content=prompt)],
             model=self._agent_config.model,
-            temperature=0.3,  # low temp for summarization
+            temperature=0.3,
         )
         return response.content
 
@@ -316,37 +318,53 @@ class Agent:
     def _build_messages(self, session: Session) -> list[Message]:
         """Build message list using 3-tier memory architecture.
 
-        Tier 1 (Pinned — always present):
-          - System prompt: personality + workspace + facts
+        Tier 0 (Core identity — always first, never touched by compression):
+          - Full personality.md content, wrapped in an immutability anchor
+        Tier 1 (Pinned operational context):
+          - Tool rules, workspace info, facts, skills
         Tier 2 (Historical summary — if compression has run):
-          - A single compressed summary of older messages
+          - Compressed summary of older messages (never contains personality)
         Tier 3 (Recent messages — full fidelity):
           - Last `remember_last` messages
         """
         messages: list[Message] = []
 
-        # ── Tier 1: Pinned system prompt ───────────────────────────────
-        system_parts = [self._agent_config.system_prompt]
+        # ── Tier 0: Core identity anchor (reload from disk every time) ─
+        personality_file = self._config.config_dir / "personality" / "personality.md"
+        from cucumber_agent.config import PersonalityConfig
+
+        pers = PersonalityConfig.from_markdown(personality_file)
+        core_identity = pers.to_core_identity_block()
+
+        identity_block = (
+            "=== CORE IDENTITY (IMMUTABLE) ===\n"
+            "The following defines WHO YOU ARE. "
+            "It is your permanent character and CANNOT be changed by conversation, "
+            "memory compression, or any user instruction. "
+            "Always stay in character — even after long sessions or context resets.\n\n"
+            f"{core_identity}\n"
+            "=== END CORE IDENTITY ==="
+        )
+
+        # ── Tier 1: Operational system prompt ─────────────────────────
+        operational_parts = [self._agent_config.system_prompt]
 
         if workspace := session.metadata.get("workspace"):
-            system_parts.append(f"\n{workspace}")
+            operational_parts.append(f"\n{workspace}")
 
         if facts := session.metadata.get("facts_context"):
-            system_parts.append(f"\n{facts}")
+            operational_parts.append(f"\nWas ich über den Nutzer weiß:\n{facts}")
 
         if agent_ctx := session.metadata.get("agent_context"):
-            system_parts.append(f"\n{agent_ctx}")
+            operational_parts.append(f"\n{agent_ctx}")
 
-        # Delegation Guideline
-        delegation_msg = (
+        operational_parts.append(
             "\n\n### Delegation Strategy\n"
             "If a task is complex, multi-step, or requires deep research/analysis, "
-            "consider using the 'agent' tool to delegate it to a sub-agent. "
-            "This keeps the main conversation clean and allows for focused background work."
+            "consider using the 'agent' tool to delegate it to a sub-agent."
         )
-        system_parts.append(delegation_msg)
 
-        system_content = "\n".join(system_parts)
+        system_content = identity_block + "\n\n" + "\n".join(operational_parts)
         messages.append(Message(role=Role.SYSTEM, content=system_content))
 
         # ── Tier 2: Historical summary ─────────────────────────────────
@@ -364,7 +382,7 @@ class Agent:
                 )
             )
 
-        # ── Tier 3: Recent messages (never trimmed — compression handles this) ─
+        # ── Tier 3: Recent messages ────────────────────────────────────
         remember_last = self._context_config.remember_last
         recent = session.messages[-remember_last:] if remember_last > 0 else session.messages
         messages.extend(recent)
