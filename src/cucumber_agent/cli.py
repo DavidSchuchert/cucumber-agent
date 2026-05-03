@@ -856,9 +856,10 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                     console.print("  [dim]Debug-Modus AUS[/dim]\n")
             case "/autoapprove":
                 self._auto_approve_session = not self._auto_approve_session
+                self._sync_subagent_approve()
                 if self._auto_approve_session:
                     console.print(
-                        "  [bold green]✓ Auto-Approve AN[/bold green] — alle Tool-Aufrufe werden automatisch ausgeführt.\n"
+                        "  [bold green]✓ Auto-Approve AN[/bold green] — alle Tool-Aufrufe (inkl. Sub-Agenten) werden automatisch ausgeführt.\n"
                     )
                 else:
                     console.print("  [dim]Auto-Approve AUS — Tool-Aufrufe wieder manuell bestätigen.[/dim]\n")
@@ -1363,9 +1364,10 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                 return
 
         elif choice in ("4", "a", "all"):
-            # Enable session-wide auto-approve, then execute current like choice "1"
+            # Enable session-wide auto-approve (incl. sub-agents), then execute current
             self._auto_approve_session = True
-            console.print("  [dim green]✓ Auto-Approve AN für diese Session — alle weiteren Tools werden automatisch ausgeführt.[/dim green]\n")
+            self._sync_subagent_approve()
+            console.print("  [dim green]✓ Auto-Approve AN für diese Session — alle weiteren Tools (inkl. Sub-Agenten) werden automatisch ausgeführt.[/dim green]\n")
             await self._handle_tool_approval("1")
 
         else:
@@ -1481,6 +1483,14 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                 if resp.strip():
                     console.print(resp)
                     console.print()
+
+    def _sync_subagent_approve(self) -> None:
+        """Propagate _auto_approve_session to the sub-agent tool's module flag."""
+        try:
+            from cucumber_agent.tools.agent import set_subagent_auto_approve
+            set_subagent_auto_approve(self._auto_approve_session)
+        except Exception:
+            pass
 
     def _track_tokens(self, response) -> None:
         """Accumulate token counts from a ModelResponse."""

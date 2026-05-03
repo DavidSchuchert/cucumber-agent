@@ -21,6 +21,15 @@ console = Console()
 # Max characters of tool output to keep in session context (prevents blowup)
 MAX_TOOL_OUTPUT_CHARS = 3000
 
+# Session-level auto-approve flag — set to True by the main CLI when
+# _auto_approve_session is enabled so sub-agents skip approval prompts too.
+_subagent_auto_approve: bool = False
+
+
+def set_subagent_auto_approve(value: bool) -> None:
+    global _subagent_auto_approve
+    _subagent_auto_approve = value
+
 
 def _truncate_output(text: str, max_chars: int = MAX_TOOL_OUTPUT_CHARS) -> str:
     """Truncate long tool output to prevent context window overflow."""
@@ -219,6 +228,14 @@ class AgentTool(BaseTool):
                 elif choice == "3" and "command" in tc_args:
                     await self._edit_and_execute(tc_name, tc_args, command, session)
                 elif choice == "4":
+                    # Auto-approve all remaining tool calls for this sub-agent run
+                    set_subagent_auto_approve(True)
+                    console.print(
+                        "  [dim green]✓ Auto-Approve AN — alle weiteren Tool-Aufrufe "
+                        "dieses Sub-Agenten werden automatisch ausgeführt.[/dim green]"
+                    )
+                    await self._execute_tool(tc_name, tc_args, session)
+                elif choice == "5":
                     # Abort entire sub-agent
                     console.print("  [red]Sub-Agent abgebrochen.[/red]")
                     session.messages.append(
@@ -230,7 +247,7 @@ class AgentTool(BaseTool):
                     aborted = True
                     break
                 else:
-                    # Cancel this tool (choice == "2" or anything else)
+                    # Skip this tool (choice == "2" or anything else)
                     console.print("  [dim]Übersprungen.[/dim]")
                     session.messages.append(
                         Message(
@@ -262,6 +279,9 @@ class AgentTool(BaseTool):
 
         elapsed = time.monotonic() - start_time
 
+        # Reset sub-agent auto-approve after run (main session flag re-sets it if needed)
+        set_subagent_auto_approve(False)
+
         # Summary table
         summary = Table.grid(padding=(0, 2))
         summary.add_row("[bold]Schritte:[/bold]", f"{step}/{max_steps}")
@@ -290,8 +310,13 @@ class AgentTool(BaseTool):
 
     async def _ask_approval(self) -> str:
         """Prompt user for tool approval. Returns the choice string."""
+        if _subagent_auto_approve:
+            console.print("  [dim green]⚡ Auto-approve[/dim green]")
+            return "1"
         console.print(
-            "  [bold]Aktion:[/bold]  [1] Ausführen  [2] Überspringen  [3] Bearbeiten  [4] Abbrechen"
+            "  [bold]Aktion:[/bold]  "
+            "[1] Ausführen  [2] Überspringen  [3] Bearbeiten  "
+            "[bold green][4] Alle akzeptieren[/bold green]  [red][5] Abbrechen[/red]"
         )
         choice = await asyncio.to_thread(
             ptk_prompt, HTML("  <b><ansiyellow>Wahl &gt;</ansiyellow></b> ")
