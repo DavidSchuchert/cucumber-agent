@@ -151,6 +151,7 @@ def print_help() -> None:
         ("/remember ...", "Fakt merken, z.B. /remember name: David"),
         ("/forget ...", "Fakt vergessen, z.B. /forget name"),
         ("/skills", "Installierte Skills auflisten"),
+        ("/autoapprove", "Tool-Auto-Approve für diese Session ein/ausschalten"),
     ]
     for cmd, desc in commands:
         table.add_row(cmd, desc)
@@ -298,6 +299,7 @@ class CliSession:
         self._waiting_for_optimization_response = False
         self._debug_mode = False
         self._pending_tool_calls: list[dict] = []
+        self._auto_approve_session: bool = False
         self._smart_retry = config.preferences.smart_retry
         self._retry_count: dict[str, int] = {}
 
@@ -362,6 +364,7 @@ class CliSession:
             "/optimize",
             "/memory",
             "/context",
+            "/autoapprove",
             "/remember",
             "/forget",
             "/skills",
@@ -510,6 +513,11 @@ class CliSession:
                     auto_calls.append(tc)
                 else:
                     manual_calls.append(tc)
+
+            # Session-level auto-approve: promote all manual calls to auto
+            if self._auto_approve_session:
+                auto_calls.extend(manual_calls)
+                manual_calls = []
 
             # Execute auto-approved tools immediately
             for tc in auto_calls:
@@ -825,6 +833,14 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                     self._print_debug_info()
                 else:
                     console.print("  [dim]Debug-Modus AUS[/dim]\n")
+            case "/autoapprove":
+                self._auto_approve_session = not self._auto_approve_session
+                if self._auto_approve_session:
+                    console.print(
+                        "  [bold green]✓ Auto-Approve AN[/bold green] — alle Tool-Aufrufe werden automatisch ausgeführt.\n"
+                    )
+                else:
+                    console.print("  [dim]Auto-Approve AUS — Tool-Aufrufe wieder manuell bestätigen.[/dim]\n")
             case "/memory":
                 facts = self._facts.all()
                 if not facts:
@@ -1232,9 +1248,15 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                 self._print_tool_call(self._pending_tool_calls[0])
                 return
 
+        elif choice in ("4", "a", "all"):
+            # Enable session-wide auto-approve, then execute current like choice "1"
+            self._auto_approve_session = True
+            console.print("  [dim green]✓ Auto-Approve AN für diese Session — alle weiteren Tools werden automatisch ausgeführt.[/dim green]\n")
+            await self._handle_tool_approval("1")
+
         else:
             self._pending_tool_calls.clear()
-            console.print("[dim]Invalid choice. All pending tool calls cancelled.[/dim]\n")
+            console.print("[dim]Ungültige Eingabe. Alle ausstehenden Tool-Aufrufe abgebrochen.[/dim]\n")
 
     def _print_tool_call(self, tool_call: dict) -> None:
         """Display a tool call with approval options."""
@@ -1261,25 +1283,28 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
         if len(self._pending_tool_calls) > 1:
             queue_info = f" ({len(self._pending_tool_calls)} queued)"
 
+        auto_badge = " [dim green][AUTO][/dim green]" if self._auto_approve_session else ""
         console.print(
             Panel(
                 panel_content,
-                title=f"⚡ [bold yellow]Tool Approval Required[/bold yellow]{queue_info}",
+                title=f"⚡ [bold yellow]Tool Approval Required[/bold yellow]{queue_info}{auto_badge}",
                 border_style="yellow",
-                subtitle="[dim]Press [bold yellow]1[/bold yellow] to approve[/dim]",
+                subtitle="[dim][bold yellow]1[/bold yellow] ausführen · [bold red]2[/bold red] abbrechen · [bold green]4[/bold green] alle akzeptieren[/dim]",
             )
         )
 
         # Nicer menu display
         menu_text = Text.assemble(
             ("  [1] ", "bold yellow"),
-            ("Execute  ", "default"),
+            ("Ausführen   ", "default"),
             ("  [2] ", "bold red"),
-            ("Cancel   ", "default"),
+            ("Abbrechen   ", "default"),
         )
         if args.get("command"):
             menu_text.append("  [3] ", style="bold cyan")
-            menu_text.append("Edit command", style="default")
+            menu_text.append("Bearbeiten   ", style="default")
+        menu_text.append("  [4] ", style="bold green")
+        menu_text.append("Alle akzeptieren", style="default")
 
         console.print(menu_text)
         console.print()
