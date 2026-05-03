@@ -32,8 +32,18 @@ echo ""
 if ! command -v uv &> /dev/null; then
     echo "→ Installing uv (Python package manager)..."
     curl -LsSf https://astral.sh/uv/install.sh | sh
-    export PATH="${HOME}/.local/bin:${PATH}"
 fi
+
+# Always ensure ~/.local/bin is in PATH (uv tools land here)
+export PATH="${HOME}/.local/bin:${PATH}"
+
+# Persist to shell rc if not already there
+for RC in "${HOME}/.zshrc" "${HOME}/.bashrc"; do
+    if [ -f "$RC" ] && ! grep -q '\.local/bin' "$RC"; then
+        echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$RC"
+        echo "✓ Added ~/.local/bin to PATH in $(basename $RC)"
+    fi
+done
 
 echo "✓ uv ready"
 
