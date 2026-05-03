@@ -134,8 +134,8 @@ class PersonalityConfig:
                 for sf in sorted(skill_files):
                     try:
                         import yaml
+
                         data = yaml.safe_load(sf.read_text()) or {}
-                        name = data.get("name", sf.stem)
                         desc = data.get("description", "")
                         parts.append(f"- /{sf.stem}: {desc}")
                     except Exception:
@@ -145,7 +145,11 @@ class PersonalityConfig:
         project_path = Path.home() / "cucumber-agent"
         if project_path.exists():
             parts.append(f"PROJECT WIKI LOCATION: {project_path}/wiki/")
-            wiki_files = list((project_path / "wiki").glob("*.md")) if (project_path / "wiki").exists() else []
+            wiki_files = (
+                list((project_path / "wiki").glob("*.md"))
+                if (project_path / "wiki").exists()
+                else []
+            )
             if wiki_files:
                 parts.append("AVAILABLE WIKI DOCS:")
                 for wf in sorted(wiki_files):
@@ -182,10 +186,14 @@ class MemoryConfig:
 
     enabled: bool = True
     log_dir: Path = field(default_factory=lambda: Path.home() / ".cucumber" / "memory")
-    facts_file: Path = field(default_factory=lambda: Path.home() / ".cucumber" / "memory" / "facts.json")
-    max_session_messages: int = 20   # trigger context compression after this
-    summarize_keep_recent: int = 6   # keep this many recent messages when compressing
-    summary_file: Path = field(default_factory=lambda: Path.home() / ".cucumber" / "memory" / "last_summary.txt")
+    facts_file: Path = field(
+        default_factory=lambda: Path.home() / ".cucumber" / "memory" / "facts.json"
+    )
+    max_session_messages: int = 20  # trigger context compression after this
+    summarize_keep_recent: int = 6  # keep this many recent messages when compressing
+    summary_file: Path = field(
+        default_factory=lambda: Path.home() / ".cucumber" / "memory" / "last_summary.txt"
+    )
 
 
 @dataclass
@@ -270,9 +278,7 @@ class Config:
         )
 
         # Load personality from personality.md (always the source of truth)
-        personality = PersonalityConfig.from_markdown(
-            config_dir / "personality" / "personality.md"
-        )
+        personality = PersonalityConfig.from_markdown(config_dir / "personality" / "personality.md")
         # Always rebuild system_prompt from personality.md so changes take effect
         # without needing to manually edit config.yaml
         agent.system_prompt = personality.to_system_prompt()
@@ -318,10 +324,16 @@ class Config:
         memory = MemoryConfig(
             enabled=mem_data.get("enabled", True),
             log_dir=Path(mem_data.get("log_dir", str(Path.home() / ".cucumber" / "memory"))),
-            facts_file=Path(mem_data.get("facts_file", str(Path.home() / ".cucumber" / "memory" / "facts.json"))),
+            facts_file=Path(
+                mem_data.get("facts_file", str(Path.home() / ".cucumber" / "memory" / "facts.json"))
+            ),
             max_session_messages=mem_data.get("max_session_messages", 20),
             summarize_keep_recent=mem_data.get("summarize_keep_recent", 6),
-            summary_file=Path(mem_data.get("summary_file", str(Path.home() / ".cucumber" / "memory" / "last_summary.txt"))),
+            summary_file=Path(
+                mem_data.get(
+                    "summary_file", str(Path.home() / ".cucumber" / "memory" / "last_summary.txt")
+                )
+            ),
         )
 
         # Load logging config

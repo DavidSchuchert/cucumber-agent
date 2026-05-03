@@ -37,7 +37,6 @@ class OpenRouterProvider(BaseProvider):
         )
 
     async def close(self) -> None:
-        """Close the HTTP client."""
         await self._client.aclose()
 
     async def complete(
@@ -48,16 +47,23 @@ class OpenRouterProvider(BaseProvider):
         temperature: float = 0.7,
         max_tokens: int | None = None,
         tools: list[dict] | None = None,
+        system_override: str | None = None,
     ) -> ModelResponse:
-        """Send a complete request and return the full response."""
-        async with self._client.stream(
-            "POST",
+        body = self._build_request(
+            messages,
+            model,
+            temperature,
+            max_tokens,
+            tools,
+            system_override=system_override,
+            stream=False,
+        )
+        response = await self._client.post(
             f"{self._base_url}/chat/completions",
-            json=self._build_request(messages, model, temperature, max_tokens, tools),
-        ) as response:
-            response.raise_for_status()
-            data = await response.json()
-
+            json=body,
+        )
+        response.raise_for_status()
+        data = response.json()
         return self._parse_response(data, model)
 
     async def stream(
@@ -69,11 +75,9 @@ class OpenRouterProvider(BaseProvider):
         max_tokens: int | None = None,
         tools: list[dict] | None = None,
     ) -> AsyncIterator[str]:
-        """Stream the response as an async iterator of text chunks."""
+        body = self._build_request(messages, model, temperature, max_tokens, tools, stream=True)
         async with self._client.stream(
-            "POST",
-            f"{self._base_url}/chat/completions",
-            json=self._build_request(messages, model, temperature, max_tokens, tools),
+            "POST", f"{self._base_url}/chat/completions", json=body
         ) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
@@ -82,12 +86,15 @@ class OpenRouterProvider(BaseProvider):
                 data_str = line[6:]
                 if data_str == "[DONE]":
                     break
-                data = json.loads(data_str)
-                choices = data.get("choices", [])
-                if choices:
-                    delta = choices[0].get("delta", {})
-                    if content := delta.get("content"):
-                        yield content
+                try:
+                    data = json.loads(data_str)
+                    choices = data.get("choices", [])
+                    if choices:
+                        delta = choices[0].get("delta", {})
+                        if content := delta.get("content"):
+                            yield content
+                except json.JSONDecodeError:
+                    continue
 
     def _build_request(
         self,
@@ -96,13 +103,22 @@ class OpenRouterProvider(BaseProvider):
         temperature: float,
         max_tokens: int | None,
         tools: list[dict] | None,
+        *,
+        system_override: str | None = None,
+        stream: bool = False,
     ) -> dict:
-        """Build the request body."""
-        body = {
+        formatted = []
+        for m in messages:
+            if system_override and m.role.value == "system":
+                formatted.append({"role": "system", "content": system_override})
+            else:
+                formatted.append(self._format_message(m))
+
+        body: dict = {
             "model": model,
-            "messages": [self._format_message(m) for m in messages],
+            "messages": formatted,
             "temperature": temperature,
-            "stream": True,
+            "stream": stream,
         }
         if max_tokens:
             body["max_tokens"] = max_tokens
@@ -111,10 +127,8 @@ class OpenRouterProvider(BaseProvider):
         return body
 
     def _format_message(self, message: Message) -> dict:
-        """Format a Message as an OpenRouter message dict."""
         role = message.role.value
         content = self._extract_content(message.content)
-
         result: dict = {"role": role, "content": content}
         if message.name:
             result["name"] = message.name
@@ -129,11 +143,9 @@ class OpenRouterProvider(BaseProvider):
                 }
                 for tc in message.tool_calls
             ]
-
         return result
 
     def _extract_content(self, content: str | list[ContentBlock]) -> str:
-        """Extract text content from a message."""
         if isinstance(content, str):
             return content
         parts = []
@@ -145,24 +157,24 @@ class OpenRouterProvider(BaseProvider):
         return "\n".join(parts) if parts else ""
 
     def _parse_response(self, data: dict, model: str) -> ModelResponse:
-        """Parse an OpenRouter response into a ModelResponse."""
         choices = data.get("choices", [{}])
         choice = choices[0] if choices else {}
         message = choice.get("message", {})
-        content = message.get("content", "")
+        content = message.get("content", "") or ""
 
-        # Parse tool calls
         tool_calls_data = message.get("tool_calls", [])
         tool_calls: list[ToolCall] | None = None
         if tool_calls_data:
             tool_calls = []
             for tc in tool_calls_data:
                 func = tc.get("function", {})
-                tool_calls.append(ToolCall(
-                    id=tc.get("id", ""),
-                    name=func.get("name", ""),
-                    arguments=json.loads(func.get("arguments", "{}")),
-                ))
+                tool_calls.append(
+                    ToolCall(
+                        id=tc.get("id", ""),
+                        name=func.get("name", ""),
+                        arguments=json.loads(func.get("arguments", "{}")),
+                    )
+                )
 
         usage = data.get("usage", {})
         return ModelResponse(

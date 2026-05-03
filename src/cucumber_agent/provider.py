@@ -51,6 +51,7 @@ class BaseProvider(ABC):
         temperature: float = 0.7,
         max_tokens: int | None = None,
         tools: list[dict] | None = None,
+        system_override: str | None = None,
     ) -> ModelResponse:
         """Send a complete request and return the full response."""
         ...

@@ -21,6 +21,7 @@ class BaseTool(ABC):
     name: str
     description: str
     parameters: dict  # JSON Schema for tool parameters
+    auto_approve: bool = False  # If True, executes without user confirmation
 
     @abstractmethod
     async def execute(self, **kwargs) -> ToolResult:
@@ -38,4 +39,3 @@ class BaseTool(ABC):
                 "parameters": self.parameters,
             },
         }
-

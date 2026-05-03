@@ -4,20 +4,16 @@ from __future__ import annotations
 
 import re
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING
 
 from cucumber_agent.config import Config
 from cucumber_agent.provider import BaseProvider, ModelResponse, ProviderRegistry
 from cucumber_agent.providers import (
-    minimax,      # noqa: F401
-    openrouter,   # noqa: F401
-    ollama,       # noqa: F401
+    minimax,  # noqa: F401
+    ollama,  # noqa: F401
+    openrouter,  # noqa: F401
 )
-from cucumber_agent.session import Message, Role, Session
+from cucumber_agent.session import ContentBlock, Message, Role, Session
 from cucumber_agent.tools import ToolRegistry
-
-if TYPE_CHECKING:
-    pass
 
 
 def estimate_tokens(text: str) -> int:
@@ -56,9 +52,17 @@ def trim_messages(
 
 # Greeting patterns for detecting first contact
 GREETING_PATTERNS = [
-    r"^hi\b", r"^hello\b", r"^hey\b", r"^yo\b", r"^sup\b",
-    r"^moin\b", r"^servus\b", r"^hallo\b",
-    r"^guten\s*morgen\b", r"^guten\s*tag\b", r"^grüß?e?\b",
+    r"^hi\b",
+    r"^hello\b",
+    r"^hey\b",
+    r"^yo\b",
+    r"^sup\b",
+    r"^moin\b",
+    r"^servus\b",
+    r"^hallo\b",
+    r"^guten\s*morgen\b",
+    r"^guten\s*tag\b",
+    r"^grüß?e?\b",
 ]
 
 
@@ -126,27 +130,29 @@ class Agent:
         """Use the LLM to create a concise summary of the given messages."""
         if not messages:
             return ""
-        
+
         # Simple text representation of messages
-        history_text = "\n".join([f"{m.role.value}: {self._extract_text(m.content)}" for m in messages])
-        
+        history_text = "\n".join(
+            [f"{m.role.value}: {self._extract_text(m.content)}" for m in messages]
+        )
+
         prompt = (
             "Fasse den folgenden Gesprächsverlauf prägnant zusammen. "
             "Konzentriere dich auf getroffene Entscheidungen, erledigte Aufgaben und wichtige Fakten. "
             "Antworte auf DEUTSCH und halte dich kurz (max. 200 Wörter).\n\n"
             f"HISTORIE:\n{history_text}"
         )
-        
+
         response = await self._provider.complete(
             messages=[Message(role=Role.USER, content=prompt)],
             model=self._agent_config.model,
-            temperature=0.3, # low temp for summarization
+            temperature=0.3,  # low temp for summarization
         )
         return response.content
 
     def get_tools_spec(self) -> list[dict] | None:
         """Get tool specifications for the current provider."""
-        from cucumber_agent.tools import ToolRegistry
+
         provider = self._config.agent.provider
         return ToolRegistry.get_tools_spec(provider)
 
@@ -184,13 +190,14 @@ class Agent:
 
         # Add assistant message with tool_calls so MiniMax can reference them in tool results
         from cucumber_agent.session import ToolCall as SessionToolCall
+
         assistant_msg = Message(
             role=Role.ASSISTANT,
             content=response.content,
             tool_calls=[
                 SessionToolCall(id=tc.id, name=tc.name, arguments=tc.arguments)
                 for tc in (response.tool_calls or [])
-            ]
+            ],
         )
         session.messages.append(assistant_msg)
 
@@ -344,14 +351,18 @@ class Agent:
 
         # ── Tier 2: Historical summary ─────────────────────────────────
         if summary := session.metadata.get("summary"):
-            messages.append(Message(
-                role=Role.USER,
-                content=f"[Gesprächszusammenfassung früherer Nachrichten:]\n{summary}",
-            ))
-            messages.append(Message(
-                role=Role.ASSISTANT,
-                content="Verstanden, ich berücksichtige den bisherigen Verlauf.",
-            ))
+            messages.append(
+                Message(
+                    role=Role.USER,
+                    content=f"[Gesprächszusammenfassung früherer Nachrichten:]\n{summary}",
+                )
+            )
+            messages.append(
+                Message(
+                    role=Role.ASSISTANT,
+                    content="Verstanden, ich berücksichtige den bisherigen Verlauf.",
+                )
+            )
 
         # ── Tier 3: Recent messages (never trimmed — compression handles this) ─
         remember_last = self._context_config.remember_last
@@ -359,10 +370,12 @@ class Agent:
         messages.extend(recent)
 
         return messages
+
     def estimate_tokens(self, messages: list[Message]) -> int:
         """Estimate token count for a list of messages."""
         try:
             import tiktoken
+
             encoding = tiktoken.get_encoding("cl100k_base")  # Good default for GPT-4/MiniMax
         except ImportError:
             # Fallback to rough estimation
@@ -385,4 +398,6 @@ class Agent:
         """Helper to get text from various content formats."""
         if isinstance(content, str):
             return content
-        return "\n".join(b.text or b.content or "" for b in content if b.type in ("text", "tool_result"))
+        return "\n".join(
+            b.text or b.content or "" for b in content if b.type in ("text", "tool_result")
+        )

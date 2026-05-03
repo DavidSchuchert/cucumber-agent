@@ -94,7 +94,6 @@ PATH_MAPPINGS = {
     "musik": "music",
     "music": "musik",
     "downloads": "downloads",
-    "downloads": "downloads",
 }
 
 
