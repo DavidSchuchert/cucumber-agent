@@ -22,15 +22,15 @@ class CreateToolTool(BaseTool):
         "properties": {
             "name": {
                 "type": "string",
-                "description": "The name of the tool file (e.g. 'random_number')."
+                "description": "The name of the tool file (e.g. 'random_number').",
             },
             "code": {
                 "type": "string",
                 "description": (
                     "The complete Python code for the tool. "
                     "Must import BaseTool and ToolResult from cucumber_agent.tools.base."
-                )
-            }
+                ),
+            },
         },
         "required": ["name", "code"],
     }
@@ -46,9 +46,9 @@ class CreateToolTool(BaseTool):
 
         tools_dir = Path.home() / ".cucumber" / "custom_tools"
         tools_dir.mkdir(parents=True, exist_ok=True)
-        
+
         file_path = tools_dir / f"{name}.py"
-        
+
         try:
             file_path.write_text(code, encoding="utf-8")
             return ToolResult(
@@ -61,5 +61,6 @@ class CreateToolTool(BaseTool):
                 output="",
                 error=f"Failed to write tool file: {e}",
             )
+
 
 ToolRegistry.register(CreateToolTool())

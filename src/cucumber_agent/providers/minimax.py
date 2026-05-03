@@ -60,8 +60,13 @@ class MiniMaxProvider(BaseProvider):
     ) -> ModelResponse:
         """Send a complete request and return the full response."""
         body = self._build_request(
-            messages, model, temperature, max_tokens, tools,
-            system_override=system_override, stream=False,
+            messages,
+            model,
+            temperature,
+            max_tokens,
+            tools,
+            system_override=system_override,
+            stream=False,
         )
 
         import asyncio
@@ -75,7 +80,7 @@ class MiniMaxProvider(BaseProvider):
 
                 # Handle 529 with retry
                 if response.status_code == 529:
-                    wait_time = 2 ** attempt
+                    wait_time = 2**attempt
                     if attempt < max_retries - 1:
                         await asyncio.sleep(wait_time)
                         continue
@@ -99,7 +104,7 @@ class MiniMaxProvider(BaseProvider):
                 if e.response.status_code == 400:
                     console.print(f"[red]MiniMax API Error (400):[/red] {e.response.text}")
                 if e.response.status_code == 529 and attempt < max_retries - 1:
-                    wait_time = 2 ** attempt
+                    wait_time = 2**attempt
                     await asyncio.sleep(wait_time)
                     continue
                 raise
@@ -117,7 +122,9 @@ class MiniMaxProvider(BaseProvider):
     ) -> AsyncIterator[str]:
         """Stream the response as an async iterator of text chunks."""
         body = self._build_request(messages, model, temperature, max_tokens, tools, stream=True)
-        async with self._client.stream("POST", f"{self._base_url}/chat/completions", json=body) as resp:
+        async with self._client.stream(
+            "POST", f"{self._base_url}/chat/completions", json=body
+        ) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():
                 if not line.startswith("data: "):
@@ -170,13 +177,13 @@ class MiniMaxProvider(BaseProvider):
         role = message.role.value
         content = self._extract_content(message.content)
         result: dict = {"role": role, "content": content or ""}
-        
+
         # In OpenAI format, 'name' is only for 'user' or 'system' (rarely)
         # and 'tool_call_id' is for 'tool' role.
         # Strict providers like MiniMax might reject 'name' in 'tool' messages.
         if message.name and role != "tool":
             result["name"] = message.name
-            
+
         if message.tool_call_id:
             result["tool_call_id"] = message.tool_call_id
         if message.tool_calls:
@@ -209,8 +216,11 @@ class MiniMaxProvider(BaseProvider):
 
         # Strip thinking blocks from content
         import re
-        content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
-        content = re.sub(r'<thinking>.*?</thinking>', '', content, flags=re.DOTALL | re.IGNORECASE).strip()
+
+        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+        content = re.sub(
+            r"<thinking>.*?</thinking>", "", content, flags=re.DOTALL | re.IGNORECASE
+        ).strip()
 
         tool_calls_data = message.get("tool_calls", [])
         tool_calls: list[ToolCall] | None = None
@@ -218,11 +228,13 @@ class MiniMaxProvider(BaseProvider):
             tool_calls = []
             for tc in tool_calls_data:
                 func = tc.get("function", {})
-                tool_calls.append(ToolCall(
-                    id=tc.get("id", ""),
-                    name=func.get("name", ""),
-                    arguments=json.loads(func.get("arguments", "{}")),
-                ))
+                tool_calls.append(
+                    ToolCall(
+                        id=tc.get("id", ""),
+                        name=func.get("name", ""),
+                        arguments=json.loads(func.get("arguments", "{}")),
+                    )
+                )
 
         usage = data.get("usage", {})
         return ModelResponse(

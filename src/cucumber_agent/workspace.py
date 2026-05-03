@@ -32,18 +32,18 @@ class WorkspaceInfo:
 
 # Ordered list of (filename, project_type, package_manager)
 _INDICATORS: list[tuple[str, str, str | None]] = [
-    ("pyproject.toml", "Python",     "uv/pip"),
-    ("setup.py",       "Python",     "pip"),
-    ("requirements.txt","Python",    "pip"),
-    ("package.json",   "Node.js",    "npm/yarn"),
-    ("Cargo.toml",     "Rust",       "cargo"),
-    ("go.mod",         "Go",         "go"),
-    ("Gemfile",        "Ruby",       "bundler"),
-    ("pom.xml",        "Java/Maven", "maven"),
-    ("build.gradle",   "Java/Gradle","gradle"),
-    ("CMakeLists.txt", "C/C++",      "cmake"),
-    ("Makefile",       "C/C++",      "make"),
-    ("composer.json",  "PHP",        "composer"),
+    ("pyproject.toml", "Python", "uv/pip"),
+    ("setup.py", "Python", "pip"),
+    ("requirements.txt", "Python", "pip"),
+    ("package.json", "Node.js", "npm/yarn"),
+    ("Cargo.toml", "Rust", "cargo"),
+    ("go.mod", "Go", "go"),
+    ("Gemfile", "Ruby", "bundler"),
+    ("pom.xml", "Java/Maven", "maven"),
+    ("build.gradle", "Java/Gradle", "gradle"),
+    ("CMakeLists.txt", "C/C++", "cmake"),
+    ("Makefile", "C/C++", "make"),
+    ("composer.json", "PHP", "composer"),
 ]
 
 

@@ -48,7 +48,9 @@ class CustomToolLoader:
             except Exception as e:
                 # Silently skip malformed tools or print to debug log?
                 # We'll just skip them so we don't crash the REPL.
-                print(f"[dim yellow]Warning: Failed to load custom tool {py_file.name}: {e}[/dim yellow]")
+                print(
+                    f"[dim yellow]Warning: Failed to load custom tool {py_file.name}: {e}[/dim yellow]"
+                )
 
         self._last_scan = time.monotonic()
 
@@ -84,7 +86,7 @@ class CustomToolLoader:
                 ToolRegistry.unregister(tool_name)
             del self._loaded_tools[path]
         self._mtimes.pop(path, None)
-        
+
         module_name = f"custom_tools.{path.stem}"
         if module_name in sys.modules:
             del sys.modules[module_name]
@@ -97,3 +99,10 @@ class CustomToolLoader:
             if self._mtimes.get(py_file) != py_file.stat().st_mtime:
                 return True
         return False
+
+    def get_tools(self) -> list[str]:
+        """Return a list of all loaded custom tool names."""
+        names: list[str] = []
+        for tool_names in self._loaded_tools.values():
+            names.extend(tool_names)
+        return names

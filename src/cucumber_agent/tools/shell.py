@@ -32,7 +32,9 @@ class ShellTool(BaseTool):
         "required": ["command"],
     }
 
-    async def execute(self, command: str, reason: str = "", working_dir: str | None = None) -> ToolResult:
+    async def execute(
+        self, command: str, reason: str = "", working_dir: str | None = None
+    ) -> ToolResult:
         """Execute a shell command."""
         try:
             process = await asyncio.create_subprocess_shell(

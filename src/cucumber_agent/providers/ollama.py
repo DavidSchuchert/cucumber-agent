@@ -50,8 +50,13 @@ class OllamaProvider(BaseProvider):
     ) -> ModelResponse:
         """Non-streaming completion."""
         body = self._build_request(
-            messages, model, temperature, max_tokens, tools,
-            system_override=system_override, stream=False,
+            messages,
+            model,
+            temperature,
+            max_tokens,
+            tools,
+            system_override=system_override,
+            stream=False,
         )
         response = await self._client.post(
             f"{self._base_url}/chat/completions",
@@ -71,7 +76,9 @@ class OllamaProvider(BaseProvider):
     ) -> AsyncIterator[str]:
         """Streaming completion."""
         body = self._build_request(messages, model, temperature, max_tokens, tools, stream=True)
-        async with self._client.stream("POST", f"{self._base_url}/chat/completions", json=body) as resp:
+        async with self._client.stream(
+            "POST", f"{self._base_url}/chat/completions", json=body
+        ) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():
                 if not line.startswith("data: "):
@@ -158,11 +165,13 @@ class OllamaProvider(BaseProvider):
             tool_calls = []
             for tc in tool_calls_data:
                 func = tc.get("function", {})
-                tool_calls.append(ToolCall(
-                    id=tc.get("id", ""),
-                    name=func.get("name", ""),
-                    arguments=json.loads(func.get("arguments", "{}")),
-                ))
+                tool_calls.append(
+                    ToolCall(
+                        id=tc.get("id", ""),
+                        name=func.get("name", ""),
+                        arguments=json.loads(func.get("arguments", "{}")),
+                    )
+                )
 
         usage = data.get("usage", {})
         return ModelResponse(

@@ -36,7 +36,15 @@ class WebSearchTool(BaseTool):
         """Search the web using MiniMax API or DuckDuckGo fallback."""
         import os
 
+        # Try env var first, then fall back to config
         api_key = os.environ.get("MINIMAX_API_KEY")
+        if not api_key:
+            from cucumber_agent.config import Config
+
+            config = Config.load()
+            prov_cfg = config.get_provider_config("minimax")
+            if prov_cfg and prov_cfg.api_key:
+                api_key = prov_cfg.api_key
 
         if api_key:
             return await self._minimax_search(query, max_results, api_key)
@@ -59,12 +67,12 @@ class WebSearchTool(BaseTool):
                             {
                                 "role": "user",
                                 "content": f"Search the web for: {query}\n\n"
-                                           f"Return the search results with titles, snippets, and URLs. "
-                                           f"Max {max_results} results."
+                                f"Return the search results with titles, snippets, and URLs. "
+                                f"Max {max_results} results.",
                             }
                         ],
                         "max_tokens": 1000,
-                    }
+                    },
                 )
                 resp.raise_for_status()
                 data = resp.json()
@@ -78,7 +86,7 @@ class WebSearchTool(BaseTool):
 
         except httpx.TimeoutException:
             return ToolResult(success=False, output="", error="MiniMax Web-Suche Timeout (30s).")
-        except Exception as e:
+        except Exception:
             # Fall back to DuckDuckGo on error
             return await self._duckduckgo_search(query, max_results)
 

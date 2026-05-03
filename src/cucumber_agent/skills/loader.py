@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
@@ -15,9 +14,9 @@ class Skill:
     """A single loaded skill."""
 
     name: str
-    command: str        # e.g. "/wetter"
+    command: str  # e.g. "/wetter"
     description: str
-    prompt: str         # May contain {args} placeholder
+    prompt: str  # May contain {args} placeholder
     args_hint: str = ""  # e.g. "[Stadt]" shown in /skills list
 
     @property

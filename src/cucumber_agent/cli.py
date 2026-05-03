@@ -1017,22 +1017,29 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
             await self._process_agent_response(response)
 
         elif choice == "3":
-            # Edit command before executing
-            if command:
-                from prompt_toolkit import prompt as ptk_prompt
+            # Edit the command (pre-flight — before agent continues)
+            if not command:
+                console.print("  [dim]Bearbeiten nur für Befehle möglich.[/dim]\n")
+                self._print_tool_call(self._pending_tool_calls[0])
+                return
 
-                new_cmd = await asyncio.to_thread(
-                    ptk_prompt,
-                    "  Edit> ",
-                    default=command,
-                )
-                if new_cmd.strip():
-                    self._pending_tool_calls[0]["arguments"]["command"] = new_cmd.strip()
+            from prompt_toolkit import prompt as ptk_prompt
+            from prompt_toolkit.formatted_text import HTML
+
+            new_cmd = await asyncio.to_thread(
+                ptk_prompt,
+                HTML("  <b><ansiyellow>Befehl &gt;</ansiyellow></b> "),
+                default=command,
+            )
+            if new_cmd.strip():
+                self._pending_tool_calls[0]["arguments"]["command"] = new_cmd.strip()
                 console.print()
                 self._print_tool_call(self._pending_tool_calls[0])
+                return  # Wait for next choice
             else:
-                console.print("  [dim]Bearbeiten nur für Shell-Befehle möglich.[/dim]")
+                console.print("  [dim]Befehl unverändert.[/dim]\n")
                 self._print_tool_call(self._pending_tool_calls[0])
+                return
 
         else:
             self._pending_tool_calls.clear()
@@ -1274,6 +1281,27 @@ async def run_config_cmd() -> None:
     print_config(config)
 
 
+def run_tui() -> None:
+    """Launch the prompt_toolkit + Rich TUI."""
+    import logging
+
+    from cucumber_agent.agent import Agent
+    from cucumber_agent.tui import CucumberTUI
+
+    config = Config.load()
+
+    log_level = getattr(logging, config.logging.level.upper(), logging.INFO)
+    setup_logging(
+        log_dir=config.logging.log_dir,
+        level=log_level,
+        verbose=config.logging.verbose,
+    )
+
+    agent = Agent.from_config(config)
+    tui = CucumberTUI(agent, config)
+    tui.run()
+
+
 def main() -> None:
     """Main entry point."""
     # Handle subcommands
@@ -1288,10 +1316,14 @@ def main() -> None:
         elif cmd == "update":
             run_update()
             return
+        elif cmd == "tui":
+            run_tui()
+            return
         elif cmd in ("--help", "-h"):
             console.print("[bold]CucumberAgent CLI[/bold]\n")
             console.print("Commands:")
-            console.print("  [cyan]cucumber run[/cyan]     Start chat session")
+            console.print("  [cyan]cucumber run[/cyan]     Start chat session (legacy REPL)")
+            console.print("  [cyan]cucumber tui[/cyan]     Start chat session (new Textual TUI)")
             console.print("  [cyan]cucumber init[/cyan]    Run setup wizard")
             console.print("  [cyan]cucumber config[/cyan]  Show configuration")
             console.print("  [cyan]cucumber --help[/cyan]  Show this help")

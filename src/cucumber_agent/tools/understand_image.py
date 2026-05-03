@@ -36,12 +36,21 @@ class UnderstandImageTool(BaseTool):
         """Analyze an image using MiniMax API."""
         import os
 
+        # Try env var first, then fall back to config
         api_key = os.environ.get("MINIMAX_API_KEY")
+        if not api_key:
+            from cucumber_agent.config import Config
+
+            config = Config.load()
+            prov_cfg = config.get_provider_config("minimax")
+            if prov_cfg and prov_cfg.api_key:
+                api_key = prov_cfg.api_key
+
         if not api_key:
             return ToolResult(
                 success=False,
                 output="",
-                error="MINIMAX_API_KEY nicht gesetzt. Bitte in config.yaml oder als Environment Variable setzen."
+                error="MINIMAX_API_KEY nicht gesetzt. Bitte in config.yaml oder als Environment Variable setzen.",
             )
 
         # If it's a local file, read it and convert to base64
@@ -55,7 +64,13 @@ class UnderstandImageTool(BaseTool):
                     image_data = base64.b64encode(f.read()).decode()
                     # Determine mime type from extension
                     ext = path.suffix.lower()
-                    mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp"}
+                    mime_map = {
+                        ".jpg": "image/jpeg",
+                        ".jpeg": "image/jpeg",
+                        ".png": "image/png",
+                        ".gif": "image/gif",
+                        ".webp": "image/webp",
+                    }
                     mime = mime_map.get(ext, "image/jpeg")
                     image_url = f"data:{mime};base64,{image_data}"
             else:
@@ -76,12 +91,12 @@ class UnderstandImageTool(BaseTool):
                                 "role": "user",
                                 "content": [
                                     {"type": "text", "text": prompt},
-                                    {"type": "image_url", "image_url": {"url": image_url}}
-                                ]
+                                    {"type": "image_url", "image_url": {"url": image_url}},
+                                ],
                             }
                         ],
                         "max_tokens": 1000,
-                    }
+                    },
                 )
                 resp.raise_for_status()
                 data = resp.json()

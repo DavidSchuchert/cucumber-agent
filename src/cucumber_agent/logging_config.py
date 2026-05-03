@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import logging
 import sys
-from pathlib import Path
-from datetime import datetime
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 DEFAULT_LOG_DIR = Path.home() / ".cucumber" / "logs"
 DEFAULT_LOG_FILE = DEFAULT_LOG_DIR / "cucumber.log"
@@ -98,7 +97,9 @@ def log_error(error: Exception, context: str = "") -> None:
     print(f"[ERROR] {msg}", file=sys.stderr)
 
 
-def log_skill_execution(skill_name: str, args: str, success: bool, error: str | None = None) -> None:
+def log_skill_execution(
+    skill_name: str, args: str, success: bool, error: str | None = None
+) -> None:
     """Log skill execution for debugging."""
     logger = get_logger("skills")
     status = "OK" if success else "FAILED"
@@ -120,7 +121,9 @@ def log_tool_execution(tool_name: str, args: dict, success: bool, error: str | N
     logger.info(msg)
 
 
-def log_provider_call(provider: str, model: str, tokens_used: int | None = None, error: str | None = None) -> None:
+def log_provider_call(
+    provider: str, model: str, tokens_used: int | None = None, error: str | None = None
+) -> None:
     """Log provider API call."""
     logger = get_logger("provider")
     msg = f"PROVIDER: {provider}/{model}"

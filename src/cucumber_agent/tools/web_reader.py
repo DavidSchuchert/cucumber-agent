@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import httpx
 import trafilatura
+
 from cucumber_agent.tools.base import BaseTool, ToolResult
 from cucumber_agent.tools.registry import ToolRegistry
 
@@ -41,24 +42,24 @@ class WebReaderTool(BaseTool):
                 }
                 response = await client.get(url, headers=headers)
                 response.raise_for_status()
-                
+
                 html = response.text
-                
+
                 # Extract main content using trafilatura
                 # include_links=True to keep references, include_formatting=True for headers/bold/etc
                 content = trafilatura.extract(
-                    html, 
-                    include_links=True, 
+                    html,
+                    include_links=True,
                     include_formatting=True,
                     output_format="markdown",
-                    favor_precision=True
+                    favor_precision=True,
                 )
-                
+
                 if not content:
                     return ToolResult(
                         success=False,
                         output="",
-                        error="Could not extract meaningful content from the page. It might be empty or protected."
+                        error="Could not extract meaningful content from the page. It might be empty or protected.",
                     )
 
                 # Truncate if extremely long to save tokens (approx 15k tokens limit)
@@ -71,14 +72,10 @@ class WebReaderTool(BaseTool):
             return ToolResult(
                 success=False,
                 output="",
-                error=f"HTTP error {e.response.status_code}: {e.response.reason_phrase}"
+                error=f"HTTP error {e.response.status_code}: {e.response.reason_phrase}",
             )
         except Exception as e:
-            return ToolResult(
-                success=False,
-                output="",
-                error=f"Failed to read URL: {str(e)}"
-            )
+            return ToolResult(success=False, output="", error=f"Failed to read URL: {str(e)}")
 
 
 # Register the tool
