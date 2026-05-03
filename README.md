@@ -95,16 +95,22 @@ cucumber-agent/
 
 - [x] Streaming responses
 - [x] Token budget management (context trimming)
-- [x] Personality system (name, tone, language)
-- [x] Multi-provider support (MiniMax, OpenRouter, Ollama)
+- [x] **3-tier memory architecture** — immutable personality anchor, operational context, compressed history
+- [x] Personality system (name, tone, language) — survives context compression
+- [x] Multi-provider support (MiniMax, OpenRouter, Ollama, DeepSeek)
 - [x] Clean structured config (YAML + Markdown)
-- [x] **Tool system** — shell, search, web search, web reader, agent
-- [x] **Custom tools** — hot-reload from ~/.cucumber/custom_tools/
-- [x] **Skill system** — YAML manifests with {args} expansion
-- [x] **Memory system** — session logging + persistent facts
+- [x] **Tool system** — shell, search, web search, web reader, agent, calculator
+- [x] **Custom tools** — hot-reload from `~/.cucumber/custom_tools/`
+- [x] **Skill system** — YAML manifests with `{args}` expansion
+- [x] **Memory system** — session logging (markdown + SQLite) + persistent facts store
 - [x] **Smart retry** — auto-retry READ commands on path errors
 - [x] **Thinking blocks** — display agent internal thoughts
 - [x] **Workspace detection** — auto-detect Python, Node, Rust, etc.
+- [x] **Sub-agent tool** — recursive delegation, 15-step loop, auto-approve propagation
+- [x] **Context management** — `/compact`, `/context`, `/pin`, `/unpin`
+- [x] **Token cost tracking** — `/cost` shows per-session usage and estimated USD
+- [x] **Multi-line input** — end any line with `\` to continue on the next line
+- [x] **Auto-approve** — `[4]` or `/autoapprove` silences all tool prompts (incl. sub-agents)
 
 ## Tools
 

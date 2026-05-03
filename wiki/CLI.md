@@ -12,19 +12,8 @@ cucumber run
 
 1. Loads config from `~/.cucumber/config.yaml`
 2. Loads personality from `~/.cucumber/personality/personality.md`
-3. Creates a new Session
-4. Starts a REPL loop
-5. Streams AI responses in real-time
-
-### Usage
-
-```bash
-# Normal startup
-cucumber run
-
-# With debug output
-DEBUG=1 cucumber run
-```
+3. Restores previous session summary from disk (if memory is enabled)
+4. Starts the REPL loop with tab-completion
 
 ## `cucumber init`
 
@@ -51,8 +40,6 @@ cucumber init
 
 ### Output files
 
-After setup, these files are created:
-
 ```
 ~/.cucumber/
 ├── config.yaml
@@ -76,29 +63,136 @@ Show help.
 cucumber --help
 ```
 
+---
+
 ## REPL Commands
 
-Inside the interactive session:
+All commands start with `/`. Tab-completion is available for all of them.
+
+### Conversation
 
 | Command | Description |
 |---------|-------------|
-| `/help` | Show available commands |
-| `/exit` | Exit CucumberAgent |
-| `/clear` | Clear the conversation |
-| `/config` | Show current configuration |
-| `/model` | Show current model |
-| `/debug` | Toggle debug view |
-| `Ctrl+C` | Cancel current response |
-| `Ctrl+D` | Exit |
+| `/help` | Show all available commands |
+| `/exit` | Save session summary and exit |
+| `/clear` | Clear conversation (workspace/facts metadata preserved) |
+| `/history [N]` | Show last N messages (default 10) |
+| `/undo` | Remove last user + assistant message pair |
+| `/export` | Export session as Markdown to `~/Downloads/` |
 
-### Output Formatting
+### Multi-line Input
 
-AI responses are automatically formatted:
-- **Markdown** rendered with proper styling
-- **Code blocks** shown with syntax highlighting (monokai theme) and line numbers
-- **Inline code** styled distinctly
+End any line with `\` to continue on the next line:
+
+```
+You> Write a Python function that\
+  ... takes a list and\
+  ... returns only even numbers
+```
+
+The prompt switches to `  ...` while accumulating. Send a line without `\` to submit.
+
+### Context & Memory
+
+| Command | Description |
+|---------|-------------|
+| `/context` | Show token usage, context %, live message count |
+| `/compact` | Manually compress conversation history now |
+| `/memory` | List all stored facts |
+| `/remember key: value` | Store a persistent fact |
+| `/forget key` | Delete a stored fact |
+| `/pin <text>` | Pin text into the system prompt — survives compression |
+| `/pin` | List all pinned items |
+| `/unpin <nr>` | Remove a pinned item by number |
+
+**How `/pin` works:** Pinned text is injected as high-priority context into every system prompt, above the operational instructions. It is never compressed or lost.
+
+### Agent & Tools
+
+| Command | Description |
+|---------|-------------|
+| `/tools` | List all registered tools and their auto-approve status |
+| `/autoapprove` | Toggle session-wide tool auto-approve (incl. sub-agents) |
+| `/skills` | List installed YAML skills |
+
+**Tool Approval Dialog:**
+
+When the agent wants to execute a tool that requires approval, a dialog appears:
+
+```
+[1] Ausführen    [2] Abbrechen    [3] Bearbeiten    [4] Alle akzeptieren
+```
+
+| Choice | Effect |
+|--------|--------|
+| `1` | Execute this tool call |
+| `2` | Cancel this tool call |
+| `3` | Edit the command before executing (shell tool only) |
+| `4` | Auto-approve all remaining tool calls for this session (incl. sub-agents) |
+
+**Sub-agent Tool Approval Dialog:**
+
+```
+[1] Ausführen    [2] Überspringen    [3] Bearbeiten    [4] Alle akzeptieren    [5] Abbrechen
+```
+
+| Choice | Effect |
+|--------|--------|
+| `1` | Execute this tool call |
+| `2` | Skip this tool call |
+| `3` | Edit command |
+| `4` | Auto-approve all remaining calls for this sub-agent run |
+| `5` | Abort the entire sub-agent |
+
+### Stats & Info
+
+| Command | Description |
+|---------|-------------|
+| `/config` | Show current provider/model/personality settings |
+| `/model` | Show current provider and model |
+| `/cost` | Show token counts and estimated USD cost for this session |
+| `/debug` | Toggle debug mode (shows extra context info) |
+
+### Personality
+
+| Command | Description |
+|---------|-------------|
+| `/optimize` | Let the AI analyse its own name and suggest personality improvements (emoji, greeting, strengths) |
+
+### Skills
+
+| Command | Description |
+|---------|-------------|
+| `/skills` | List installed skills |
+| `/<skillname> [args]` | Run a skill by its command name |
+
+---
+
+## Output Formatting
+
+AI responses are formatted with [rich](https://github.com/Textualize/rich):
+
+- **Code blocks** — Syntax highlighted (monokai theme), with language detection
+- **Thinking blocks** — `<think>` / `<thinking>` blocks shown as dimmed italic text
+- **Context bar** — Each response shows token count and context usage percentage
+- **Panels** — Responses wrapped in a styled panel with the agent's emoji and name
+
+---
 
 ## Exit Codes
 
-- `0` — Normal exit
-- `1` — Error (no config, provider error, etc.)
+| Code | Meaning |
+|------|---------|
+| `0` | Normal exit |
+| `1` | Error (no config, provider error, etc.) |
+
+---
+
+## Keyboard Shortcuts
+
+| Shortcut | Effect |
+|----------|--------|
+| `Ctrl+C` | Cancel current operation / go back to prompt |
+| `Ctrl+D` | Exit (saves session summary) |
+| `Tab` | Command completion |
+| `↑ / ↓` | Navigate input history |
