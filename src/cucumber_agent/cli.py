@@ -8,25 +8,23 @@ import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+from prompt_toolkit import PromptSession
+from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.history import InMemoryHistory
+from prompt_toolkit.styles import Style as PtkStyle
 from rich.columns import Columns
 from rich.console import Console
-from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.rule import Rule
 from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
-from prompt_toolkit import PromptSession
-from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
-from prompt_toolkit.completion import WordCompleter
-from prompt_toolkit.history import InMemoryHistory
-from prompt_toolkit.formatted_text import HTML
-from prompt_toolkit.styles import Style as PtkStyle
-
 from cucumber_agent.agent import Agent
 from cucumber_agent.config import Config
-from cucumber_agent.logging_config import setup_logging, get_logger, log_error
+from cucumber_agent.logging_config import get_logger, setup_logging
 from cucumber_agent.memory import FactsStore, SessionLogger
 from cucumber_agent.session import Session
 from cucumber_agent.skills import SkillLoader, SkillRunner
@@ -104,7 +102,7 @@ def print_welcome(config: Config) -> None:
     header_text = Text.assemble(
         (f"{pers.emoji} ", "bold"),
         (f"{pers.name} ", "bold green"),
-        (f"· powered by {agent_cfg.provider}/{agent_cfg.model}", "dim green")
+        (f"· powered by {agent_cfg.provider}/{agent_cfg.model}", "dim green"),
     )
     console.print(Panel(header_text, border_style="green", expand=False))
     console.print()
@@ -116,9 +114,9 @@ def print_welcome(config: Config) -> None:
     if config.preferences.can_code:
         badges.append("[reverse cyan] 💻 SHELL [/reverse cyan]")
     badges.append("[reverse blue] 🤖 SUBAGENT [/reverse blue]")
-    
+
     console.print(Columns(badges, padding=(0, 2)))
-    console.print(f"\n[dim]Tippe [bold]/help[/bold] für Befehle oder einfach loslegen![/dim]")
+    console.print("\n[dim]Tippe [bold]/help[/bold] für Befehle oder einfach loslegen![/dim]")
     console.print()
 
 
@@ -129,24 +127,26 @@ def print_help() -> None:
     table.add_column("Beschreibung", style="white")
 
     commands = [
-        ("/help",          "Diese Hilfe anzeigen"),
-        ("/exit",          "CucumberAgent beenden"),
-        ("/clear",         "Gesprächsverlauf löschen (Kontext bleibt erhalten)"),
-        ("/config",        "Aktuelle Konfiguration anzeigen"),
-        ("/model",         "Aktuelles Modell anzeigen"),
-        ("/optimize",      "Persönlichkeit basierend auf Namen optimieren"),
-        ("/debug",         "Debug-Modus ein/ausschalten"),
-        ("/memory",        "Alle gemerkten Fakten anzeigen"),
-        ("/context",       "Aktuelle Context-Auslastung anzeigen"),
-        ("/remember ...",  "Fakt merken, z.B. /remember name: David"),
-        ("/forget ...",    "Fakt vergessen, z.B. /forget name"),
-        ("/skills",        "Installierte Skills auflisten"),
+        ("/help", "Diese Hilfe anzeigen"),
+        ("/exit", "CucumberAgent beenden"),
+        ("/clear", "Gesprächsverlauf löschen (Kontext bleibt erhalten)"),
+        ("/config", "Aktuelle Konfiguration anzeigen"),
+        ("/model", "Aktuelles Modell anzeigen"),
+        ("/optimize", "Persönlichkeit basierend auf Namen optimieren"),
+        ("/debug", "Debug-Modus ein/ausschalten"),
+        ("/memory", "Alle gemerkten Fakten anzeigen"),
+        ("/context", "Aktuelle Context-Auslastung anzeigen"),
+        ("/remember ...", "Fakt merken, z.B. /remember name: David"),
+        ("/forget ...", "Fakt vergessen, z.B. /forget name"),
+        ("/skills", "Installierte Skills auflisten"),
     ]
     for cmd, desc in commands:
         table.add_row(cmd, desc)
 
     console.print()
-    console.print(Panel(table, title="[bold green]Befehle[/bold green]", border_style="green", padding=(1, 2)))
+    console.print(
+        Panel(table, title="[bold green]Befehle[/bold green]", border_style="green", padding=(1, 2))
+    )
     console.print()
 
 
@@ -159,17 +159,24 @@ def print_config(config: Config) -> None:
     table.add_column("Key", style="dim")
     table.add_column("Value", style="white")
 
-    table.add_row("Provider",     f"[cyan]{agent.provider}[/cyan]")
-    table.add_row("Modell",       f"[cyan]{agent.model}[/cyan]")
-    table.add_row("Temperatur",   str(agent.temperature))
-    table.add_row("Name",         f"{pers.emoji} {pers.name}")
-    table.add_row("Ton",          pers.tone)
-    table.add_row("Sprache",      pers.language)
-    table.add_row("Greeting",     pers.greeting or "—")
-    table.add_row("Stärken",      pers.strengths or "—")
+    table.add_row("Provider", f"[cyan]{agent.provider}[/cyan]")
+    table.add_row("Modell", f"[cyan]{agent.model}[/cyan]")
+    table.add_row("Temperatur", str(agent.temperature))
+    table.add_row("Name", f"{pers.emoji} {pers.name}")
+    table.add_row("Ton", pers.tone)
+    table.add_row("Sprache", pers.language)
+    table.add_row("Greeting", pers.greeting or "—")
+    table.add_row("Stärken", pers.strengths or "—")
 
     console.print()
-    console.print(Panel(table, title="[bold green]Konfiguration[/bold green]", border_style="green", padding=(1, 2)))
+    console.print(
+        Panel(
+            table,
+            title="[bold green]Konfiguration[/bold green]",
+            border_style="green",
+            padding=(1, 2),
+        )
+    )
     console.print()
 
 
@@ -256,6 +263,7 @@ class CliSession:
         self._facts = FactsStore(config.memory.facts_file)
         self._logger = SessionLogger(config.memory.log_dir)
         from cucumber_agent.memory import SessionSummary
+
         self._summary_store = SessionSummary(config.memory.summary_file)
 
         # Skills & Custom Tools
@@ -264,6 +272,7 @@ class CliSession:
 
         # Import tools
         from cucumber_agent import tools  # noqa: F401
+
         self._custom_tool_loader = tools.CustomToolLoader()
         self._custom_tool_loader.load_all()
 
@@ -273,7 +282,7 @@ class CliSession:
         ws = WorkspaceDetector.detect(self._config.workspace)
         self._session.metadata["workspace"] = ws.to_context_string()
         self._session.metadata["facts_context"] = self._facts.to_context_string()
-        
+
         # Self-awareness: Tell the agent where its own files are
         config_dir = self._config.config_dir
         wiki_dir = self._config.workspace / "wiki"
@@ -290,10 +299,10 @@ class CliSession:
             if not summary:
                 # Fallback to logs if no specific session summary exists
                 summary = self._logger.get_recent_summary(days=3, max_entries=10)
-            
+
             if summary:
                 self._session.metadata["summary"] = summary
-                console.print(f"  [dim]🧠 Vergangene Unterhaltungen geladen...[/dim]")
+                console.print("  [dim]🧠 Vergangene Unterhaltungen geladen...[/dim]")
 
         print_welcome(self._config)
 
@@ -301,16 +310,28 @@ class CliSession:
 
         # Build slash-command completer (static + skill commands)
         slash_commands = [
-            "/help", "/exit", "/quit", "/clear",
-            "/config", "/model", "/debug", "/optimize",
-            "/memory", "/remember", "/forget", "/skills", "/tools",
+            "/help",
+            "/exit",
+            "/quit",
+            "/clear",
+            "/config",
+            "/model",
+            "/debug",
+            "/optimize",
+            "/memory",
+            "/remember",
+            "/forget",
+            "/skills",
+            "/tools",
         ] + [s.command for s in self._skill_loader.skills]
         completer = WordCompleter(sorted(set(slash_commands)), sentence=True)
 
-        ptk_style = PtkStyle.from_dict({
-            "prompt":       "bold ansibrightgreen",
-            "auto-suggest": "ansibrightblack",
-        })
+        ptk_style = PtkStyle.from_dict(
+            {
+                "prompt": "bold ansibrightgreen",
+                "auto-suggest": "ansibrightblack",
+            }
+        )
         history = InMemoryHistory()
         pt_session: PromptSession = PromptSession(
             history=history,
@@ -324,14 +345,18 @@ class CliSession:
         while self._running:
             try:
                 if not self._debug_mode:
-                    prompt_text = HTML(f"<b><ansigreen>{pers.emoji} {pers.name}&gt;</ansigreen></b> ")
+                    prompt_text = HTML(
+                        f"<b><ansigreen>{pers.emoji} {pers.name}&gt;</ansigreen></b> "
+                    )
                 else:
                     prompt_text = HTML(f"<b><ansired>🔧 {pers.name} [DEBUG]&gt;</ansired></b> ")
 
                 user_input = await pt_session.prompt_async(prompt_text)
                 await self._handle_input(user_input)
             except KeyboardInterrupt:
-                console.print(f"\n  [dim]Strg+C erkannt. Tippe [bold]/exit[/bold] zum Beenden.[/dim]")
+                console.print(
+                    "\n  [dim]Strg+C erkannt. Tippe [bold]/exit[/bold] zum Beenden.[/dim]"
+                )
             except EOFError:
                 console.print(f"\n[bold green]{pers.emoji}  Tschüss![/bold green]\n")
                 break
@@ -358,7 +383,7 @@ class CliSession:
 
         # Regular chat
         console.print()
-        
+
         # Hot-reload custom tools if needed
         if self._custom_tool_loader.needs_reload():
             self._custom_tool_loader.load_all()
@@ -367,17 +392,22 @@ class CliSession:
             offer_optimization = self._agent.needs_optimization(user_input)
             with console.status("  [dim]denkt nach...[/dim]", spinner="dots", spinner_style="dim"):
                 response = await self._agent.run_with_tools(self._session, user_input)
-            
-            await self._process_agent_response(response, user_input)
 
+            await self._process_agent_response(response, user_input)
 
             # After first greeting, offer optimization
             if offer_optimization:
                 pers = self._config.personality
                 console.print(Rule(style="dim cyan"))
-                console.print(f"  [bold]{pers.emoji}  Möchtest du, dass ich meine Persönlichkeit optimiere?[/bold]")
-                console.print("  [dim]Ich kann Emoji, Greeting und Stärken basierend auf meinem Namen anpassen.[/dim]")
-                console.print("  [dim]Antworte mit [bold white]ja[/bold white] oder [bold white]nein[/bold white][/dim]")
+                console.print(
+                    f"  [bold]{pers.emoji}  Möchtest du, dass ich meine Persönlichkeit optimiere?[/bold]"
+                )
+                console.print(
+                    "  [dim]Ich kann Emoji, Greeting und Stärken basierend auf meinem Namen anpassen.[/dim]"
+                )
+                console.print(
+                    "  [dim]Antworte mit [bold white]ja[/bold white] oder [bold white]nein[/bold white][/dim]"
+                )
                 console.print(Rule(style="dim cyan"))
                 console.print()
                 self._waiting_for_optimization_response = True
@@ -387,6 +417,7 @@ class CliSession:
             console.print(f"[bold red]Error:[/bold red] {e}")
             if self._debug_mode:
                 import traceback
+
                 console.print(f"[dim red]{traceback.format_exc()}[/dim red]")
 
     async def _process_agent_response(self, response, user_input: str = "") -> None:
@@ -394,27 +425,77 @@ class CliSession:
         if response.tool_calls:
             if response.content and response.content.strip():
                 import re
+
                 # Clean up thinking/reasoning blocks
-                clean_tool_content = re.sub(r'<(think|thinking|thought)>.*?</\1>', '', response.content, flags=re.DOTALL | re.IGNORECASE).strip()
-                
+                clean_tool_content = re.sub(
+                    r"<(think|thinking|thought)>.*?</\1>",
+                    "",
+                    response.content,
+                    flags=re.DOTALL | re.IGNORECASE,
+                ).strip()
+
                 if clean_tool_content:
                     words = clean_tool_content.lower()
-                    if not any(w in words for w in ['ich', 'i will', 'let me', 'now', 'jetzt', 'werde']):
+                    if not any(
+                        w in words for w in ["ich", "i will", "let me", "now", "jetzt", "werde"]
+                    ):
                         console.print(f"  [dim]{clean_tool_content}[/dim]")
                     console.print()
-            
-            # Appending the actual assistant message containing the tool calls
-            from cucumber_agent.session import Message, Role
-            assistant_msg = Message(
-                role=Role.ASSISTANT,
-                content=response.content or "",
-                tool_calls=response.tool_calls
-            )
-            self._session.messages.append(assistant_msg)
 
+            from cucumber_agent.session import Message as SessionMessage
+            from cucumber_agent.session import Role as SessionRole
+            from cucumber_agent.tools.registry import ToolRegistry
+
+            # Auto-execute safe tools, queue the rest for approval
+            auto_calls = []
+            manual_calls = []
+            for tc in response.tool_calls:
+                tool_obj = ToolRegistry.get(tc.name)
+                if tool_obj and getattr(tool_obj, "auto_approve", False):
+                    auto_calls.append(tc)
+                else:
+                    manual_calls.append(tc)
+
+            # Execute auto-approved tools immediately
+            for tc in auto_calls:
+                console.print(f"  [dim]⚡ {tc.name}...[/dim]")
+                auto_result = await ToolRegistry.execute(tc.name, **tc.arguments)
+                auto_output = (
+                    auto_result.output
+                    if auto_result.success
+                    else "ERROR: " + (auto_result.error or auto_result.output)
+                )
+                if len(auto_output) > 3000:
+                    auto_output = auto_output[:1500] + "\n...[TRUNCATED]...\n" + auto_output[-1500:]
+
+                self._session.messages.append(
+                    SessionMessage(
+                        role=SessionRole.TOOL,
+                        content=auto_output,
+                        name=tc.name,
+                        tool_call_id=tc.id,
+                    )
+                )
+                # If remember tool, refresh facts in live session
+                if tc.name == "remember":
+                    self._facts._facts = self._facts._load()
+                    self._session.metadata["facts_context"] = self._facts.to_context_string()
+                if auto_result.success and auto_output.strip():
+                    console.print(f"  [dim green]✓ {auto_output.strip()[:120]}[/dim green]")
+
+            # If only auto-approve tools, synthesize response
+            if not manual_calls:
+                if auto_calls:
+                    with console.status(
+                        "  [dim]denkt nach...[/dim]", spinner="dots", spinner_style="dim"
+                    ):
+                        follow_up = await self._agent.run_with_tools(self._session, "")
+                    await self._process_agent_response(follow_up)
+                return
+
+            # Queue manual tool calls for approval
             self._pending_tool_calls = [
-                {"name": tc.name, "arguments": tc.arguments, "id": tc.id}
-                for tc in response.tool_calls
+                {"name": tc.name, "arguments": tc.arguments, "id": tc.id} for tc in manual_calls
             ]
             self._print_tool_call(self._pending_tool_calls[0])
             return
@@ -422,12 +503,21 @@ class CliSession:
         # Regular text response
         if response.content and response.content.strip():
             import re
-            
+
             # Extract thinking blocks (handles <think>, <thinking>, <thought> case-insensitive)
-            thinking_blocks = re.findall(r'<(think|thinking|thought)>(.*?)</\1>', response.content, flags=re.DOTALL | re.IGNORECASE)
+            thinking_blocks = re.findall(
+                r"<(think|thinking|thought)>(.*?)</\1>",
+                response.content,
+                flags=re.DOTALL | re.IGNORECASE,
+            )
             # Clean up the main content
-            clean_content = re.sub(r'<(think|thinking|thought)>.*?</\1>', '', response.content, flags=re.DOTALL | re.IGNORECASE).strip()
-            
+            clean_content = re.sub(
+                r"<(think|thinking|thought)>.*?</\1>",
+                "",
+                response.content,
+                flags=re.DOTALL | re.IGNORECASE,
+            ).strip()
+
             # Display thinking blocks if any
             if thinking_blocks:
                 for _, block in thinking_blocks:
@@ -439,29 +529,33 @@ class CliSession:
                 return
 
             pers = self._config.personality
-            
+
             # Use a Panel for the response to make it look premium
             panel = Panel(
                 clean_content,
                 title=f"[bold green]{pers.emoji} {pers.name}[/bold green]",
                 title_align="left",
                 border_style="dim green",
-                padding=(1, 2)
+                padding=(1, 2),
             )
             console.print(panel)
-            
+
             # Show context usage
             current_messages = self._agent._build_messages(self._session)
             total_tokens = self._agent.estimate_tokens(current_messages)
             max_context = self._config.context.max_tokens
             usage_pct = (total_tokens / max_context) * 100
-            
+
             # Determine color based on usage
             color = "green"
-            if usage_pct > 80: color = "red"
-            elif usage_pct > 50: color = "yellow"
-            
-            console.print(f"  [dim]Context: [{color}]{total_tokens}[/{color}] / {max_context} tokens ({usage_pct:.1f}%)[/dim]\n")
+            if usage_pct > 80:
+                color = "red"
+            elif usage_pct > 50:
+                color = "yellow"
+
+            console.print(
+                f"  [dim]Context: [{color}]{total_tokens}[/{color}] / {max_context} tokens ({usage_pct:.1f}%)[/dim]\n"
+            )
 
             # Log the exchange (only if we have a user input to pair it with)
             if self._config.memory.enabled and user_input:
@@ -473,29 +567,28 @@ class CliSession:
         """Compress old messages into a summary if the history is too long."""
         if not self._config.memory.enabled:
             return
-        
+
         # Trigger by message count
         if len(self._session.messages) < self._config.memory.max_session_messages:
             return
-            
+
         console.print("  [dim]🔄 Komprimiere Gesprächsverlauf...[/dim]")
-        
+
         # Keep the most recent messages, summarize the rest
         keep_recent = self._config.memory.summarize_keep_recent
         to_summarize = self._session.messages[:-keep_recent]
         remaining = self._session.messages[-keep_recent:]
-        
+
         # Create summary
         new_summary = await self._agent.summarize_messages(to_summarize)
-        
+
         # Update session
         self._session.metadata["summary"] = new_summary
         self._session.messages = remaining
-        
+
         # Persist summary to disk
         self._summary_store.save(new_summary)
         console.print("  [dim]✓ Verlauf zusammengefasst und gespeichert.[/dim]")
-
 
     async def _handle_optimization_response(self, user_input: str) -> None:
         """Handle user's response to optimization offer."""
@@ -504,13 +597,29 @@ class CliSession:
         response = user_input.lower().strip()
 
         # Check if user declined
-        no_patterns = [r"^nein\b", r"^no\b", r"^n\b", r"^ne\b", r"^überspring\b", r"^skip\b", r"^nee\b"]
+        no_patterns = [
+            r"^nein\b",
+            r"^no\b",
+            r"^n\b",
+            r"^ne\b",
+            r"^überspring\b",
+            r"^skip\b",
+            r"^nee\b",
+        ]
         if any(re.match(p, response) for p in no_patterns):
             console.print("[dim]OK, überspringe Optimierung.[/dim]\n")
             return
 
         # User wants optimization - check if response contains positive intent
-        positive_patterns = [r"^ja\b", r"^yes\b", r"^optimier", r"^ok\b", r"^okay\b", r"^gerne\b", r"^yo\b"]
+        positive_patterns = [
+            r"^ja\b",
+            r"^yes\b",
+            r"^optimier",
+            r"^ok\b",
+            r"^okay\b",
+            r"^gerne\b",
+            r"^yo\b",
+        ]
         if not any(re.match(p, response) for p in positive_patterns):
             console.print("[dim]Verstanden, keine Optimierung.[/dim]\n")
             return
@@ -547,9 +656,11 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
 
         # Clear the session and send this prompt to the AI
         optimization_session = Session(id="optimize", model=self._config.agent.model)
-        
+
         console.print()
-        with console.status("  [dim]Analysiere Persönlichkeit...[/dim]", spinner="dots", spinner_style="dim"):
+        with console.status(
+            "  [dim]Analysiere Persönlichkeit...[/dim]", spinner="dots", spinner_style="dim"
+        ):
             stream = self._agent.run_stream(optimization_session, optimization_prompt)
             full_response = await stream_print(stream)
 
@@ -566,7 +677,9 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
             personality_file.read_text()  # Will raise if can't read
 
             console.print(f"\n[dim]{explanation}[/dim]")
-            console.print("\n[green]✅ Personality optimized! Changes saved to personality.md[/green]\n")
+            console.print(
+                "\n[green]✅ Personality optimized! Changes saved to personality.md[/green]\n"
+            )
             console.print("[dim]Restart: Ctrl+C + cucumber run[/dim]\n")
         else:
             explanation = result[1] if result else "No improvements suggested."
@@ -585,7 +698,7 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
         if skill:
             args = parts[1] if len(parts) > 1 else ""
             console.print(f"  [dim magenta]⚡ Skill: {skill.name}[/dim magenta]\n")
-            
+
             with console.status("  [dim]führe aus...[/dim]", spinner="dots", spinner_style="dim"):
                 try:
                     result = await SkillRunner.run(skill, args, self._session, self._agent)
@@ -603,7 +716,7 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
 
         cmd = user_input.strip().lower()
         # Extract argument for parametric commands
-        arg = user_input.strip()[len(parts[0]):].strip()
+        arg = user_input.strip()[len(parts[0]) :].strip()
 
         match cmd.split()[0] if cmd else cmd:
             case "/help":
@@ -635,42 +748,57 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                     console.print("  [dim]Keine gemerkten Fakten.[/dim]\n")
                 else:
                     table = Table(show_header=False, box=None, padding=(0, 2))
-                    table.add_column("Key",   style="cyan")
+                    table.add_column("Key", style="cyan")
                     table.add_column("Value", style="white")
                     for k, v in facts.items():
                         table.add_row(k, v)
                     console.print()
-                    console.print(Panel(table, title="[bold cyan]🧠 Gemerkte Fakten[/bold cyan]", border_style="cyan", padding=(0, 1)))
+                    console.print(
+                        Panel(
+                            table,
+                            title="[bold cyan]🧠 Gemerkte Fakten[/bold cyan]",
+                            border_style="cyan",
+                            padding=(0, 1),
+                        )
+                    )
                     console.print()
             case "/context":
                 current_messages = self._agent._build_messages(self._session)
                 total_tokens = self._agent.estimate_tokens(current_messages)
                 max_context = self._config.context.max_tokens
                 usage_pct = (total_tokens / max_context) * 100
-                
+
                 table = Table(show_header=False, box=None, padding=(0, 2))
                 table.add_row("Aktueller Context:", f"[bold]{total_tokens}[/bold] Tokens")
                 table.add_row("Maximaler Context:", f"{max_context} Tokens")
                 table.add_row("Auslastung:", f"{usage_pct:.1f}%")
-                
-                summary_status = "[green]Aktiv[/green]" if self._session.metadata.get("summary") else "[dim]Inaktiv[/dim]"
+
+                summary_status = (
+                    "[green]Aktiv[/green]"
+                    if self._session.metadata.get("summary")
+                    else "[dim]Inaktiv[/dim]"
+                )
                 table.add_row("Gesprächs-Summary:", summary_status)
                 table.add_row("Nachrichten (Live):", f"{len(self._session.messages)}")
-                
+
                 # Show a small progress bar
                 bar_width = 20
                 filled = int(usage_pct / (100 / bar_width)) if usage_pct < 100 else bar_width
                 bar = "█" * filled + "░" * (bar_width - filled)
                 color = "green"
-                if usage_pct > 80: color = "red"
-                elif usage_pct > 50: color = "yellow"
-                
-                console.print(Panel(
-                    table, 
-                    title="[bold cyan]📊 Context-Status[/bold cyan]", 
-                    border_style="cyan",
-                    subtitle=f"[{color}]{bar}[/{color}]"
-                ))
+                if usage_pct > 80:
+                    color = "red"
+                elif usage_pct > 50:
+                    color = "yellow"
+
+                console.print(
+                    Panel(
+                        table,
+                        title="[bold cyan]📊 Context-Status[/bold cyan]",
+                        border_style="cyan",
+                        subtitle=f"[{color}]{bar}[/{color}]",
+                    )
+                )
                 console.print()
             case "/remember":
                 if not arg:
@@ -688,22 +816,69 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                     console.print(f"  [green]✓ „{arg}“ vergessen[/green]\n")
                 else:
                     console.print(f"  [dim]Kein Fakt namens „{arg}“ gefunden.[/dim]\n")
+            case "/tools":
+                tools_list = ToolRegistry.list_tools()
+                if not tools_list:
+                    console.print("  [dim]Keine Tools registriert.[/dim]\n")
+                else:
+                    table = Table(
+                        show_header=True, header_style="bold yellow", box=None, padding=(0, 2)
+                    )
+                    table.add_column("Tool", style="bold cyan", no_wrap=True)
+                    table.add_column("Auto", style="dim", no_wrap=True)
+                    table.add_column("Beschreibung", style="white")
+                    for tname in sorted(tools_list):
+                        tool_obj = ToolRegistry.get(tname)
+                        auto = (
+                            "[green]✓[/green]"
+                            if getattr(tool_obj, "auto_approve", False)
+                            else "[dim]—[/dim]"
+                        )
+                        desc = (
+                            (tool_obj.description[:60] + "…")
+                            if tool_obj and len(tool_obj.description) > 60
+                            else (tool_obj.description if tool_obj else "")
+                        )
+                        table.add_row(tname, auto, desc)
+                    console.print()
+                    console.print(
+                        Panel(
+                            table,
+                            title="[bold yellow]🔧 Tools[/bold yellow]",
+                            border_style="yellow",
+                            padding=(0, 1),
+                        )
+                    )
+                    console.print()
             case "/skills":
                 skills = self._skill_loader.skills
                 if not skills:
-                    console.print("  [dim]Keine Skills installiert. Lege .yaml-Dateien in ~/.cucumber/skills/ ab.[/dim]\n")
+                    console.print(
+                        "  [dim]Keine Skills installiert. Lege .yaml-Dateien in ~/.cucumber/skills/ ab.[/dim]\n"
+                    )
                 else:
-                    table = Table(show_header=True, header_style="bold magenta", box=None, padding=(0, 2))
-                    table.add_column("Befehl",       style="bold cyan",  no_wrap=True)
-                    table.add_column("Args",          style="dim",        no_wrap=True)
+                    table = Table(
+                        show_header=True, header_style="bold magenta", box=None, padding=(0, 2)
+                    )
+                    table.add_column("Befehl", style="bold cyan", no_wrap=True)
+                    table.add_column("Args", style="dim", no_wrap=True)
                     table.add_column("Beschreibung", style="white")
                     for s in skills:
                         table.add_row(s.command, s.args_hint, s.description)
                     console.print()
-                    console.print(Panel(table, title="[bold magenta]⚡ Skills[/bold magenta]", border_style="magenta", padding=(0, 1)))
+                    console.print(
+                        Panel(
+                            table,
+                            title="[bold magenta]⚡ Skills[/bold magenta]",
+                            border_style="magenta",
+                            padding=(0, 1),
+                        )
+                    )
                     console.print()
             case _:
-                console.print(f"  [dim]Unbekannter Befehl: [bold]{cmd}[/bold]. Tippe /help für Hilfe.[/dim]\n")
+                console.print(
+                    f"  [dim]Unbekannter Befehl: [bold]{cmd}[/bold]. Tippe /help für Hilfe.[/dim]\n"
+                )
 
     async def _handle_tool_approval(self, user_input: str) -> None:
         """Handle user's response to a tool call."""
@@ -725,8 +900,7 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
 
             # Log tool execution
             logger.info(
-                f"Tool executed: {tool_name} | success: {result.success} | "
-                f"args: {str(args)[:100]}"
+                f"Tool executed: {tool_name} | success: {result.success} | args: {str(args)[:100]}"
             )
             if not result.success:
                 logger.warning(f"Tool failed: {tool_name} | error: {result.error}")
@@ -734,23 +908,54 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
             from cucumber_agent.session import Message, Role
 
             # Then add the actual tool result
-            output_text = result.output if result.success else 'ERROR: ' + (result.error or result.output)
+            output_text = (
+                result.output if result.success else "ERROR: " + (result.error or result.output)
+            )
             if len(output_text) > 3000:
                 output_text = output_text[:1500] + "\n... [TRUNCATED] ...\n" + output_text[-1500:]
-            
+
             tool_result_msg = Message(
                 role=Role.TOOL,
                 content=output_text,
                 name=tool_name,
-                tool_call_id=tool_call.get("id", "")
+                tool_call_id=tool_call.get("id", ""),
             )
             self._session.messages.append(tool_result_msg)
 
             if result.success:
-                console.print("[green]✓[/green]\n")
+                stripped = output_text.strip()
+                if stripped:
+                    lang = "text"
+                    if command:
+                        if any(x in command for x in ["python", ".py", "pip"]):
+                            lang = "python"
+                        elif any(x in command for x in [".json", "jq"]):
+                            lang = "json"
+                        elif any(
+                            x in command for x in ["ls", "find", "cat", "grep", "git", "echo"]
+                        ):
+                            lang = "bash"
+                    console.print(
+                        Panel(
+                            Syntax(stripped[:4000], lang, theme="monokai", word_wrap=True),
+                            title="[dim green]✓ Output[/dim green]",
+                            border_style="dim green",
+                            padding=(0, 1),
+                        )
+                    )
+                    console.print()
+                else:
+                    console.print("[green]✓ Done[/green]\n")
             else:
                 error = result.error or result.output
-                console.print(f"[red]✗ Error:[/red] {error}\n")
+                console.print(
+                    Panel(
+                        error,
+                        title="[bold red]✗ Error[/bold red]",
+                        border_style="red",
+                    )
+                )
+                console.print()
 
                 # Check if we should auto-retry (only for shell commands)
                 if command:
@@ -764,12 +969,14 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
 
                         if decision.alternatives:
                             new_cmd = decision.alternatives[0]
-                            console.print(f"[yellow]↻ Auto-retrying with alternative...[/yellow]\n")
+                            console.print("[yellow]↻ Auto-retrying with alternative...[/yellow]\n")
                             args["command"] = new_cmd
                         else:
-                            console.print(f"[yellow]↻ Auto-retrying same command...[/yellow]\n")
+                            console.print("[yellow]↻ Auto-retrying same command...[/yellow]\n")
 
-                        await self._execute_auto_retry(tool_name, args, command, self._retry_count[retry_key])
+                        await self._execute_auto_retry(
+                            tool_name, args, command, self._retry_count[retry_key]
+                        )
                         return
 
             # If more tool calls queued, show next one
@@ -786,44 +993,45 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
             # Cancel this tool call
             tool_call = self._pending_tool_calls.pop(0)
             console.print("[dim]Tool call cancelled.[/dim]\n")
-            
+
             # Add a "cancelled" result to satisfy API requirements
             from cucumber_agent.session import Message, Role
-            self._session.messages.append(Message(
-                role=Role.TOOL,
-                content="Cancelled by user.",
-                name=tool_name,
-                tool_call_id=tool_call.get("id", "")
-            ))
-            
+
+            self._session.messages.append(
+                Message(
+                    role=Role.TOOL,
+                    content="Cancelled by user.",
+                    name=tool_name,
+                    tool_call_id=tool_call.get("id", ""),
+                )
+            )
+
             # Show next if available
             if self._pending_tool_calls:
                 self._print_tool_call(self._pending_tool_calls[0])
                 return
-            
+
             # Continue if no more pending
             with console.status("  [dim]denkt nach...[/dim]", spinner="dots", spinner_style="dim"):
                 response = await self._agent.run_with_tools(self._session, "")
             await self._process_agent_response(response)
-            # Edit command - ask for new command, pre-filled for easy editing
+
+        elif choice == "3":
+            # Edit command before executing
             if command:
                 from prompt_toolkit import prompt as ptk_prompt
-                from prompt_toolkit.formatted_text import HTML
+
                 new_cmd = await asyncio.to_thread(
                     ptk_prompt,
-                    HTML("  <b><ansiyellow>Befehl &gt;</ansiyellow></b> "),
+                    "  Edit> ",
                     default=command,
                 )
                 if new_cmd.strip():
                     self._pending_tool_calls[0]["arguments"]["command"] = new_cmd.strip()
-                    console.print()
-                    self._print_tool_call(self._pending_tool_calls[0])
-                    return  # Wait for next choice
-                else:
-                    console.print("  [dim]Befehl unverändert.[/dim]\n")
-                    self._print_tool_call(self._pending_tool_calls[0])
+                console.print()
+                self._print_tool_call(self._pending_tool_calls[0])
             else:
-                console.print("  [dim]Bearbeiten nur für Befehle möglich.[/dim]")
+                console.print("  [dim]Bearbeiten nur für Shell-Befehle möglich.[/dim]")
                 self._print_tool_call(self._pending_tool_calls[0])
 
         else:
@@ -860,19 +1068,21 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                 panel_content,
                 title=f"⚡ [bold yellow]Tool Approval Required[/bold yellow]{queue_info}",
                 border_style="yellow",
-                subtitle="[dim]Press [bold yellow]1[/bold yellow] to approve[/dim]"
+                subtitle="[dim]Press [bold yellow]1[/bold yellow] to approve[/dim]",
             )
         )
-        
+
         # Nicer menu display
         menu_text = Text.assemble(
-            ("  [1] ", "bold yellow"), ("Execute  ", "default"),
-            ("  [2] ", "bold red"), ("Cancel   ", "default"),
+            ("  [1] ", "bold yellow"),
+            ("Execute  ", "default"),
+            ("  [2] ", "bold red"),
+            ("Cancel   ", "default"),
         )
         if args.get("command"):
             menu_text.append("  [3] ", style="bold cyan")
             menu_text.append("Edit command", style="default")
-            
+
         console.print(menu_text)
         console.print()
 
@@ -885,7 +1095,7 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
     ) -> None:
         """Execute an auto-retry without requiring user approval."""
         from cucumber_agent.session import Message, Role
-        from cucumber_agent.smart_retry import should_auto_retry, generate_retry_command
+        from cucumber_agent.smart_retry import should_auto_retry
 
         command = args.get("command", "")
         console.print(f"[yellow]↻ Auto-retry ({retry_num}/2):[/yellow] {command}\n")
@@ -894,14 +1104,13 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
 
         # Add to session
         assistant_msg = Message(
-            role=Role.ASSISTANT,
-            content=f"[AUTO-RETRY {retry_num}] Ich probiere: {command}"
+            role=Role.ASSISTANT, content=f"[AUTO-RETRY {retry_num}] Ich probiere: {command}"
         )
         self._session.messages.append(assistant_msg)
 
         tool_result_msg = Message(
             role=Role.USER,
-            content=f"[TOOL_RESULT] {tool_name}: {result.output if result.success else 'ERROR: ' + (result.error or result.output)}"
+            content=f"[TOOL_RESULT] {tool_name}: {result.output if result.success else 'ERROR: ' + (result.error or result.output)}",
         )
         self._session.messages.append(tool_result_msg)
 
@@ -927,10 +1136,10 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                     await self._execute_auto_retry(tool_name, args, original_cmd, retry_num + 1)
             else:
                 # Give up
-                console.print(f"[red]✗ Command failed after auto-retry.[/red]\n")
+                console.print("[red]✗ Command failed after auto-retry.[/red]\n")
                 resp = await self._agent.synthesize(
                     self._session,
-                    "Der Befehl ist nach mehreren Versuchen fehlgeschlagen. Erkläre dem Benutzer die Situation."
+                    "Der Befehl ist nach mehreren Versuchen fehlgeschlagen. Erkläre dem Benutzer die Situation.",
                 )
                 if resp.strip():
                     console.print(resp)
@@ -945,18 +1154,25 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
         table = Table(show_header=False, box=None, padding=(0, 2))
         table.add_column("Key", style="dim")
         table.add_column("Value", style="white")
-        table.add_row("provider",    agent.provider)
-        table.add_row("model",       agent.model)
+        table.add_row("provider", agent.provider)
+        table.add_row("model", agent.model)
         table.add_row("temperature", str(agent.temperature))
-        table.add_row("max_tokens",  str(ctx.max_tokens))
-        table.add_row("remember",    str(ctx.remember_last))
-        table.add_row("messages",    str(len(self._session.messages)))
-        table.add_row("name",        f"{pers.emoji} {pers.name}")
-        table.add_row("tone",        pers.tone)
-        table.add_row("language",    pers.language)
+        table.add_row("max_tokens", str(ctx.max_tokens))
+        table.add_row("remember", str(ctx.remember_last))
+        table.add_row("messages", str(len(self._session.messages)))
+        table.add_row("name", f"{pers.emoji} {pers.name}")
+        table.add_row("tone", pers.tone)
+        table.add_row("language", pers.language)
 
         console.print()
-        console.print(Panel(table, title="[bold red]🔧 Debug Info[/bold red]", border_style="red", padding=(0, 1)))
+        console.print(
+            Panel(
+                table,
+                title="[bold red]🔧 Debug Info[/bold red]",
+                border_style="red",
+                padding=(0, 1),
+            )
+        )
         console.print()
 
 
@@ -966,6 +1182,7 @@ async def run_cli() -> None:
 
     # Initialize logging from config
     import logging
+
     log_level = getattr(logging, config.logging.level.upper(), logging.INFO)
     setup_logging(
         log_dir=config.logging.log_dir,
@@ -999,14 +1216,16 @@ def run_init() -> None:
         result = subprocess.run([sys.executable, installer_path])
         sys.exit(result.returncode)
     else:
-        console.print("[bold red]Error:[/bold red] Could not find installer. Run from project directory.")
+        console.print(
+            "[bold red]Error:[/bold red] Could not find installer. Run from project directory."
+        )
         sys.exit(1)
 
 
 def run_update() -> None:
     """Update CucumberAgent from GitHub."""
-    import subprocess
     import os
+    import subprocess
 
     console.print("[bold]🔄 Updating CucumberAgent...[/bold]\n")
 

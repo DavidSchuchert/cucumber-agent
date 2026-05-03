@@ -7,14 +7,12 @@ import time
 
 from prompt_toolkit import prompt as ptk_prompt
 from prompt_toolkit.formatted_text import HTML
-
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
 from cucumber_agent.config import Config
-from cucumber_agent.session import Session, Message, Role
+from cucumber_agent.session import Message, Role, Session
 from cucumber_agent.tools.base import BaseTool, ToolResult
 from cucumber_agent.tools.registry import ToolRegistry
 
@@ -29,11 +27,7 @@ def _truncate_output(text: str, max_chars: int = MAX_TOOL_OUTPUT_CHARS) -> str:
     if len(text) <= max_chars:
         return text
     half = max_chars // 2
-    return (
-        text[:half]
-        + f"\n\n... [TRUNCATED {len(text) - max_chars} chars] ...\n\n"
-        + text[-half:]
-    )
+    return text[:half] + f"\n\n... [TRUNCATED {len(text) - max_chars} chars] ...\n\n" + text[-half:]
 
 
 def _format_args_display(args: dict) -> str:
@@ -118,7 +112,11 @@ class AgentTool(BaseTool):
             )
 
             try:
-                with console.status("  [dim magenta]Sub-Agent denkt nach...[/dim magenta]", spinner="dots", spinner_style="dim magenta"):
+                with console.status(
+                    "  [dim magenta]Sub-Agent denkt nach...[/dim magenta]",
+                    spinner="dots",
+                    spinner_style="dim magenta",
+                ):
                     response = await agent.run_with_tools(session, current_input)
             except Exception as e:
                 elapsed = time.monotonic() - start_time
@@ -151,9 +149,7 @@ class AgentTool(BaseTool):
 
             # Show thinking text (dimmed)
             if response.content and response.content.strip():
-                console.print(
-                    f"  [dim magenta]💭 {response.content.strip()}[/dim magenta]"
-                )
+                console.print(f"  [dim magenta]💭 {response.content.strip()}[/dim magenta]")
 
             # Handle each tool call
             for tc in response.tool_calls:
@@ -166,13 +162,15 @@ class AgentTool(BaseTool):
                         "  [yellow]⚠ Sub-Agent versuchte sich selbst aufzurufen "
                         "— übersprungen.[/yellow]"
                     )
-                    session.messages.append(Message(
-                        role=Role.USER,
-                        content=(
-                            "[TOOL_RESULT] agent: FEHLER — Rekursive Sub-Agent-Aufrufe "
-                            "sind nicht erlaubt. Nutze shell oder search direkt."
-                        ),
-                    ))
+                    session.messages.append(
+                        Message(
+                            role=Role.USER,
+                            content=(
+                                "[TOOL_RESULT] agent: FEHLER — Rekursive Sub-Agent-Aufrufe "
+                                "sind nicht erlaubt. Nutze shell oder search direkt."
+                            ),
+                        )
+                    )
                     continue
 
                 reason = tc_args.get("reason", "")
@@ -180,10 +178,7 @@ class AgentTool(BaseTool):
 
                 # Build a nice tool call display
                 tool_info = _format_args_display(tc_args)
-                panel_content = (
-                    f"[bold]Tool:[/bold] [cyan]{tc_name}[/cyan]\n"
-                    f"{tool_info}"
-                )
+                panel_content = f"[bold]Tool:[/bold] [cyan]{tc_name}[/cyan]\n{tool_info}"
                 if reason:
                     panel_content += f"\n[bold]Grund:[/bold] [dim]{reason}[/dim]"
 
@@ -200,27 +195,29 @@ class AgentTool(BaseTool):
                 choice = await self._ask_approval()
 
                 if choice == "1":
-                    result = await self._execute_tool(tc_name, tc_args, session)
+                    await self._execute_tool(tc_name, tc_args, session)
                 elif choice == "3" and "command" in tc_args:
-                    result = await self._edit_and_execute(
-                        tc_name, tc_args, command, session
-                    )
+                    await self._edit_and_execute(tc_name, tc_args, command, session)
                 elif choice == "4":
                     # Abort entire sub-agent
                     console.print("  [red]Sub-Agent abgebrochen.[/red]")
-                    session.messages.append(Message(
-                        role=Role.USER,
-                        content=f"[TOOL_RESULT] {tc_name} wurde vom Benutzer abgebrochen. Die gesamte Aufgabe wird beendet.",
-                    ))
+                    session.messages.append(
+                        Message(
+                            role=Role.USER,
+                            content=f"[TOOL_RESULT] {tc_name} wurde vom Benutzer abgebrochen. Die gesamte Aufgabe wird beendet.",
+                        )
+                    )
                     aborted = True
                     break
                 else:
                     # Cancel this tool (choice == "2" or anything else)
                     console.print("  [dim]Übersprungen.[/dim]")
-                    session.messages.append(Message(
-                        role=Role.USER,
-                        content=f"[TOOL_RESULT] {tc_name} wurde vom Benutzer übersprungen.",
-                    ))
+                    session.messages.append(
+                        Message(
+                            role=Role.USER,
+                            content=f"[TOOL_RESULT] {tc_name} wurde vom Benutzer übersprungen.",
+                        )
+                    )
 
             if aborted:
                 final_response = "Sub-Agent wurde vom Benutzer abgebrochen."
@@ -233,12 +230,12 @@ class AgentTool(BaseTool):
             )
 
         if step >= max_steps and not final_response:
-            console.print(
-                "  [bold yellow]⚠ Schritt-Limit erreicht.[/bold yellow]"
-            )
+            console.print("  [bold yellow]⚠ Schritt-Limit erreicht.[/bold yellow]")
             # Ask the agent for a final summary
             try:
-                summary_response = await agent.synthesize(session, "Fasse zusammen was bisher erreicht wurde.")
+                summary_response = await agent.synthesize(
+                    session, "Fasse zusammen was bisher erreicht wurde."
+                )
                 final_response = summary_response
             except Exception:
                 final_response = "Sub-Agent hat das Schritt-Limit erreicht, ohne eine Zusammenfassung zu liefern."
@@ -266,48 +263,51 @@ class AgentTool(BaseTool):
 
         return ToolResult(
             success=not aborted,
-            output=(
-                f"Sub-Agent Ergebnis ({step} Schritte, {elapsed:.1f}s):\n\n"
-                f"{final_response}"
-            ),
+            output=(f"Sub-Agent Ergebnis ({step} Schritte, {elapsed:.1f}s):\n\n{final_response}"),
         )
 
     # ── Helper methods ──────────────────────────────────────────────────
 
     async def _ask_approval(self) -> str:
         """Prompt user for tool approval. Returns the choice string."""
-        console.print("  [bold]Aktion:[/bold]  [1] Ausführen  [2] Überspringen  [3] Bearbeiten  [4] Abbrechen")
+        console.print(
+            "  [bold]Aktion:[/bold]  [1] Ausführen  [2] Überspringen  [3] Bearbeiten  [4] Abbrechen"
+        )
         choice = await asyncio.to_thread(
             ptk_prompt, HTML("  <b><ansiyellow>Wahl &gt;</ansiyellow></b> ")
         )
         return choice.strip()
 
-    async def _execute_tool(
-        self, name: str, args: dict, session: Session
-    ) -> ToolResult:
+    async def _execute_tool(self, name: str, args: dict, session: Session) -> ToolResult:
         """Execute a tool and record result in session."""
         console.print(f"  [dim]⚡ Führe [cyan]{name}[/cyan] aus...[/dim]")
         result = await ToolRegistry.execute(name, **args)
 
-        session.messages.append(Message(
-            role=Role.ASSISTANT,
-            content=f"Tool {name} ausgeführt mit: {args}",
-        ))
+        session.messages.append(
+            Message(
+                role=Role.ASSISTANT,
+                content=f"Tool {name} ausgeführt mit: {args}",
+            )
+        )
 
         if result.success:
             console.print("  [green]✓ Erfolg[/green]")
             truncated = _truncate_output(result.output)
-            session.messages.append(Message(
-                role=Role.USER,
-                content=f"[TOOL_RESULT] {name}:\n{truncated}",
-            ))
+            session.messages.append(
+                Message(
+                    role=Role.USER,
+                    content=f"[TOOL_RESULT] {name}:\n{truncated}",
+                )
+            )
         else:
             error_msg = result.error or result.output
             console.print(f"  [red]✗ Fehler:[/red] {error_msg[:200]}")
-            session.messages.append(Message(
-                role=Role.USER,
-                content=f"[TOOL_RESULT] {name} ERROR: {error_msg}",
-            ))
+            session.messages.append(
+                Message(
+                    role=Role.USER,
+                    content=f"[TOOL_RESULT] {name} ERROR: {error_msg}",
+                )
+            )
         return result
 
     async def _edit_and_execute(
@@ -316,18 +316,21 @@ class AgentTool(BaseTool):
         """Let user edit a command, then execute."""
         console.print(f"  [dim]Aktuell:[/dim] {original_cmd}")
         new_cmd = await asyncio.to_thread(
-            ptk_prompt, HTML("  <b><ansiyellow>Neuer Befehl &gt;</ansiyellow></b> "),
-            default=original_cmd
+            ptk_prompt,
+            HTML("  <b><ansiyellow>Neuer Befehl &gt;</ansiyellow></b> "),
+            default=original_cmd,
         )
         if new_cmd.strip():
             args["command"] = new_cmd.strip()
             return await self._execute_tool(name, args, session)
         else:
             console.print("  [dim]Leere Eingabe — übersprungen.[/dim]")
-            session.messages.append(Message(
-                role=Role.USER,
-                content=f"[TOOL_RESULT] {name} wurde vom Benutzer übersprungen.",
-            ))
+            session.messages.append(
+                Message(
+                    role=Role.USER,
+                    content=f"[TOOL_RESULT] {name} wurde vom Benutzer übersprungen.",
+                )
+            )
             return ToolResult(success=False, output="", error="User cancelled edit")
 
 

@@ -36,28 +36,36 @@ class SkillRunner:
 
         # Process tool calls if any (but keep it simple to avoid MiniMax context issues)
         if response.tool_calls:
-            # Execute all tool calls and collect results
+            # Execute all tool calls, add results to session so synthesize() works
             tool_results = []
             for tc in response.tool_calls:
                 result = await ToolRegistry.execute(tc.name, **tc.arguments)
-                output_text = result.output if result.success else 'ERROR: ' + (result.error or result.output)
+                output_text = (
+                    result.output if result.success else "ERROR: " + (result.error or result.output)
+                )
                 if len(output_text) > 3000:
-                    output_text = output_text[:1500] + "\n... [TRUNCATED] ...\n" + output_text[-1500:]
+                    output_text = (
+                        output_text[:1500] + "\n... [TRUNCATED] ...\n" + output_text[-1500:]
+                    )
                 tool_results.append((tc.name, tc.id, output_text))
 
-            # Build a summary of all tool results
-            results_lines = [f"[TOOL: {name}] {output}" for name, _, output in tool_results]
-            results_summary = "\n\n".join(results_lines)
+                # CRITICAL: add tool result to session so MiniMax doesn't get 400
+                session.messages.append(
+                    Message(
+                        role=Role.TOOL,
+                        content=output_text,
+                        name=tc.name,
+                        tool_call_id=tc.id,
+                    )
+                )
 
-            # Ask the model to synthesize a response using synthesize() which disables tools
-            synthesize_prompt = (
-                f"Du hast folgende Werkzeuge ausgeführt:\n{results_summary}\n\n"
-                f"Gib dem Benutzer eine klare, prägnante Antwort. Keine weiteren Werkzeug-Aufrufe."
+            results_summary = "\n\n".join(
+                f"[TOOL: {name}] {output}" for name, _, output in tool_results
             )
 
             try:
-                response_text = await agent.synthesize(session, synthesize_prompt)
-                return response_text
+                response_text = await agent.synthesize(session)
+                return response_text or results_summary
             except Exception as e:
                 return f"[Error bei synthesize: {e}]\n\nTool-Ergebnisse:\n{results_summary}"
 
@@ -68,19 +76,19 @@ class SkillRunner:
         """Clean the response by removing thinking blocks and verbose preambles."""
         # Remove thinking/reasoning blocks
         content = re.sub(
-            r'<(think|thinking|thought)>(.*?)</\1>',
-            '',
-            content,
-            flags=re.DOTALL | re.IGNORECASE
+            r"<(think|thinking|thought)>(.*?)</\1>", "", content, flags=re.DOTALL | re.IGNORECASE
         ).strip()
 
         # Remove "Ich werde..." / "I will..." type preambles
-        lines = content.split('\n')
+        lines = content.split("\n")
         cleaned_lines = []
         skip_mode = False
         for line in lines:
             stripped = line.strip().lower()
-            if any(p in stripped for p in ['ich werde', 'i will', 'let me', 'jetzt werde', 'now i will', 'i\'ll']):
+            if any(
+                p in stripped
+                for p in ["ich werde", "i will", "let me", "jetzt werde", "now i will", "i'll"]
+            ):
                 skip_mode = True
                 continue
             if skip_mode and len(stripped) < 5:
@@ -88,4 +96,4 @@ class SkillRunner:
             skip_mode = False
             cleaned_lines.append(line)
 
-        return '\n'.join(cleaned_lines).strip()
+        return "\n".join(cleaned_lines).strip()
