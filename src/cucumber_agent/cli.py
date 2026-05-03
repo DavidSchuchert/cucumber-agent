@@ -27,6 +27,8 @@ from cucumber_agent.agent import Agent
 from cucumber_agent.config import Config
 from cucumber_agent.logging_config import get_logger, setup_logging
 from cucumber_agent.memory import FactsStore, SessionLogger
+from cucumber_agent.session import Message as SessionMessage
+from cucumber_agent.session import Role as SessionRole
 from cucumber_agent.session import Session
 from cucumber_agent.skills import SkillLoader, SkillRunner
 from cucumber_agent.tools.registry import ToolRegistry
@@ -359,6 +361,7 @@ class CliSession:
             "/debug",
             "/optimize",
             "/memory",
+            "/context",
             "/remember",
             "/forget",
             "/skills",
@@ -497,10 +500,6 @@ class CliSession:
                     ):
                         console.print(f"  [dim]{clean_tool_content}[/dim]")
                     console.print()
-
-            from cucumber_agent.session import Message as SessionMessage
-            from cucumber_agent.session import Role as SessionRole
-            from cucumber_agent.tools.registry import ToolRegistry
 
             # Auto-execute safe tools, queue the rest for approval
             auto_calls = []
@@ -740,19 +739,18 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
         result = parse_personality_update(full_response)
         if result:
             update_params, explanation = result
-            apply_personality_update(update_params, self._config)
-
-            # Verify changes were saved
-            personality_file = self._config.config_dir / "personality" / "personality.md"
-            personality_file.read_text()  # Will raise if can't read
-
-            console.print(f"\n[dim]{explanation}[/dim]")
-            console.print(
-                "\n[green]✅ Personality optimized! Changes saved to personality.md[/green]\n"
-            )
-            console.print("[dim]Restart: Ctrl+C + cucumber run[/dim]\n")
+            if update_params:
+                apply_personality_update(update_params, self._config)
+                console.print(f"\n[dim]{explanation}[/dim]")
+                console.print(
+                    "\n[green]✅ Personality optimized! Changes saved to personality.md[/green]\n"
+                )
+                console.print("[dim]Restart: Ctrl+C + cucumber run[/dim]\n")
+            else:
+                # KEINE_VERBESSERUNG — AI decided current values are already optimal
+                console.print(f"\n[dim]{explanation}[/dim]\n")
+                console.print("[dim]OK, nothing to improve.[/dim]\n")
         else:
-            explanation = result[1] if result else "No improvements suggested."
             console.print("\n[dim]OK, nothing to improve.[/dim]\n")
 
     async def _handle_command(self, user_input: str) -> None:
@@ -1004,8 +1002,6 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                 if not msgs:
                     console.print("  [dim]Keine Nachrichten zum Rückgängigmachen.[/dim]\n")
                 else:
-                    from cucumber_agent.session import Role as SessionRole
-
                     # Find and remove the last assistant message
                     removed = 0
                     if msgs and msgs[-1].role == SessionRole.ASSISTANT:

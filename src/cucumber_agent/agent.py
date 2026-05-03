@@ -16,6 +16,20 @@ from cucumber_agent.session import ContentBlock, Message, Role, Session
 from cucumber_agent.tools import ToolRegistry
 
 
+_tiktoken_encoding = None
+
+
+def _get_tiktoken_encoding():
+    global _tiktoken_encoding
+    if _tiktoken_encoding is None:
+        try:
+            import tiktoken
+            _tiktoken_encoding = tiktoken.get_encoding("cl100k_base")
+        except ImportError:
+            pass
+    return _tiktoken_encoding
+
+
 def estimate_tokens(text: str) -> int:
     """Rough estimate of tokens (1 token ≈ 4 chars)."""
     return len(text) // 4
@@ -389,12 +403,8 @@ class Agent:
 
     def estimate_tokens(self, messages: list[Message]) -> int:
         """Estimate token count for a list of messages."""
-        try:
-            import tiktoken
-
-            encoding = tiktoken.get_encoding("cl100k_base")  # Good default for GPT-4/MiniMax
-        except ImportError:
-            # Fallback to rough estimation
+        encoding = _get_tiktoken_encoding()
+        if encoding is None:
             return sum(len(self._extract_text(m.content)) // 4 for m in messages)
 
         count = 0

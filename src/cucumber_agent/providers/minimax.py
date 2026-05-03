@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import re
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
@@ -69,8 +71,6 @@ class MiniMaxProvider(BaseProvider):
             stream=False,
         )
 
-        import asyncio
-
         for attempt in range(max_retries):
             try:
                 response = await self._client.post(
@@ -119,28 +119,39 @@ class MiniMaxProvider(BaseProvider):
         temperature: float = 0.7,
         max_tokens: int | None = None,
         tools: list[dict] | None = None,
+        max_retries: int = 3,
     ) -> AsyncIterator[str]:
         """Stream the response as an async iterator of text chunks."""
         body = self._build_request(messages, model, temperature, max_tokens, tools, stream=True)
-        async with self._client.stream(
-            "POST", f"{self._base_url}/chat/completions", json=body
-        ) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                if not line.startswith("data: "):
-                    continue
-                data_str = line[6:]
-                if data_str == "[DONE]":
-                    break
-                try:
-                    data = json.loads(data_str)
-                    choices = data.get("choices", [])
-                    if choices:
-                        delta = choices[0].get("delta", {})
-                        if content := delta.get("content"):
-                            yield content
-                except json.JSONDecodeError:
-                    continue
+        for attempt in range(max_retries):
+            try:
+                async with self._client.stream(
+                    "POST", f"{self._base_url}/chat/completions", json=body
+                ) as resp:
+                    if resp.status_code == 529 and attempt < max_retries - 1:
+                        await asyncio.sleep(2**attempt)
+                        continue
+                    resp.raise_for_status()
+                    async for line in resp.aiter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        data_str = line[6:]
+                        if data_str == "[DONE]":
+                            return
+                        try:
+                            data = json.loads(data_str)
+                            choices = data.get("choices", [])
+                            if choices:
+                                delta = choices[0].get("delta", {})
+                                if content := delta.get("content"):
+                                    yield content
+                        except json.JSONDecodeError:
+                            continue
+                    return  # success — exit retry loop
+            except Exception:
+                if attempt >= max_retries - 1:
+                    raise
+                await asyncio.sleep(2**attempt)
 
     def _build_request(
         self,
@@ -217,8 +228,6 @@ class MiniMaxProvider(BaseProvider):
         content = message.get("content", "") or ""
 
         # Strip thinking blocks from content
-        import re
-
         content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
         content = re.sub(
             r"<thinking>.*?</thinking>", "", content, flags=re.DOTALL | re.IGNORECASE

@@ -267,7 +267,7 @@ class FactsStore:
         Returns the key under which it was saved.
         """
         text = text.strip()
-        for sep in (": ", " = ", ": "):
+        for sep in (": ", " = "):
             if sep in text:
                 key, _, value = text.partition(sep)
                 self.set(key, value)
@@ -364,7 +364,7 @@ class SQLiteFactsStore(FactsStore):
     def add_from_text(self, text: str) -> str:
         """Same parsing logic as FactsStore, but persists via SQLite."""
         text = text.strip()
-        for sep in (": ", " = ", ": "):
+        for sep in (": ", " = "):
             if sep in text:
                 key, _, value = text.partition(sep)
                 self.set(key, value)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 
 
@@ -53,8 +53,8 @@ class Session:
     """A conversation session."""
 
     id: str
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     messages: list[Message] = field(default_factory=list)
     model: str | None = None
     metadata: dict = field(default_factory=dict)
@@ -62,7 +62,7 @@ class Session:
     def add_message(self, message: Message) -> None:
         """Append a message to the session."""
         self.messages.append(message)
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(UTC)
 
     def add_user_message(self, content: str | list[ContentBlock]) -> None:
         """Add a user message."""
