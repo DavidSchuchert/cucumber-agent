@@ -208,6 +208,23 @@ class SkillRunner:
 
     @staticmethod
     async def _run_herbert_swarm(args: str, session: Session, agent: Agent) -> str:
+        if not args.strip() or "--help" in args:
+            help_text = (
+                "📖 **Herbert Swarm Hilfe**\n\n"
+                "Der Swarm baut ganze Projekte für dich, indem er mehrere Agenten parallel einsetzt.\n\n"
+                "**Befehle:**\n"
+                "- `/herbert-swarm <pfad>` : Startet den vollen Zyklus (Init -> Plan -> Run -> Report)\n"
+                "- `/herbert-swarm status`  : Zeigt den aktuellen Fortschritt\n"
+                "- `/herbert-swarm run`     : Setzt die Ausführung fort\n"
+                "- `/herbert-swarm reset`   : Löscht das Swarm-Brain des Projekts\n\n"
+                "**Optionen:**\n"
+                "- `--parallel N`  : Anzahl der Agenten (Standard: 3)\n"
+                "- `--dry-run`     : Simuliert den Swarm ohne Dateien zu schreiben\n"
+                "- `--spec <pfad>` : Pfad zu einer eigenen SPEC.md\n"
+            )
+            session.add_assistant_message(help_text)
+            return help_text
+
         try:
             parsed = SkillRunner._parse_herbert_swarm_args(args, agent)
         except Exception as exc:

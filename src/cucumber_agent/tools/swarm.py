@@ -327,24 +327,34 @@ def _build_agent_prompt(task: dict, brain: dict, brain_file: Path) -> str:
     spec_summary = brain.get("spec_summary", "")
     tid          = task["id"]
     files        = "\n".join(f"  - {f}" for f in task["files"])
-    spec_ctx     = f"\nPROJECT SPEC (summary):\n{spec_summary[:800]}\n" if spec_summary else ""
+    spec_ctx     = f"\n### PROJEKT-SPEZIFIKATION (Zusammenfassung):\n{spec_summary[:1000]}\n" if spec_summary else ""
+
+    coding_standards = (
+        "### CODING STANDARDS:\n"
+        "- Schreibe sauberen, modularen und kommentierten Code.\n"
+        "- Nutze moderne Best Practices für die jeweilige Sprache/Framework.\n"
+        "- Vermeide Platzhalter (z.B. '// TODO') — implementiere die Logik vollständig.\n"
+        "- Achte auf Fehlerbehandlung und Edge-Cases.\n"
+    )
 
     brain_update = (
-        f"\nAFTER completing ALL files, update the brain file at: {brain_file}\n"
-        f"  1. Read the JSON: shell cat {brain_file}\n"
-        f"  2. Add to brain[\"facts\"][\"task_{tid}_result\"]:\n"
-        f"     {{\"files_created\": [<absolute paths>], \"summary\": \"<one sentence>\"}}\n"
-        f"  3. Write updated JSON back to {brain_file}\n"
+        f"\n### GEHIRN-UPDATE REGEL:\n"
+        f"Nachdem du ALLE Dateien erstellt/bearbeitet hast, MUSST du das Projekt-Gehirn aktualisieren:\n"
+        f"1. Lese die Datei: {brain_file}\n"
+        f"2. Füge dein Ergebnis zu brain[\"facts\"][\"task_{tid}_result\"] hinzu.\n"
+        f"3. Das Format MUSS ein JSON-Objekt sein: {{\"files_created\": [...], \"summary\": \"<dein bericht>\"}}\n"
     )
 
     return (
-        f"You are a {task['agent_role']} agent in the CucumberSwarm.\n"
-        f"Working directory (absolute): {project_path}\n"
-        f"All files you create/modify must be INSIDE this directory.\n"
+        f"Du bist ein spezialisierter {task['agent_role']} Agent im CucumberSwarm.\n"
+        f"Dein Arbeitsverzeichnis ist: {project_path}\n\n"
         f"{spec_ctx}\n"
-        f"TASK: {task['description']}\n\n"
-        f"Files to create/modify:\n{files}\n\n"
-        f"Implement the task completely with production-ready code. No TODOs or placeholders.\n"
+        f"### DEINE AUFGABE ({tid}):\n"
+        f"{task['description']}\n\n"
+        f"### ZU ERSTELLENDE DATEIEN:\n"
+        f"{files}\n\n"
+        f"{coding_standards}\n"
+        f"Arbeite Schritt für Schritt. Nutze 'shell' oder 'write_file' für deine Arbeit.\n"
         f"{brain_update}"
     )
 
