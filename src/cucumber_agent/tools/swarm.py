@@ -487,10 +487,9 @@ async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -
                     )
                 )
             
-            current_input = (
-                "Continue. Execute remaining steps, then provide a final summary "
-                "of what was created. If you are finished, just summarize."
-            )
+            # If the agent used tools, we don't want to inject a user message 
+            # in the next step, as it breaks the tool-call/result sequence for some APIs.
+            current_input = "" 
         return {"success": False, "output": "Step limit reached before task completion"}
     except Exception as e:
         logger.exception(f"Exception in swarm task {tid}")
