@@ -83,6 +83,15 @@ def _skill_command_candidates(skill: Skill) -> list[str]:
     return [skill.command, *aliases]
 
 
+def _completion_commands(skill_loader: SkillLoader) -> list[str]:
+    """Commands shown in slash completion.
+
+    Aliases remain executable, but hiding them from completion prevents one
+    skill from appearing multiple times in the prompt suggestions.
+    """
+    return sorted(set(STATIC_SLASH_COMMANDS + [skill.command for skill in skill_loader.skills]))
+
+
 def _resolve_skill_invocation(user_input: str, skill_loader: SkillLoader) -> tuple[Skill, str] | None:
     """Resolve exact skill command or alias, tolerating punctuation on command words."""
     words = user_input.strip().split()
@@ -448,11 +457,7 @@ class CliSession:
         pers = self._config.personality
 
         # Build slash-command completer (static + skill commands)
-        skill_commands = []
-        for skill in self._skill_loader.skills:
-            skill_commands.extend(_skill_command_candidates(skill))
-        slash_commands = STATIC_SLASH_COMMANDS + skill_commands
-        completer = WordCompleter(sorted(set(slash_commands)), sentence=True)
+        completer = WordCompleter(_completion_commands(self._skill_loader), sentence=True)
 
         ptk_style = PtkStyle.from_dict(
             {

@@ -5,6 +5,7 @@ from __future__ import annotations
 from cucumber_agent.cli import (
     STATIC_SLASH_COMMANDS,
     _command_suggestion,
+    _completion_commands,
     _resolve_skill_invocation,
 )
 from cucumber_agent.skills import SkillLoader
@@ -47,3 +48,15 @@ def test_command_suggestion_for_typo(tmp_path):
 
 def test_static_commands_include_autopilot():
     assert "/autopilot" in STATIC_SLASH_COMMANDS
+
+
+def test_completion_commands_hide_skill_aliases(tmp_path):
+    loader = SkillLoader(skills_dir=tmp_path, include_builtin=True)
+    loader.load_all()
+
+    commands = _completion_commands(loader)
+
+    assert "/herbert-swarm" in commands
+    assert "/herbert" not in commands
+    assert "/herbert swarm" not in commands
+    assert "/swarm" not in commands
