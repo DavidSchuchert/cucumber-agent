@@ -219,7 +219,7 @@ def _load_wiki_key_files(wiki_dir: Path) -> str:
             try:
                 content = fpath.read_text(encoding="utf-8").strip()
                 if content:
-                    parts.append(f"## {wiki_dir.name}/{fname}\n\n{content}")
+                    parts.append(f"## wiki/{fname}\n\n{content}")
             except Exception:
                 pass
     if not parts:
@@ -499,15 +499,16 @@ class CliSession:
 
         # Self-awareness: Tell the agent where its own files are
         config_dir = self._config.config_dir
-        wiki_dir = workspace / "wiki"
         self._session.metadata["agent_context"] = (
             f"Agent Home: {config_dir} | "
             f"Personality File: {config_dir}/personality/personality.md | "
             f"Custom Tools: {config_dir}/custom_tools | "
-            f"Project Wiki: {wiki_dir}"
+            f"Project Wiki: {config_dir}/wiki"
         )
 
         # ── Load key wiki files into context so the agent always knows them ──
+        # Wiki lives in the agent home, NOT in the workspace
+        wiki_dir = self._config.config_dir / "wiki"
         wiki_content = _load_wiki_key_files(wiki_dir)
         if wiki_content:
             self._session.metadata["wiki_knowledge"] = wiki_content
