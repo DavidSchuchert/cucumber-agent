@@ -104,18 +104,15 @@ def _analyze_and_plan(spec_content: str, project_path: Path) -> tuple[dict, list
 
     backend_kw = [
         "fastapi", "flask", "django", "starlette", "express", "aiohttp", "tornado",
-        "backend", "python", "api", "rest", "graphql", "grpc", "server", "endpoint",
-        "routes", "uvicorn", "gunicorn",
+        "uvicorn", "gunicorn", "node.js", "nodejs", "bun",
     ]
     frontend_kw = [
         "react", "next.js", "nextjs", "nuxt", "sveltekit", "svelte", "vue", "vite",
-        "angular", "astro", "remix", "frontend", "typescript", "tailwind", "html",
-        "css", "ui", "web app",
+        "angular", "astro", "remix", "tailwind", "html/css",
     ]
     database_kw = [
         "postgresql", "postgres", "mysql", "mariadb", "mongodb", "mongo", "redis",
-        "sqlite", "cassandra", "elasticsearch", "database", "db", "sqlalchemy",
-        "prisma", "alembic", "migration",
+        "sqlite", "cassandra", "elasticsearch", "prisma", "alembic",
     ]
     docker_kw = ["docker", "container", "compose", "kubernetes", "k8s", "helm"]
     ci_kw = [
@@ -144,6 +141,12 @@ def _analyze_and_plan(spec_content: str, project_path: Path) -> tuple[dict, list
                    "nuxt.config.ts", "svelte.config.js", "tailwind.config.js",
                    "tailwind.config.ts"}
             )
+            # Also detect plain HTML/CSS/JS projects
+            if not has_frontend:
+                has_frontend = bool(
+                    {"index.html", "style.css", "script.js", "styles.css", "main.js"}
+                    & {f.lower() for f in files}
+                )
         if not has_docker:
             has_docker = bool(files & {"dockerfile", "docker-compose.yml", "docker-compose.yaml"})
         if not has_ci:
@@ -175,9 +178,11 @@ def _analyze_and_plan(spec_content: str, project_path: Path) -> tuple[dict, list
             "created_by": "planner",
         }
 
-    phase_names: list[str] = ["INFRA"]
-    phase_map: dict[str, int] = {"INFRA": 1}
+    phase_names: list[str] = []
+    phase_map: dict[str, int] = {}
 
+    if has_docker or has_backend:
+        _add_phase(phase_names, phase_map, "INFRA")
     if has_database:
         _add_phase(phase_names, phase_map, "DATABASE")
     if has_backend:
@@ -187,6 +192,10 @@ def _analyze_and_plan(spec_content: str, project_path: Path) -> tuple[dict, list
         _add_phase(phase_names, phase_map, "FRONTEND")
     if has_ci:
         _add_phase(phase_names, phase_map, "TESTING")
+
+    # If no phases at all (pure static site), default to FRONTEND
+    if not phase_names:
+        _add_phase(phase_names, phase_map, "FRONTEND")
 
     infra_files: list[str] = []
     if has_docker:
@@ -207,7 +216,7 @@ def _analyze_and_plan(spec_content: str, project_path: Path) -> tuple[dict, list
         ]
 
     infra_id: str | None = None
-    if infra_files:
+    if infra_files and "INFRA" in phase_map:
         t = make_task(
             "Create infrastructure and configuration files",
             "coder",
@@ -271,11 +280,20 @@ def _analyze_and_plan(spec_content: str, project_path: Path) -> tuple[dict, list
 
     fe_task_ids: list[str] = []
     if has_frontend and "FRONTEND" in phase_map:
-        fe_deps = [infra_id, api_id]
+        fe_deps = [d for d in [infra_id, api_id] if d]
+        if has_backend:
+            # Framework project
+            fe_files = [
+                "frontend/src/pages/index.tsx", "frontend/src/App.tsx",
+                "frontend/src/components/Layout.tsx", "frontend/src/components/Card.tsx",
+            ]
+        else:
+            # Plain HTML/CSS/JS project
+            fe_files = ["index.html", "styles/main.css", "script.js"]
         t = make_task(
             "Create main pages",
             "coder",
-            ["frontend/src/pages/index.tsx", "frontend/src/App.tsx"],
+            fe_files[:2],
             fe_deps,
             phase_map["FRONTEND"],
             4,
@@ -283,7 +301,7 @@ def _analyze_and_plan(spec_content: str, project_path: Path) -> tuple[dict, list
         t2 = make_task(
             "Create UI components",
             "coder",
-            ["frontend/src/components/Layout.tsx", "frontend/src/components/Card.tsx"],
+            fe_files[2:],
             fe_deps,
             phase_map["FRONTEND"],
             4,
