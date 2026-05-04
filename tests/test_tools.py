@@ -278,6 +278,23 @@ class TestSwarmTool:
         assert "ToolExecutionError" in task["error"]
         assert task["error_details"]["tool_name"] == "shell"
 
+    async def test_ci_only_spec_gets_implementation_task(self, tmp_path):
+        (tmp_path / "SPEC.md").write_text(
+            "Create a tiny project README for a smoke test. Keep it simple, "
+            "write only README.md, and include one short usage section.",
+            encoding="utf-8",
+        )
+        tool = SwarmTool()
+
+        await tool.execute(command="init", project=str(tmp_path))
+        result = await tool.execute(command="plan", project=str(tmp_path))
+
+        assert result.success is True
+        brain = json.loads((tmp_path / ".swarm_brain.json").read_text(encoding="utf-8"))
+        tasks = list(brain["tasks"].values())
+        assert len(tasks) == 1
+        assert tasks[0]["description"] == "Implement the project requirements described in SPEC.md"
+
     async def test_swarm_tool_args_block_write_outside_project(self, tmp_path):
         from cucumber_agent.tools.swarm import _normalize_swarm_tool_args
 

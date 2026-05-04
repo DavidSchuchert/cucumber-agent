@@ -275,7 +275,7 @@ def _analyze_and_plan(spec_content: str, project_path: Path) -> tuple[dict, list
         tasks[t["id"]] = t
         tasks[t2["id"]] = t2
 
-    if has_ci and "TESTING" in phase_map:
+    if has_ci and "TESTING" in phase_map and (api_id or fe_task_ids or core_task_ids):
         t = make_task(
             "Create tests for API and core services",
             "reviewer",
@@ -441,14 +441,8 @@ async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -
                 )
                 if len(output_text) > 3000:
                     output_text = output_text[:1500] + "\n... [TRUNCATED] ...\n" + output_text[-1500:]
-                if not result.success:
-                    return _format_failure(
-                        result.error or result.output,
-                        error_type="ToolExecutionError",
-                        tool_name=tc.name,
-                        args=tool_args or tc.arguments,
-                        output=result.output,
-                    )
+                if not result.success and not output_text.strip():
+                    output_text = "ERROR: Tool failed without stderr/output"
                 session.messages.append(
                     Message(
                         role=Role.TOOL,
