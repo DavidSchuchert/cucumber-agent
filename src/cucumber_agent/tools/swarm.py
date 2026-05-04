@@ -421,10 +421,17 @@ def _summarize_tool_args(tool_name: str, args: dict) -> str:
     elif tool_name == "terminal":
         cmd = str(args.get("command", ""))[:60]
         preview_parts.append(cmd)
-    # Skip positional parameters of known tools to avoid "multiple values for" errors
-    # when ToolRegistry.execute(name, **kwargs) forwards args to tool.execute()
-    skip_keys = {"name", "code", "task", "prompt", "image_url", "path", "url", "command",
-                 "pattern", "goal", "session", "target", "query", "working_dir"}
+    # Skip all positional parameters of every known tool to avoid
+    # "multiple values for" collisions when ToolRegistry.execute(name, **kwargs)
+    # forwards to tool.execute(pos_arg=value, **kwargs)
+    skip_keys = {
+        "name", "code", "task", "prompt", "image_url",
+        "path", "url", "command", "pattern", "goal",
+        "session", "target", "query", "working_dir",
+        # SwarmTool positional params
+        "project", "spec", "parallel", "timeout",
+        "dry_run", "retry_failed", "yes",
+    }
     for k, v in args.items():
         if k in skip_keys:
             continue
