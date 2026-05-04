@@ -86,8 +86,20 @@ class MatchEngine:
             trigger_lower = trigger.lower()
             trigger_words = set(re.findall(r"\w+", trigger_lower))
 
-            # Exact match: trigger phrase appears as substring in input
-            if trigger_lower in input_lower:
+            # Exact match: trigger phrase appears as a meaningful phrase in input.
+            # For short single-word triggers (≤3 chars), use word boundaries to avoid
+            # false positives (e.g. "pr" inside "espresso", "git" inside "github").
+            # Multi-word triggers use plain substring match — they rarely false-trigger.
+            exact_match = False
+            if trigger_words:
+                if len(trigger_words) == 1 and len(trigger_lower) <= 3:
+                    # Short single-word trigger → require word boundary
+                    exact_match = bool(re.search(rf"\b{re.escape(trigger_lower)}\b", input_lower))
+                else:
+                    # Multi-word or longer single-word → plain substring is safe
+                    exact_match = trigger_lower in input_lower
+
+            if exact_match:
                 # Prefer longer triggers (more specific)
                 score = min(1.0, len(trigger_lower) / 30 + 0.5)
                 if score > best_score:
@@ -112,78 +124,112 @@ class MatchEngine:
 
         return best_score, best_reason
 
+    # -------------------------------------------------------------------------
+    # URL / domain pattern matching
+    # -------------------------------------------------------------------------
+
+    # Generic URL patterns — boost skills that already matched via keywords.
+    # These NEVER trigger domain-relevance checks (would cause false positives).
+    _GENERIC_URL_PATTERNS: list[tuple[str, float, str]] = [
+        (r"https?://[^\s]+", 0.3, "URL present"),
+        (r"www\.[^\s]+", 0.25, "www URL present"),
+    ]
+
+    # Domain-specific patterns — these DO check skill.trigger relevance.
+    _DOMAIN_PATTERNS: list[tuple[str, float, str]] = [
+        (r"github\.com", 0.8, "github.com domain"),
+        (r"gitlab\.com", 0.8, "gitlab.com domain"),
+        (r"arxiv\.org", 0.9, "arxiv.org domain"),
+        (r"pubmed\.ncbi\.nlm\.nih\.gov", 0.95, "pubmed domain"),
+        (r"doi\.org", 0.9, "DOI detected"),
+        (r"\barxiv\b", 0.7, "arxiv mentioned"),
+        (r"\bpubmed\b", 0.7, "pubmed mentioned"),
+        (r"\bdocker\b", 0.6, "docker mentioned"),
+        (r"\bdocker-compose\b", 0.6, "docker-compose mentioned"),
+        (r"\bkubernetes\b", 0.6, "kubernetes mentioned"),
+        (r"\bnginx\b", 0.6, "nginx mentioned"),
+        (r"\bapache\b", 0.6, "apache mentioned"),
+        (r"journalctl", 0.7, "systemd journal mentioned"),
+        (r"\bsystemd\b", 0.5, "systemd mentioned"),
+        (r"\bapt\b|\bdnf\b|\byum\b", 0.5, "package manager mentioned"),
+        (r"launchctl", 0.7, "macOS launchctl mentioned"),
+        (r"\bhomebrew\b", 0.6, "homebrew mentioned"),
+        (r"\bmdfind\b", 0.7, "macOS spotlight mentioned"),
+        (r"\bplutil\b", 0.7, "macOS plutil mentioned"),
+        (r"\bsqlite\b|\bpostgres\b|\bmysql\b", 0.6, "database mentioned"),
+    ]
+
     def _match_url_patterns(
         self, skill: Skill, input_lower: str
     ) -> tuple[float, str]:
-        """Match URL patterns and domain indicators."""
-        # Check for URL indicators in the input
-        url_indicators = [
-            (r"https?://[^\s]+", 0.95, "URL detected"),
-            (r"www\.[^\s]+", 0.85, "www URL detected"),
-            # Domain indicators
-            (r"github\.com", 0.8, "github.com domain"),
-            (r"gitlab\.com", 0.8, "gitlab.com domain"),
-            (r"arxiv\.org", 0.9, "arxiv.org domain"),
-            (r"pubmed\.ncbi\.nlm\.nih\.gov", 0.9, "pubmed domain"),
-            (r"doi\.org", 0.9, "DOI detected"),
-            (r"\barxiv\b", 0.7, "arxiv mentioned"),
-            (r"\bpubmed\b", 0.7, "pubmed mentioned"),
-            (r"\bdocker\b", 0.6, "docker mentioned"),
-            (r"\bdocker-compose\b", 0.6, "docker-compose mentioned"),
-            (r"\bkubernetes\b", 0.6, "kubernetes mentioned"),
-            (r"\bnginx\b", 0.6, "nginx mentioned"),
-            (r"\bapache\b", 0.6, "apache mentioned"),
-            (r"journalctl", 0.7, "systemd journal mentioned"),
-            (r"\bsystemd\b", 0.5, "systemd mentioned"),
-            (r"\bapt\b|\bdnf\b|\byum\b", 0.5, "package manager mentioned"),
-            (r"launchctl", 0.7, "macOS launchctl mentioned"),
-            (r"\bhomebrew\b", 0.6, "homebrew mentioned"),
-            (r"\bmdfind\b", 0.7, "macOS spotlight mentioned"),
-            (r"\bplutil\b", 0.7, "macOS plutil mentioned"),
-            (r"\bsqlite\b|\bpostgres\b|\bmysql\b", 0.6, "database mentioned"),
-        ]
+        """Match URL patterns and domain indicators.
+        
+        Domain-specific patterns are checked first. If matched, skill trigger
+        relevance is evaluated and a meaningful score is returned.
+        
+        Generic URL patterns (https://, www.) are checked second — they only
+        boost skills that already matched via keyword triggers (small additive
+        bonus), they never score a skill on their own.
+        """
+        triggers = getattr(skill, "triggers", None)
+        if not triggers:
+            return 0.0, ""
+        trigger_text = " ".join(triggers).lower()
 
-        for pattern, score, reason in url_indicators:
+        # 1. Domain-specific patterns — check trigger relevance
+        for pattern, score, reason in self._DOMAIN_PATTERNS:
             if re.search(pattern, input_lower):
-                # Only trigger if skill also has a relevant trigger list
-                # (don't score if skill has no triggers at all)
-                triggers = getattr(skill, "triggers", None)
-                if not triggers:
-                    continue
-                # Check if the skill's triggers are relevant to this domain
-                trigger_text = " ".join(triggers).lower()
                 trigger_score = self._domain_relevance(skill, pattern, trigger_text)
                 if trigger_score > 0:
                     return score * trigger_score, f"{reason} + relevant trigger"
 
-        return 0.0, ""
+        # 2. Generic URL patterns — only add small bonus if skill already
+        #    matched via keyword triggers (trigger_score > 0 means triggers exist
+        #    and some overlap was found in _match_triggers already)
+        best_generic = 0.0
+        for pattern, score, reason in self._GENERIC_URL_PATTERNS:
+            if re.search(pattern, input_lower):
+                # Only add bonus if skill has meaningful triggers
+                if triggers:
+                    best_generic = max(best_generic, score)
+
+        return best_generic, "URL present + trigger" if best_generic > 0 else ""
 
     def _domain_relevance(self, skill: Skill, pattern: str, trigger_text: str) -> float:
-        """Check if a domain pattern is relevant to this skill's triggers."""
-        domain_keywords: dict[str, list[str]] = {
-            "github": ["github", "pr", "pull request", "repo", "git", "branch", "commit"],
-            "gitlab": ["gitlab", "repo", "ci", "pipeline"],
-            "arxiv": ["arxiv", "paper", "research", "academic", " preprint"],
-            "pubmed": ["pubmed", "paper", "research", "academic", "doi", "medical"],
-            "docker": ["docker", "container", "docker-compose", "containerize", "image", "build"],
-            "kubernetes": ["kubernetes", "k8s", "pod", "deployment", "helm"],
-            "nginx": ["nginx", "reverse proxy", "web server", "apache", "http"],
-            "apache": ["apache", "web server", "httpd", ".htaccess"],
-            "journalctl": ["journal", "journalctl", "systemd", "log", "syslog"],
-            "systemd": ["systemd", "service", " systemctl", "daemon", "unit"],
-            "apt": ["apt", "package", "debian", "ubuntu", "yum", "dnf", "fedora"],
-            "launchctl": ["launchctl", "launchd", "macos", "plist", "launchagent"],
-            "homebrew": ["homebrew", "brew", "macos", "package manager"],
-            "mdfind": ["spotlight", "mdfind", "macos", "search", "find file"],
+        """Check if a domain pattern is relevant to this skill's triggers.
+        
+        Returns 1.0 if the matched domain is relevant to the skill's trigger keywords,
+        0.0 otherwise. This prevents generic URL patterns from falsely boosting
+        unrelated skills.
+        """
+        # domain → trigger keywords that indicate relevance to this domain.
+        # NOTE: keep keywords specific (not generic words like "http", "web")
+        # that would match any URL pattern including unrelated domains.
+        _DOMAIN_RELEVANCE: dict[str, list[str]] = {
+            "github": ["github", "git", "pr", "pull request", "repo", "branch", "commit", "actions"],
+            "gitlab": ["gitlab", "git", "repo", "ci", "pipeline", "merge request"],
+            "arxiv": ["arxiv", "paper", "research", "academic", " preprint", " preprint"],
+            "pubmed": ["pubmed", "medline", "biomedical", "medical", "doi", "clinical", "pmc", "ncbi"],
+            "docker": ["docker", "container", "dockerfile", "image", "docker-compose", "registry", "pod"],
+            "kubernetes": ["kubernetes", "k8s", "pod", "deployment", "helm", "cluster", "kubectl"],
+            "nginx": ["nginx", "reverse proxy", "load balancer"],
+            "apache": ["apache", "httpd", "htaccess", "web server"],
+            "journalctl": ["journal", "journalctl", "systemd", "syslog", "log"],
+            "systemd": ["systemd", "service", " systemctl", "daemon", "unit", " journal"],
+            "apt": ["apt", "package", "debian", "ubuntu", "yum", "dnf"],
+            "launchctl": ["launchctl", "launchd", "plist", "launchagent", "launchdaemon"],
+            "homebrew": ["homebrew", "brew", "macos", "cask"],
+            "mdfind": ["spotlight", "mdfind", "macos", "metadata"],
             "plutil": ["plist", "preferences", "defaults", "macos"],
-            "database": ["database", "sql", "query", "db", "sqlite", "postgres", "mysql"],
+            "database": ["database", "db", "sql", "sqlite", "postgres", "mysql", "mongodb", "redis"],
         }
 
-        for domain, keywords in domain_keywords.items():
-            if domain in pattern.lower() or any(k in pattern.lower() for k in keywords):
+        for domain, keywords in _DOMAIN_RELEVANCE.items():
+            if domain in pattern.lower():
+                # Exact domain in pattern → check if any domain keyword in triggers
                 if any(kw in trigger_text for kw in keywords):
                     return 1.0
-                return 0.3  # domain mentioned but not in triggers
+                return 0.0  # domain present but skill has unrelated triggers
 
         return 0.0
 
