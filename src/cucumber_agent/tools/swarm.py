@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
-import threading
 from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
@@ -18,13 +18,14 @@ from cucumber_agent.session import Message, Role
 from cucumber_agent.tools.base import BaseTool, ToolResult
 from cucumber_agent.tools.registry import ToolRegistry
 
+logger = logging.getLogger(__name__)
 console = Console()
 
 # ---------------------------------------------------------------------------
 # Brain storage helpers
 # ---------------------------------------------------------------------------
 
-_brain_file_lock = threading.Lock()
+_brain_file_lock = asyncio.Lock()
 _SWARM_HOME = Path.home() / ".local" / "share" / "cucumber-swarm"
 
 
@@ -34,36 +35,52 @@ def _brain_file_for(project_path: str | Path | None) -> Path:
     return _SWARM_HOME / "brain.json"
 
 
-def _load_brain(brain_file: Path) -> dict | None:
+async def _load_brain(brain_file: Path) -> dict | None:
     if not brain_file.exists():
         return None
-    with _brain_file_lock:
+    async with _brain_file_lock:
         try:
             return json.loads(brain_file.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, OSError) as e:
+            logger.error(f"Failed to load brain file {brain_file}: {e}")
             return None
 
 
-def _save_brain(brain: dict, brain_file: Path) -> None:
-    brain_file.parent.mkdir(parents=True, exist_ok=True)
-    tmp = brain_file.with_suffix(".json.tmp")
-    with _brain_file_lock:
-        tmp.write_text(json.dumps(brain, indent=2, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(brain_file)
+async def _save_brain(brain: dict, brain_file: Path) -> None:
+    async with _brain_file_lock:
+        try:
+            brain_file.parent.mkdir(parents=True, exist_ok=True)
+            tmp = brain_file.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(brain, indent=2, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(brain_file)
+        except OSError as e:
+            logger.error(f"Failed to save brain file {brain_file}: {e}")
 
 
 # ---------------------------------------------------------------------------
-# Project analysis + planning (ported from Herbert Swarm 2.0)
+# Project analysis + planning
 # ---------------------------------------------------------------------------
 
 def _scan_project_files(project_path: Path) -> set[str]:
+    """Scan project files while skipping common large or irrelevant directories."""
     found: set[str] = set()
+    skip_dirs = {
+        ".git", ".svn", ".hg", "node_modules", "vendor", ".venv", "venv",
+        "__pycache__", ".pytest_cache", ".ruff_cache", "dist", "build",
+        ".next", ".nuxt", ".svelte-kit", "target"
+    }
     try:
+        # Limit depth to avoid infinite recursion or scanning massive trees
         for entry in project_path.rglob("*"):
+            # Check if any part of the path is in skip_dirs
+            if any(part in skip_dirs for part in entry.parts):
+                continue
             if entry.is_file():
                 found.add(entry.name.lower())
-    except Exception:
-        pass
+            if len(found) > 1000:  # Safety limit
+                break
+    except Exception as e:
+        logger.warning(f"Error scanning project files in {project_path}: {e}")
     return found
 
 
@@ -407,26 +424,25 @@ async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -
     from cucumber_agent.agent import Agent
     from cucumber_agent.config import Config
     from cucumber_agent.session import Session
-    from cucumber_agent.tools import agent as agent_tool_module
 
     config = Config.load()
     agent  = Agent.from_config(config)
     session = Session(id=f"swarm-{tid}", model=config.agent.model)
     project_path = Path(brain.get("project_path", ".")).resolve()
 
-    # Sub-agents in swarm auto-approve tool calls — user initiated the swarm intentionally
-    old_approve = agent_tool_module._subagent_auto_approve
-    agent_tool_module._subagent_auto_approve = True
+    # Sub-agents in swarm context are expected to run without interaction.
+    # We manually execute tools here, which implicitly skip approval.
 
     prompt = _build_agent_prompt(task, brain, brain_file)
 
     try:
         current_input = prompt
-        max_steps = 12
+        max_steps = 15
         for step in range(max_steps):
             response = await agent.run_with_tools(session, current_input)
             if not response.tool_calls:
                 return {"success": True, "output": (response.content or "")[:600]}
+            
             for tc in response.tool_calls:
                 tool_args, blocked = _normalize_swarm_tool_args(
                     tc.name,
@@ -435,14 +451,21 @@ async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -
                 )
                 if blocked is not None:
                     return blocked
-                result = await ToolRegistry.execute(tc.name, **(tool_args or {}))
+                
+                try:
+                    result = await ToolRegistry.execute(tc.name, **(tool_args or {}))
+                except Exception as e:
+                    return _format_failure(str(e), tool_name=tc.name, args=tc.arguments)
+
                 output_text = (
                     result.output if result.success else "ERROR: " + (result.error or result.output)
                 )
-                if len(output_text) > 3000:
-                    output_text = output_text[:1500] + "\n... [TRUNCATED] ...\n" + output_text[-1500:]
+                if len(output_text) > 4000:
+                    output_text = output_text[:2000] + "\n... [TRUNCATED] ...\n" + output_text[-2000:]
+                
                 if not result.success and not output_text.strip():
                     output_text = "ERROR: Tool failed without stderr/output"
+                
                 session.messages.append(
                     Message(
                         role=Role.TOOL,
@@ -451,15 +474,15 @@ async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -
                         tool_call_id=tc.id,
                     )
                 )
+            
             current_input = (
                 "Continue. Execute remaining steps, then provide a final summary "
-                "of what was created."
+                "of what was created. If you are finished, just summarize."
             )
         return {"success": False, "output": "Step limit reached before task completion"}
     except Exception as e:
+        logger.exception(f"Exception in swarm task {tid}")
         return _format_failure(str(e), error_type=type(e).__name__)
-    finally:
-        agent_tool_module._subagent_auto_approve = old_approve
 
 
 def _task_error_summary(result: dict) -> str:
@@ -483,7 +506,7 @@ def _task_error_summary(result: dict) -> str:
 # Command implementations
 # ---------------------------------------------------------------------------
 
-def _cmd_init(project: str, name: str | None = None) -> str:
+async def _cmd_init(project: str, name: str | None = None) -> str:
     project_path = Path(project).resolve()
     project_name = name or project_path.name
     brain_file   = _brain_file_for(project_path)
@@ -500,7 +523,7 @@ def _cmd_init(project: str, name: str | None = None) -> str:
         "created_at": datetime.now().isoformat(),
         "current_phase": 0,
     }
-    _save_brain(brain, brain_file)
+    await _save_brain(brain, brain_file)
 
     console.print(Panel(
         f"[bold green]Swarm initialized[/bold green]\n"
@@ -513,10 +536,10 @@ def _cmd_init(project: str, name: str | None = None) -> str:
     return f"Swarm initialized for '{project_name}' at {project_path}. Brain: {brain_file}"
 
 
-def _cmd_plan(project: str, spec: str | None = None) -> str:
+async def _cmd_plan(project: str, spec: str | None = None) -> str:
     project_path = Path(project).resolve()
     brain_file   = _brain_file_for(project_path)
-    brain        = _load_brain(brain_file)
+    brain        = await _load_brain(brain_file)
     if brain is None:
         return f"ERROR: No swarm brain at {brain_file}. Run 'init' first."
 
@@ -531,7 +554,7 @@ def _cmd_plan(project: str, spec: str | None = None) -> str:
     tasks, phases = _analyze_and_plan(spec_content, project_path)
     brain["tasks"]  = tasks
     brain["phases"] = phases
-    _save_brain(brain, brain_file)
+    await _save_brain(brain, brain_file)
 
     lines = [f"[bold]Plan created:[/bold] {len(tasks)} tasks across {len(phases)} phases\n"]
     for i, phase_name in enumerate(phases, 1):
@@ -556,7 +579,7 @@ async def _cmd_run(
 
     project_path = Path(project).resolve()
     brain_file   = _brain_file_for(project_path)
-    brain        = _load_brain(brain_file)
+    brain        = await _load_brain(brain_file)
     if brain is None:
         return f"ERROR: No swarm brain at {brain_file}. Run 'init' and 'plan' first."
     if not brain.get("tasks"):
@@ -573,7 +596,7 @@ async def _cmd_run(
         if retried == 0:
             return "No failed tasks to retry."
         console.print(f"[yellow]Retrying {retried} failed task(s)...[/yellow]")
-        _save_brain(brain, brain_file)
+        await _save_brain(brain, brain_file)
 
     run_start = datetime.now()
     console.print(Panel(
@@ -602,7 +625,7 @@ async def _cmd_run(
         for tid, task in phase_tasks:
             task["status"] = "running"
             task["started_at"] = datetime.now().isoformat()
-        _save_brain(brain, brain_file)
+        await _save_brain(brain, brain_file)
 
         if dry_run:
             for tid, task in phase_tasks:
@@ -665,9 +688,9 @@ async def _cmd_run(
                     }
                 task["completed_at"] = datetime.now().isoformat()
 
-        _save_brain(brain, brain_file)
+        await _save_brain(brain, brain_file)
         brain["current_phase"] = phase_num
-        _save_brain(brain, brain_file)
+        await _save_brain(brain, brain_file)
 
     done    = sum(1 for t in brain["tasks"].values() if t["status"] == "done")
     failed  = sum(1 for t in brain["tasks"].values() if t["status"] == "failed")
@@ -684,9 +707,9 @@ async def _cmd_run(
     return f"Swarm complete: {done}/{total} tasks done{suffix}"
 
 
-def _cmd_status(project: str | None) -> str:
+async def _cmd_status(project: str | None) -> str:
     brain_file = _brain_file_for(project)
-    brain      = _load_brain(brain_file)
+    brain      = await _load_brain(brain_file)
     if brain is None:
         return f"No brain found at {brain_file}. Run 'init' first."
 
@@ -719,9 +742,9 @@ def _cmd_status(project: str | None) -> str:
     return f"Status for '{brain.get('project_name','?')}': " + ", ".join(parts)
 
 
-def _cmd_report(project: str | None) -> str:
+async def _cmd_report(project: str | None) -> str:
     brain_file = _brain_file_for(project)
-    brain      = _load_brain(brain_file)
+    brain      = await _load_brain(brain_file)
     if brain is None:
         return f"No brain at {brain_file}. Run 'init' first."
 
@@ -779,9 +802,9 @@ def _cmd_report(project: str | None) -> str:
     return f"Report: {done}/{total} done ({pct}), {len(all_files)} files created"
 
 
-def _cmd_brain(project: str | None) -> str:
+async def _cmd_brain(project: str | None) -> str:
     brain_file = _brain_file_for(project)
-    brain      = _load_brain(brain_file)
+    brain      = await _load_brain(brain_file)
     if brain is None:
         return f"No brain at {brain_file}. Run 'init' first."
 
@@ -807,9 +830,9 @@ def _cmd_brain(project: str | None) -> str:
             f"{len(facts)} facts, phase {brain.get('current_phase',0)}")
 
 
-def _cmd_reset(project: str | None, yes: bool = False) -> str:
+async def _cmd_reset(project: str | None, yes: bool = False) -> str:
     brain_file = _brain_file_for(project)
-    brain      = _load_brain(brain_file)
+    brain      = await _load_brain(brain_file)
     if brain is None:
         return f"No brain at {brain_file} — nothing to reset."
 
@@ -901,29 +924,30 @@ class SwarmTool(BaseTool):
             if command == "init":
                 if not project:
                     return ToolResult(success=False, output="", error="'project' path is required for init")
-                out = _cmd_init(project, name)
+                out = await _cmd_init(project, name)
             elif command == "plan":
                 if not project:
                     return ToolResult(success=False, output="", error="'project' path is required for plan")
-                out = _cmd_plan(project, spec)
+                out = await _cmd_plan(project, spec)
             elif command == "run":
                 if not project:
                     return ToolResult(success=False, output="", error="'project' path is required for run")
                 out = await _cmd_run(project, parallel=parallel, timeout=timeout,
                                      dry_run=dry_run, retry_failed=retry_failed)
             elif command == "status":
-                out = _cmd_status(project)
+                out = await _cmd_status(project)
             elif command == "report":
-                out = _cmd_report(project)
+                out = await _cmd_report(project)
             elif command == "brain":
-                out = _cmd_brain(project)
+                out = await _cmd_brain(project)
             elif command == "reset":
-                out = _cmd_reset(project, yes=yes)
+                out = await _cmd_reset(project, yes=yes)
             else:
                 return ToolResult(success=False, output="", error=f"Unknown command: {command}")
 
             return ToolResult(success=True, output=out)
         except Exception as e:
+            logger.exception("Swarm tool execution failed")
             return ToolResult(success=False, output="", error=f"Swarm error: {e}")
 
 
