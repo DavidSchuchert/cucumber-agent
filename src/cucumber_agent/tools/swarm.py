@@ -439,11 +439,13 @@ async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -
         current_input = prompt
         max_steps = 15
         for step in range(max_steps):
+            console.print(f"  [dim cyan][{tid}][/dim cyan] [dim]Schritt {step+1}: Denkt nach...[/dim]")
             response = await agent.run_with_tools(session, current_input)
             if not response.tool_calls:
                 return {"success": True, "output": (response.content or "")[:600]}
             
             for tc in response.tool_calls:
+                console.print(f"  [dim cyan][{tid}][/dim cyan] [dim]Nutzt Tool:[/dim] [cyan]{tc.name}[/cyan]")
                 tool_args, blocked = _normalize_swarm_tool_args(
                     tc.name,
                     tc.arguments,

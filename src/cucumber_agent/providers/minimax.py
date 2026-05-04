@@ -42,7 +42,7 @@ class MiniMaxProvider(BaseProvider):
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
             },
-            timeout=120.0,
+            timeout=300.0,
         )
 
     async def close(self) -> None:
@@ -78,8 +78,8 @@ class MiniMaxProvider(BaseProvider):
                     json=body,
                 )
 
-                # Handle 529 with retry
-                if response.status_code == 529:
+                # Handle 529 or 429 with retry
+                if response.status_code in (429, 529):
                     wait_time = 2**attempt
                     if attempt < max_retries - 1:
                         await asyncio.sleep(wait_time)
@@ -100,13 +100,16 @@ class MiniMaxProvider(BaseProvider):
                     raise ValueError(f"Invalid JSON from MiniMax: {e}") from e
                 return self._parse_response(data, model)
 
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 400:
-                    console.print(f"[red]MiniMax API Error (400):[/red] {e.response.text}")
-                if e.response.status_code == 529 and attempt < max_retries - 1:
+            except (httpx.HTTPStatusError, httpx.TimeoutException) as e:
+                if attempt < max_retries - 1:
                     wait_time = 2**attempt
+                    if isinstance(e, httpx.TimeoutException):
+                        console.print(f"[yellow]MiniMax Timeout (Versuch {attempt+1}/{max_retries}): {e}[/yellow]")
                     await asyncio.sleep(wait_time)
                     continue
+                
+                if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 400:
+                    console.print(f"[red]MiniMax API Error (400):[/red] {e.response.text}")
                 raise
 
         raise Exception("Max retries exceeded")
@@ -128,7 +131,7 @@ class MiniMaxProvider(BaseProvider):
                 async with self._client.stream(
                     "POST", f"{self._base_url}/chat/completions", json=body
                 ) as resp:
-                    if resp.status_code == 529 and attempt < max_retries - 1:
+                    if resp.status_code in (429, 529) and attempt < max_retries - 1:
                         await asyncio.sleep(2**attempt)
                         continue
                     resp.raise_for_status()
@@ -148,10 +151,13 @@ class MiniMaxProvider(BaseProvider):
                         except json.JSONDecodeError:
                             continue
                     return  # success — exit retry loop
-            except Exception:
+            except (httpx.HTTPStatusError, httpx.TimeoutException) as e:
                 if attempt >= max_retries - 1:
                     raise
-                await asyncio.sleep(2**attempt)
+                wait_time = 2**attempt
+                if isinstance(e, httpx.TimeoutException):
+                    console.print(f"[yellow]MiniMax Stream Timeout (Versuch {attempt+1}/{max_retries})[/yellow]")
+                await asyncio.sleep(wait_time)
 
     def _build_request(
         self,
