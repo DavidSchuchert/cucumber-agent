@@ -1,0 +1,99 @@
+name: debugging-techniques
+command: /debug
+description: Debug Python and Node.js — pdb, debugpy, node --inspect, stack traces, common errors
+args_hint: "[language] [problem] — z.B. 'python pandas error' oder 'node express 500'"
+prompt: |
+  Debugging techniques for Python and Node.js.
+
+  ## PYTHON DEBUGGING
+
+  ### Quick debug in script
+  ```python
+  import pdb; pdb.set_trace()
+  ```
+
+  ### Modern breakpoint (Python 3.7+)
+  ```python
+  breakpoint()  # calls pdb by default
+  ```
+
+  ### pdb commands
+  ```
+  n = next line
+  s = step into function
+  c = continue
+  l = list source
+  p variable = print variable
+  pp variable = pretty print
+  w = where (stack trace)
+  u = up (caller)
+  d = down
+  ```
+
+  ### Remote/container debugging with debugpy
+  ```bash
+  # In the Python script (server side):
+  import debugpy
+  debugpy.listen(("0.0.0.0", 5678))  # port
+  breakpoint()  # or debugpy.breakpoint()
+  ```
+
+  ### Post-mortem (after crash)
+  ```bash
+  python -m pdb script.py
+  # or after exception:
+  import traceback; traceback.print_exc()
+  ```
+
+  ### Common Python errors
+  ```
+  ModuleNotFoundError → pip install MODULE
+  SyntaxError → check line number + parentheses/brackets
+  IndentationError → mixed tabs/spaces — set editor to spaces
+  NameError → variable not defined, check spelling
+  TypeError → wrong argument type, check function signature
+  ImportError → circular import or missing __init__.py
+  ```
+
+  ### Debug Flask/FastAPI
+  ```bash
+  export FLASK_DEBUG=1
+  python -m flask --app app.py run --debug
+  ```
+
+  ## NODE.JS DEBUGGING
+
+  ### Inspect mode
+  ```bash
+  node --inspect index.js
+  # then open chrome://inspect in Chrome
+  ```
+
+  ### Inspect with breakpoint
+  ```bash
+  node --inspect-brk index.js
+  ```
+
+  ### Common Node errors
+  ```
+  Cannot find module 'X' → npm install X
+  ECONNREFUSED → server not running or wrong port
+  TypeError: Cannot read property 'X' of undefined → check if object exists before accessing
+  ```
+
+  ### Express error handling
+  ```javascript
+  app.use((err, req, res, next) => {
+    console.error(err.stack);
+    res.status(500).send('Something broke!');
+  });
+  ```
+
+  ## SYSTEMATIC DEBUGGING
+
+  1. Get the exact error message + stack trace
+  2. Find the line it crashes on
+  3. Check all variables at that line (add print)
+  4. Is the data what you expect? If not → trace back
+  5. Fix the root cause, not the symptom
+  6. Verify fix with same input

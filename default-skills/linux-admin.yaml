@@ -1,0 +1,208 @@
+name: linux-admin
+command: /linux
+description: Linux server admin — systemd services, apt/dnf/yum, cron, /var/log, user management, disk space
+args_hint: "[action] — z.B. 'systemctl nginx status' oder 'apt update'"
+prompt: |
+  Linux Admin — server management for Debian/Ubuntu (apt) and RHEL/Fedora (dnf/yum).
+
+  ## SYSTEMD SERVICES
+
+  ```bash
+  # Status
+  systemctl status nginx
+
+  # Start/stop/restart
+  systemctl start nginx
+  systemctl stop nginx
+  systemctl restart nginx
+
+  # Enable at boot
+  systemctl enable nginx
+  systemctl disable nginx
+
+  # View logs
+  journalctl -u nginx -n 50
+  journalctl -u nginx --since "1 hour ago"
+  journalctl -u nginx -f              # follow
+
+  # List all services
+  systemctl list-units --type=service
+  systemctl list-units --type=service --state=running
+
+  # Check if active
+  systemctl is-active nginx
+  systemctl is-enabled nginx
+  ```
+
+  ## PACKAGE MANAGERS
+
+  ### apt (Debian/Ubuntu)
+  ```bash
+  # Update package lists
+  sudo apt update
+
+  # Upgrade all
+  sudo apt upgrade
+  sudo apt full-upgrade              # also remove/install if needed
+
+  # Install / remove
+  sudo apt install nginx
+  sudo apt remove nginx              # remove package
+  sudo apt purge nginx              # remove + config
+
+  # Search
+  apt search nginx
+  apt show nginx
+
+  # Auto-clean
+  sudo apt autoremove
+  sudo apt autoclean
+  ```
+
+  ### dnf (Fedora/RHEL 8+)
+  ```bash
+  sudo dnf install nginx
+  sudo dnf remove nginx
+  sudo dnf update
+  sudo dnf upgrade
+  sudo dnf search nginx
+  sudo dnf autoremove
+  ```
+
+  ### yum (RHEL 7)
+  ```bash
+  sudo yum install nginx
+  sudo yum remove nginx
+  sudo yum update
+  sudo yum search nginx
+  ```
+
+  ## CRON JOBS
+
+  ```bash
+  # Edit crontab
+  crontab -e                          # current user
+  sudo crontab -e                    # root
+
+  # List crontabs
+  crontab -l                          # current user
+  sudo crontab -l                    # root
+  ls /etc/cron.d/                    # system-wide
+
+  # Remove
+  crontab -r                          # delete all (no confirmation!)
+
+  # Cron log
+  grep CRON /var/log/syslog
+  journalctl -u cron -n 50
+
+  # Format: minute hour day month weekday command
+  # * * * * * = every minute
+  # 0 * * * * = every hour
+  # 0 9 * * * = every day at 9:00
+  # 0 9 * * 1 = every Monday at 9:00
+  ```
+
+  ## USER MANAGEMENT
+
+  ```bash
+  # Add / remove user
+  sudo adduser username
+  sudo userdel username
+  sudo userdel -r username           # remove home dir too
+
+  # Add to group
+  sudo usermod -aG docker username   # add to docker group
+  groups username                    # show groups
+
+  # Sudo access
+  sudo usermod -aG sudo username
+  # or edit /etc/sudoers:
+  sudo visudo
+
+  # List users
+  getent passwd
+  cat /etc/passwd
+  ```
+
+  ## DISK & FILESYSTEM
+
+  ```bash
+  # Disk usage
+  df -h
+  df -h /home
+
+  # Directory sizes
+  du -sh /var/log
+  du -sh /home/*
+  du -h --max-depth=1 /
+
+  # Largest files in dir
+  find / -type f -size +100M 2>/dev/null | xargs ls -lh | sort -k5 -rh
+
+  # Mount
+  mount /dev/sdb1 /mnt
+  umount /mnt
+  ```
+
+  ## PROCESSES
+
+  ```bash
+  # Top processes
+  top
+  htop                              # if installed
+
+  # By CPU/memory
+  ps aux --sort=-%cpu | head -10
+  ps aux --sort=-%mem | head -10
+
+  # Kill
+  kill PID
+  kill -9 PID
+  killall nginx
+  pkill nginx
+
+  # Resources per user
+  ps aux | awk '{print $1}' | sort | uniq -c | sort -rn
+  ```
+
+  ## NETWORK
+
+  ```bash
+  # Ports
+  ss -tlnp                           # listening TCP ports
+  ss -tunp                           # UDP too
+  lsof -i :8080                    # what's using port 8080
+
+  # DNS
+  systemd-resolve --status
+  cat /etc/resolv.conf
+
+  # Routing
+  ip route
+  ip addr
+
+  # Firewall (iptables)
+  sudo iptables -L -n -v
+  # or firewalld
+  sudo firewall-cmd --list-all
+  ```
+
+  ## COMMON REPAIR
+
+  ```bash
+  # Full disk (apt won't work)
+  sudo apt clean
+  sudo journalctl --vacuum-time=7d
+  sudo docker system prune -a
+
+  # Permissions
+  sudo chown -R user:user /path/to/dir
+  chmod +x script.sh
+
+  # Repair filesystem (unmount first)
+  sudo fsck /dev/sda1
+
+  # Log rotation stuck
+  sudo logrotate -f /etc/logrotate.conf
+  ```

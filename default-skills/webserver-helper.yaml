@@ -1,0 +1,141 @@
+name: webserver-helper
+command: /webserver
+description: Nginx and Apache — config syntax check, logs, reverse proxy, SSL, .htaccess
+args_hint: "[server] [action] — z.B. 'nginx configtest' oder 'apache logs error'"
+prompt: |
+  Webserver Helper — Nginx and Apache configuration and management.
+
+  ## NGINX
+
+  ```bash
+  # Config test (always run before reload)
+  sudo nginx -t
+  nginx -t -c /path/to/nginx.conf
+
+  # Reload / restart
+  sudo nginx -s reload
+  sudo systemctl reload nginx
+  sudo systemctl restart nginx
+
+  # Status / modules
+  nginx -v
+  nginx -V                       # compile flags + modules
+
+  # Config locations
+  # Debian/Ubuntu:
+  /etc/nginx/nginx.conf
+  /etc/nginx/sites-available/
+  /etc/nginx/sites-enabled/
+  /etc/nginx/conf.d/
+
+  # RHEL/Fedora:
+  /etc/nginx/nginx.conf
+  /etc/nginx/conf.d/
+
+  # Logs
+  tail -f /var/log/nginx/access.log
+  tail -f /var/log/nginx/error.log
+
+  # Common directives (config snippets):
+  # reverse proxy:
+  location / {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  }
+
+  # static files:
+  location /static/ {
+    alias /var/www/app/static/;
+    expires 30d;
+  }
+
+  # SSL redirect:
+  return 301 https://$host$request_uri;
+  ```
+
+  ## APACHE
+
+  ```bash
+  # Config test
+  sudo apache2ctl configtest
+  httpd -t
+
+  # Reload / restart
+  sudo systemctl reload apache2
+  sudo systemctl restart apache2
+
+  # Status / modules
+  apache2 -v
+  apache2ctl -M                   # loaded modules
+
+  # Config locations (Debian/Ubuntu)
+  /etc/apache2/apache2.conf
+  /etc/apache2/sites-available/
+  /etc/apache2/sites-enabled/
+  /etc/apache2/conf-available/
+  /etc/apache2/mods-available/
+
+  # RHEL/Fedora:
+  /etc/httpd/conf/httpd.conf
+  /etc/httpd/conf.d/
+
+  # Logs
+  tail -f /var/log/apache2/access.log
+  tail -f /var/log/apache2/error.log
+
+  # .htaccess (per-directory config)
+  # Enable .htaccess:
+  AllowOverride All     # in <Directory> block
+
+  # Common .htaccess:
+  # RewriteEngine On
+  # RewriteCond %{HTTPS} off
+  # RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+  ```
+
+  ## SSL / TLS
+
+  ```bash
+  # Let's Encrypt (certbot)
+  sudo certbot --nginx -d example.com
+  sudo certbot renew --dry-run
+  sudo certbot renew
+
+  # Self-signed (testing only!)
+  openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -keyout /etc/ssl/private/nginx.key \
+    -out /etc/ssl/certs/nginx.crt
+
+  # Check SSL certificate
+  openssl s_client -connect example.com:443
+  openssl s_client -connect example.com:443 -servername example.com
+
+  # Test SSL config
+  ssllabs.com/ssltest/   # online tool
+  ```
+
+  ## PHP-FPM (common with nginx/apache)
+
+  ```bash
+  # Config test
+  php-fpm -t
+
+  # Restart
+  sudo systemctl restart php-fpm
+  sudo systemctl restart phpX.X-fpm
+
+  # Check socket
+  ls /run/php/
+  ```
+
+  ## COMPARISON
+
+  | Task | Nginx | Apache |
+  |------|-------|--------|
+  | Config test | `nginx -t` | `apache2ctl configtest` |
+  | Reload | `nginx -s reload` | `systemctl reload apache2` |
+  | Restart | `systemctl restart nginx` | `systemctl restart apache2` |
+  | Modules | `nginx -V` | `apache2ctl -M` |
+  | Logs | `/var/log/nginx/` | `/var/log/apache2/` |

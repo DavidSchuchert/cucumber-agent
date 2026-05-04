@@ -1,0 +1,120 @@
+name: git-helper
+command: /git
+description: Git beyond PRs — branches, stash, rebase, history, bisect, submodules, clean-up
+args_hint: "[action] — z.B. 'branch' 'stash' 'log --since=1week'"
+prompt: |
+  Git Helper — everything Git beyond PRs.
+
+  ## BRANCHES
+  ```bash
+  git branch -a                    # all local + remote
+  git branch -vv                   # track relationships
+  git checkout -b BRANCH            # create + switch
+  git switch -c BRANCH             # same (modern)
+  git branch -d BRANCH             # delete local (safe)
+  git branch -D BRANCH             # force delete
+  git push origin --delete BRANCH  # delete remote
+  ```
+
+  ## STASH
+  ```bash
+  git stash                        # save work in progress
+  git stash push -m "message"      # with message
+  git stash list                   # show all stashes
+  git stash pop                    # apply + delete
+  git stash apply                  # apply, keep stash
+  git stash drop                   # delete stash
+  git stash show -p stash@{0}     # show stash content
+  git stash -u                     # include untracked files
+  git stash -p                     # interactive (select hunks)
+  ```
+
+  ## REBASE
+  ```bash
+  git rebase main                  # rebase current onto main
+  git rebase -i main               # interactive rebase (squash, reorder, edit)
+  git rebase --onto NEW BASE       # rebase onto different branch
+  git rebase --abort               # cancel rebase
+  git rebase --continue            # after resolving conflicts
+  ```
+
+  ## HISTORY & LOG
+  ```bash
+  git log --oneline -20           # compact history
+  git log --graph --oneline --all # visual branch history
+  git log -p FILE                 # history of a file (with diffs)
+  git log --author="Name"         # filter by author
+  git log --since="1 week ago"    # filter by date
+  git log --grep="FIX"            # filter by commit message
+  git blame FILE                   # line-by-line who changed what
+  git show SHA                     # show specific commit
+  git reflog                      # all reference updates (recovery)
+  ```
+
+  ## BISECT (find bad commit)
+  ```bash
+  git bisect start                # start
+  git bisect bad SHA              # mark known bad commit
+  git bisect good SHA             # mark known good commit
+  # git tests automatically, narrow down
+  git bisect reset               # finish
+  ```
+
+  ## SUBMODULES
+  ```bash
+  git submodule add URL path       # add
+  git submodule update --init      # clone submodule
+  git submodule update --remote    # update to latest
+  git submodule foreach 'git pull origin main'
+  ```
+
+  ## CLEAN-UP
+  ```bash
+  # Remove untracked files
+  git clean -n                    # dry run
+  git clean -f                    # remove untracked files
+  git clean -fd                   # directories too
+  git clean -fX                   # only ignored
+  git clean -fx                   # everything
+
+  # Remove merged branches
+  git branch --merged main | grep -v "main\|master" | xargs git branch -d
+
+  # Squash all commits into one
+  git reset --soft $(git merge-base main HEAD)
+  git commit -m "squashed changes"
+  ```
+
+  ## UNDO
+  ```bash
+  git checkout -- FILE            # discard unstaged changes
+  git restore FILE                # same (modern)
+  git restore --staged FILE      # unstage
+  git revert SHA                 # create new commit that undoes SHA
+  git reset --soft HEAD~1        # undo last commit (keep changes staged)
+  git reset --hard HEAD~1        # undo last commit (lose changes)
+  git reflog                      # find lost commits
+  ```
+
+  ## DIFF
+  ```bash
+  git diff                        # unstaged changes
+  git diff --staged              # staged changes
+  git diff SHA1 SHA2             # compare two commits
+  git diff main..HEAD            # what current branch has
+  git diff --stat               # summary only
+  ```
+
+  ## CHERRY-PICK
+  ```bash
+  git cherry-pick SHA            # apply commit SHA onto current branch
+  git cherry-pick --no-commit SHA # apply without committing
+  ```
+
+  ## TAGS
+  ```bash
+  git tag                         # list tags
+  git tag -a v1.0 -m "Release 1.0"
+  git push origin v1.0
+  git push origin --tags
+  ```

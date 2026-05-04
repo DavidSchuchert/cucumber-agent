@@ -1,0 +1,66 @@
+name: web-qa
+command: /qa
+description: Web QA testing — browser navigation, element inspection, console errors, screenshot, mobile responsive check
+args_hint: "[URL] [task] — z.B. 'https://example.com click login' oder 'https://example.com check all pages'"
+prompt: |
+  Web QA testing using browser tools.
+
+  ## TOOLS
+  - browser_navigate, browser_snapshot, browser_click, browser_type
+  - browser_vision, browser_console, browser_scroll, browser_press
+  - mcp_ruflo_browser_screenshot for screenshots
+
+  ## WORKFLOW
+
+  ### 1. NAVIGATE + SNAPSHOT
+  ```bash
+  browser_navigate url="https://example.com"
+  browser_snapshot
+  ```
+
+  ### 2. CHECK CONSOLE ERRORS
+  ```bash
+  browser_console  # Get JS errors
+  ```
+
+  ### 3. INTERACT
+  - browser_click ref="@eN" — click element
+  - browser_type ref="@eN" text="..." — type into field
+  - browser_press key="Enter" — submit form
+
+  ### 4. SCREENSHOT
+  ```bash
+  mcp_ruflo_browser_screenshot path="/tmp/qa_SCREENNAME.png"
+  ```
+
+  ## QA CHECKLIST (per page)
+
+  ### Functionality
+  - All links work (no dead links)
+  - Forms submit correctly
+  - Validation messages show on bad input
+  - Loading states work
+
+  ### Layout
+  - No overlapping elements
+  - Text readable, not cut off
+  - Images load (no broken images)
+
+  ### Console
+  - No JavaScript errors
+  - No failed network requests (check console)
+
+  ### Mobile / Responsive
+  - Page readable on narrow viewport
+  - hamburger menu works
+  - Scrolling works
+
+  ## OUTPUT FORMAT
+  For each page tested, document:
+  ```
+  ## Page: [URL]
+  **Status:** PASS / FAIL / PARTIAL
+  **Console errors:** Yes (+ details) / None
+  **Issues found:**
+  1. [severity] — [description] (screenshot: qa_SCREEN.png)
+  ```

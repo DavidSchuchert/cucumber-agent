@@ -1,0 +1,172 @@
+name: docker-helper
+command: /docker
+description: Docker and Docker Compose — build, run, logs, compose up/down, troubleshooting, prune, network/volume management
+args_hint: "[action] [container/service] — z.B. 'logs web' oder 'compose up nginx'"
+prompt: |
+  Docker Helper Skill — full Docker and Docker Compose management.
+
+  ## Your tools
+  - shell/terminal for docker and docker compose commands
+  - web_search for error lookups
+  - browser_navigate for Docker Hub / documentation
+
+  ## DOCKER COMMANDS REFERENCE
+
+  ### Container Lifecycle
+  ```bash
+  docker ps -a                    # All containers (running + stopped)
+  docker images                   # All images
+  docker run -d --name NAME IMAGE # Run detached with name
+  docker start NAME               # Start stopped container
+  docker stop NAME                # Stop running container
+  docker restart NAME             # Restart container
+  docker rm NAME                  # Remove stopped container
+  docker rm -f NAME               # Force remove (running)
+  ```
+
+  ### Logs & Debugging
+  ```bash
+  docker logs NAME                # View logs
+  docker logs -f NAME             # Follow logs (real-time)
+  docker logs --tail 100 NAME     # Last 100 lines
+  docker logs --since 1h NAME     # Logs since 1 hour ago
+  docker diff NAME                # Show changed files in container
+  docker exec -it NAME sh          # Shell into container
+  docker inspect NAME              # Full container info (JSON)
+  docker stats NAME               # CPU/memory usage
+  docker top NAME                 # Running processes
+  ```
+
+  ### Images
+  ```bash
+  docker build -t NAME:TAG .                  # Build from Dockerfile
+  docker build -t NAME:TAG -f Dockerfile.prod . # Custom Dockerfile
+  docker pull IMAGE                            # Pull image
+  docker push IMAGE                            # Push to registry
+  docker rmi IMAGE                             # Remove image
+  docker tag OLD NEW                           # Tag image
+  docker history IMAGE                          # Image layers
+  ```
+
+  ### Docker Compose
+  ```bash
+  docker compose up -d                 # Start services (detached)
+  docker compose up --build            # Build + start
+  docker compose down                  # Stop + remove
+  docker compose down -v               # Also remove volumes
+  docker compose restart [SERVICE]      # Restart service(s)
+  docker compose logs -f [SERVICE]     # Follow logs
+  docker compose ps                    # Status of services
+  docker compose exec SERVICE CMD      # Run command in service
+  docker compose build                 # Build all images
+  docker compose pull                  # Pull all images
+  docker compose config                # Validate compose file
+  docker compose top                   # Running processes per service
+  ```
+
+  ### Networks & Volumes
+  ```bash
+  docker network ls                   # List networks
+  docker network inspect NAME          # Inspect network
+  docker network create NAME           # Create network
+  docker network rm NAME               # Remove network
+  docker volume ls                     # List volumes
+  docker volume inspect NAME           # Inspect volume
+  docker volume create NAME            # Create volume
+  docker volume rm NAME               # Remove volume
+  ```
+
+  ### Cleanup
+  ```bash
+  docker system df                    # Disk usage
+  docker system prune                 # Remove stopped containers, dangling images
+  docker system prune -a              # Remove ALL unused images
+  docker system prune -f              # Auto-confirm
+  docker container prune              # Remove stopped containers
+  docker image prune                  # Remove dangling images
+  docker volume prune                 # Remove unused volumes
+  docker network prune                # Remove unused networks
+  ```
+
+  ### Troubleshooting
+  ```bash
+  # Container won't start
+  docker inspect NAME --format '{{.State.ExitCode}}'
+  docker logs NAME --stderr
+
+  # Port conflicts
+  ss -tlnp | grep PORT
+
+  # OOM / memory issues
+  docker stats --no-stream
+
+  # Networking issues
+  docker network ls
+  docker network inspect bridge
+  docker exec NAME cat /etc/hosts
+
+  # Disk space
+  docker system df -v
+  ```
+
+  ## WORKFLOW
+
+  ### 1. PARSE REQUEST
+  Identify what the user wants:
+  - "logs [container]" → docker logs
+  - "compose up/down [service]" → docker compose
+  - "build [image]" → docker build
+  - "ps" / "status" → docker ps / docker compose ps
+  - "prune" → docker system prune (ask for confirmation first!)
+  - "shell [container]" → docker exec -it
+  - "stats" → docker stats
+  - "ip [container]" → docker inspect
+  - "env [container]" → docker exec env
+  - "restart [container]" → docker restart
+  - "port [container]" → docker port
+
+  ### 2. EXECUTE
+  Run the appropriate command. For destructive actions (rm, prune, stop), confirm with user first unless already clear from context.
+
+  ### 3. DEBUG ERRORS
+  If an error occurs:
+  1. Parse the error message
+  2. Run diagnostic commands (docker ps -a, docker inspect, docker logs)
+  3. If unknown error, search the web for the error message
+  4. Provide a clear explanation and solution
+
+  ### 4. COMPOSE FILE HELP
+  If user asks about docker-compose.yml:
+  - Validate: docker compose config
+  - Explain services, networks, volumes
+  - Suggest improvements / common patterns
+  - Help debug service dependencies
+
+  ## OUTPUT FORMAT
+  ```
+  ## Docker: [action]
+  **Status:** success/error
+  **Output:**
+  (command output)
+  **Troubleshooting:** (if error)
+  - Possible cause: ...
+  - Try: ...
+  ```
+
+  ## COMMON PATTERNS
+
+  ### Quick nginx dev server
+  docker run -d --name nginx -p 8080:80 nginx:alpine
+
+  ### Database with volume
+  docker run -d --name postgres -v pgdata:/var/lib/postgresql/data -e POSTGRES_PASSWORD=secret postgres:15
+
+  ### Full stack (from compose file)
+  docker compose up -d --build
+  docker compose logs -f [service]
+  docker compose exec [service] sh
+
+  ### Inspect running app
+  docker ps
+  docker stats --no-stream
+  docker logs --tail 50 NAME

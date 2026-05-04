@@ -64,6 +64,15 @@ echo "→ Installing package..."
 uv sync
 uv tool install -e .
 
+# Step 4: Copy default skills to ~/.cucumber/skills/
+SKILLS_DIR="${HOME}/.cucumber/skills"
+if [ -d "${INSTALL_DIR}/default-skills" ]; then
+    echo "→ Installing default skills..."
+    mkdir -p "$SKILLS_DIR"
+    cp "${INSTALL_DIR}/default-skills/"*.yaml "$SKILLS_DIR/"
+    echo "✓ ${INSTALL_DIR}/default-skills/*.yaml → ${SKILLS_DIR}/"
+fi
+
 echo ""
 echo "✅ CucumberAgent installed!"
 echo ""

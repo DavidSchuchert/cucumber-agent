@@ -1,0 +1,180 @@
+name: skill-authoring
+command: /newskill
+description: Create, validate, and manage new cucumber-agent skills — template generator, YAML validator, best practices guide
+args_hint: "[skill-name] — z.B. 'my-new-skill' oder 'list' zum Anzeigen aller Skills"
+prompt: |
+  Skill Authoring Skill — create, validate, and manage cucumber-agent skills.
+
+  ## SKILL FORMAT (YAML)
+
+  Every skill is a YAML file in ~/.cucumber/skills/ with this structure:
+
+  ```yaml
+  name: skill-name            # lowercase, hyphens/underscores only
+  command: /slashcommand      # the /slash command to invoke
+  description: What it does  # one line, clear and concise
+  args_hint: "[arg1] [arg2]" # hint for required arguments
+  prompt: |
+    The full skill prompt — this is the main content.
+    Written in second person ("You are...") or imperative ("Create a...").
+
+    Include:
+    - What the skill does
+    - What tools are available
+    - Step-by-step instructions
+    - Examples
+    - Edge cases and pitfalls
+    - Output format
+  ```
+
+  ## TEMPLATE GENERATOR
+
+  When user asks to create a skill:
+  1. Ask for: name, command, description, and what it should do
+  2. Generate the YAML skeleton
+  3. Fill in a detailed, actionable prompt section
+  4. Save to ~/.cucumber/skills/NAME.yaml
+  5. Validate it loads correctly
+
+  ## VALIDATOR
+
+  Checklist for any skill YAML:
+  - [ ] Valid YAML syntax (parseable)
+  - [ ] `name` is lowercase, no spaces
+  - [ ] `command` starts with /
+  - [ ] `description` is present and concise
+  - [ ] `prompt` is present and has actionable content
+  - [ ] prompt includes step-by-step instructions
+  - [ ] prompt includes edge cases / error handling
+  - [ ] file saved to ~/.cucumber/skills/*.yaml
+
+  To validate: run through skill loader logic mentally:
+  ```python
+  import yaml
+  with open("~/.cucumber/skills/NAME.yaml") as f:
+      data = yaml.safe_load(f)
+  assert "name" in data
+  assert "command" in data
+  assert data["command"].startswith("/")
+  assert "prompt" in data and len(data["prompt"]) > 50
+  ```
+
+  ## SKILL AUTHORING WORKFLOW
+
+  1. **Gather requirements** — ask user:
+     - What's the skill called? (name, command)
+     - What should it do?
+     - What inputs does it need?
+     - What outputs does it produce?
+     - What edge cases exist?
+
+  2. **Generate skill**
+     - Write the YAML
+     - Make the prompt specific, not generic
+     - Include real commands, not just descriptions
+     - Add examples
+
+  3. **Save**
+     - Write to ~/.cucumber/skills/NAME.yaml
+     - Use heredoc or write_file tool
+
+  4. **Validate**
+     - Parse YAML to check syntax
+     - Verify structure
+     - Optionally: test by asking "what would this skill do for X?"
+
+  5. **Document** — add to skill description if complex
+
+  ## BEST PRACTICES
+
+  ### GOOD prompt example:
+  ```
+  prompt: |
+    Create a calendar event in Apple Calendar.
+
+    Parse the user's input: {args}
+    Extract: event name, date, and time.
+
+    Use the shell tool to execute this AppleScript (fill in the extracted values):
+    osascript -e 'tell application "Calendar"
+      tell calendar "Home"
+        make new event with properties {summary:"EVENT_NAME", start date:DATE}
+      end tell
+    end tell'
+
+    If no specific time is given, use 09:00 as start time.
+    Execute and confirm to user.
+  ```
+
+  ### BAD prompt example:
+  ```
+  prompt: "This skill creates calendar events."
+  ```
+
+  Rules:
+  - Be specific about commands to run
+  - Include error handling
+  - Show example inputs/outputs
+  - Keep it actionable — the agent should know exactly what to do
+  - Use second person ("You are...") or imperative ("Do X, then Y...")
+
+  ## MANAGING SKILLS
+
+  **List all skills:**
+  ```bash
+  ls ~/.cucumber/skills/
+  ```
+
+  **Show skill content:**
+  Read ~/.cucumber/skills/NAME.yaml
+
+  **Delete skill:**
+  rm ~/.cucumber/skills/NAME.yaml
+
+  **Edit skill:**
+  patch ~/.cucumber/skills/NAME.yaml
+
+  **Duplicate/copy skill:**
+  cp ~/.cucumber/skills/SOURCE.yaml ~/.cucumber/skills/TARGET.yaml
+
+  ## SPECIAL FIELDS
+
+  `trigger:` (optional) — keywords that auto-suggest this skill
+  ```yaml
+  triggers: [calendar, event, termin]
+  ```
+
+  `category:` (optional) — organize skills
+  ```yaml
+  category: productivity
+  ```
+
+  `examples:` (optional) — usage examples
+  ```yaml
+  examples:
+    - "/calendar Meeting morgen um 14:00"
+    - "/calendar Arzttermin 15.05.2026 10:00"
+  ```
+
+  ## VALIDATION COMMAND
+
+  Run this to validate a skill file:
+  ```bash
+  python3 -c "
+  import yaml, sys
+  path = sys.argv[1]
+  with open(path) as f:
+      data = yaml.safe_load(f)
+  errors = []
+  if not data.get('name'): errors.append('missing name')
+  if not data.get('command'): errors.append('missing command')
+  if not data.get('command', '').startswith('/'): errors.append('command must start with /')
+  if not data.get('prompt'): errors.append('missing prompt')
+  if len(data.get('prompt', '')) < 50: errors.append('prompt too short')
+  if errors:
+      print('ERRORS:', ', '.join(errors))
+      sys.exit(1)
+  print('OK:', data['name'])
+  "
+  ~/.cucumber/skills/SKILL.yaml
+  ```

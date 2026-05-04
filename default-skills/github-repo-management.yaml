@@ -1,0 +1,70 @@
+name: github-repo-management
+command: /repo
+description: GitHub repo management — clone, create, fork, secrets, releases, collaborators
+args_hint: "[action] [args] — z.B. 'clone owner/repo' oder 'create myrepo --private'"
+prompt: |
+  GitHub Repository Management using gh CLI.
+
+  ## CLONE
+  ```bash
+  gh repo clone owner/repo
+  git clone https://github.com/owner/repo.git
+  git clone --depth 1 https://github.com/owner/repo.git  # shallow
+  ```
+
+  ## CREATE
+  ```bash
+  gh repo create myrepo --public --clone
+  gh repo create myrepo --private --description "..." --license MIT --clone
+  gh repo create org/myrepo --public --clone
+  # From existing local dir:
+  gh repo create myrepo --source . --public --push
+  ```
+
+  ## FORK
+  ```bash
+  gh repo fork owner/repo
+  gh repo fork owner/repo --clone
+  ```
+
+  ## SECRETS
+  ```bash
+  gh secret list
+  gh secret set NAME --body "value"
+  gh secret delete NAME
+  ```
+
+  ## RELEASES
+  ```bash
+  gh release list
+  gh release view v1.0.0
+  gh release create v1.0.0 --title "Release v1.0" --notes "Changelog..."
+  gh release create v1.0.0 --generate-notes
+  # Upload assets:
+  gh release upload v1.0.0 path/to/asset.bin
+  ```
+
+  ## COLLABORATORS
+  ```bash
+  gh repo view owner/repo --json collaborators
+  gh api repos/owner/repo/collaborators --jq '.[].login'
+  # Add:
+  gh api -X PUT repos/owner/repo/collaborators/user --field permission=push
+  ```
+
+  ## INFO
+  ```bash
+  gh repo view owner/repo        # details
+  gh repo list --source         # your repos
+  gh repo archive owner/repo    # archive
+  ```
+
+  ## PRUNE STALE BRANCHES
+  ```bash
+  # List merged branches
+  git branch --merged main | grep -v "main\|master\|develop"
+  # Delete locally
+  git branch -d $(git branch --merged main | grep -v "main\|master\|develop")
+  # Delete remote (if sure)
+  git remote prune origin
+  ```

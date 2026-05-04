@@ -1,0 +1,109 @@
+name: academic-research
+command: /research
+description: Academic research — PubMed, arXiv, Google Scholar, PDF download, DOI lookup, BibTeX export, RSS tracking
+args_hint: "[Topic/Author/DOI] — z.B. 'machine learning transformer' oder '10.1038/nature12373'"
+prompt: |
+  Academic Research Skill — comprehensive literature search and paper retrieval.
+
+  ## Your tools
+  - web_search (DuckDuckGo) for all searches
+  - terminal/curl for API calls (PubMed E-utilities, arXiv API, Google Scholar scraping)
+  - browser_navigate for PDF downloads and complex pages
+
+  ## Workflow
+
+  ### 1. IDENTIFY SOURCE TYPE
+  Parse the input to determine what we're looking for:
+  - DOI pattern (10.xxxxx/...) → DOI lookup first, then search
+  - Topic/keyword → Multi-source search
+  - Author name → Author search on each platform
+  - arXiv ID (2301.00001) → Direct arXiv fetch
+  - PubMed ID (12345678) → Direct PubMed fetch
+
+  ### 2. SEARCH STRATEGY (multi-source)
+  Run these searches in parallel where possible:
+
+  **PubMed (E-utilities API):**
+  ```bash
+  # Search
+  curl -s "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=TOPIC&retmax=20&retmode=json"
+  # Fetch details (after getting IDs)
+  curl -s "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=ID1,ID2&retmode=json"
+  ```
+
+  **arXiv (Atom feed):**
+  ```bash
+  # Search by topic
+  curl -s "https://export.arxiv.org/api/query?search_query=all:TOPIC&start=0&max_results=20&sortBy=relevance"
+  # Search by author
+  curl -s "https://export.arxiv.org/api/query?search_query=au:AUTHOR_NAME&start=0&max_results=20"
+  ```
+
+  **Google Scholar (DuckDuckGo):**
+  ```
+  web_search: "TOPIC site:scholar.google.com OR site:arxiv.org OR site:pubmed.ncbi.nlm.nih.gov"
+  ```
+
+  ### 3. FETCH FULL PAPERS / PDFs
+  For promising results:
+  - Check if open-access (arXiv has free PDFs)
+  - arXiv PDF: https://arxiv.org/pdf/ID.pdf
+  - PubMed: use the "Free full text" link or request via NCBI E-utilities esummary
+  - Try to find DOI and resolve to publisher page
+  - If PDF found, offer to download to ~/Downloads/papers/
+
+  ### 4. DOI LOOKUP
+  ```bash
+  # Direct DOI resolution
+  curl -sL "https://doi.org/DOI" -o /dev/null -w "%{http_code} %{redirect_url}"
+  # BibTeX from CrossRef
+  curl -s "https://api.crossref.org/works/DOI" | jq '{title, author, DOI, container-title, published}'
+  ```
+
+  ### 5. BIBTEX EXPORT
+  For each paper, generate BibTeX entry:
+  ```bash
+  curl -s "https://api.crossref.org/works/DOI" | jq -r '.message' > bib.json
+  # Then format as BibTeX manually:
+  # @article{key,
+  #   title={...},
+  #   author={...},
+  #   journal={...},
+  #   year={...},
+  #   doi={...}
+  # }
+  ```
+
+  ### 6. RSS/TRACKING FOR TOPICS
+  For tracking, generate RSS feed URLs:
+  - arXiv: https://export.arxiv.org/api/query?search_query=all:TOPIC&sortBy=submittedDate
+  - PubMed: https://pubmed.ncbi.nlm.nih.gov/?term=TOPIC&filter=recent10
+  - Google Scholar Alerts: provide DuckDuckGo search link
+
+  Store tracked topics in ~/.cucumber/memory/academic-topics.md:
+  ```
+  # Tracked Research Topics
+  ## Topic: [name]
+  - arXiv feed: URL
+  - PubMed link: URL
+  - Last checked: YYYY-MM-DD
+  - Recent papers: ...
+  ```
+
+  ## OUTPUT FORMAT
+  Present results in structured format:
+  ```
+  ## [Platform] Results for "QUERY"
+  1. **Title** — Authors (Year)
+     - DOI/ID: ...
+     - Abstract: ...
+     - Link: ...
+     - [PDF] [BibTeX] [Save]
+  ```
+
+  ## QUALITY CHECKS
+  - Always verify paper exists before claiming "found"
+  - Note if PDF is behind paywall
+  - Sort by relevance, then by date
+  - Deduplicate across sources
+  - Check publication date for recency requirements

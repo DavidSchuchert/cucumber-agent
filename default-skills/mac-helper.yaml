@@ -1,0 +1,194 @@
+name: mac-helper
+command: /mac
+description: macOS specific — Homebrew, mdfind, plutil, LaunchAgents, .dmg handling, system_profiler, defaults
+args_hint: "[action] — z.B. 'brew outdated' oder 'mdfind document pdf'"
+prompt: |
+  macOS Helper — Mac-specific commands and management.
+
+  ## HOMEBREW
+
+  ```bash
+  # Basics
+  brew install wget
+  brew uninstall wget
+  brew update && brew upgrade          # update all
+  brew upgrade wget                    # specific
+
+  # Info & Search
+  brew search wget
+  brew info wget
+  brew list
+  brew list --versions
+
+  # Cleanup
+  brew cleanup                          # remove old versions
+  brew cleanup -n                       # dry run
+  brew autoremove
+
+  # Services (brew services)
+  brew services list
+  brew services run nginx
+  brew services stop nginx
+  brew services restart nginx
+
+  # Cask (GUI apps)
+  brew install --cask firefox
+  brew uninstall --cask firefox
+  brew list --cask
+
+  # Fix issues
+  brew doctor                           # diagnose
+  brew install --build-from-source wget # rebuild
+  ```
+
+  ## SPOTLIGHT / MDFIND
+
+  ```bash
+  # Basic search
+  mdfind "kind:pdf"
+  mdfind "kind:folder"
+  mdfind "filename:report"
+
+  # Full text search
+  mdfind "report"                      # contents + filename
+
+  # In specific directory
+  mdfind -onlyin ~/Documents "report"
+
+  # List metadata attributes
+  mdls /path/to/file
+
+  # Update spotlight index
+  mdutil -i on /                       # enable indexing
+  mdutil -E /                           # rebuild index
+  ```
+
+  ## PLUTIL (Property Lists)
+
+  ```bash
+  # Read plist
+  plutil -p ~/Library/Preferences/com.apple.safari.plist
+
+  # Convert to XML (human readable)
+  plutil -convert xml1 -o file.xml file.plist
+
+  # Convert back to binary
+  plutil -convert binary1 file.plist
+
+  # Add key
+  plutil -insert KeyName -string "value" file.plist
+  plutil -insert KeyName -bool YES file.plist
+
+  # Remove key
+  plutil -remove KeyName file.plist
+  ```
+
+  ## LAUNCHAGENTS & LAUNCHDEMONS
+
+  ```bash
+  # User LaunchAgents (~/Library/LaunchAgents/)
+  ls ~/Library/LaunchAgents/
+
+  # Load/unload
+  launchctl load ~/Library/LaunchAgents/com.example.plist
+  launchctl unload ~/Library/LaunchAgents/com.example.plist
+
+  # Start/stop
+  launchctl start com.example
+  launchctl stop com.example
+
+  # List
+  launchctl list                         # all loaded
+  launchctl list | grep -i app         # filter
+
+  # System LaunchDaemons (/Library/LaunchDaemons/) — needs sudo
+  sudo launchctl list | grep -i nginx
+  ```
+
+  ## DMG HANDLING
+
+  ```bash
+  # Mount DMG (opens in Finder)
+  hdiutil attach file.dmg
+
+  # Mount without Finder popup
+  hdiutil attach file.dmg -nobrowse
+
+  # Unmount
+  hdiutil detach /Volumes/NAMEOFMOUNT
+
+  # Convert to read-only
+  hdiutil convert file.dmg -format UDRO -o output.dmg
+
+  # Create DMG from folder
+  hdiutil create -volname "MyApp" -srcfolder /path/to/folder -ov -format UDZO output.dmg
+  ```
+
+  ## SYSTEM INFO
+
+  ```bash
+  # Hardware info
+  system_profiler SPHardwareDataType
+  sysctl hw.model hw.memsize hw.ncpu
+
+  # Battery
+  pmset -g batt
+  pmset -g raw
+
+  # Disk space
+  df -h
+  diskutil list
+
+  # Memory pressure
+  memory_pressure
+
+  # Boot volume
+  bless --info
+
+  # SIP status
+  csrutil status
+  ```
+
+  ## DEFAULTS (System Preferences)
+
+  ```bash
+  # Read preference
+  defaults read com.apple.Safari
+
+  # Write preference
+  defaults write com.apple.Safari HomePage -string "https://example.com"
+  defaults write com.apple.Safari AutoFillPasswords -bool NO
+
+  # Delete preference
+  defaults delete com.apple.Safari HomePage
+
+  # Domain list (find app bundle id)
+  defaults domains | tr ',' '\n'
+  ```
+
+  ## FINDER
+
+  ```bash
+  # Show hidden files
+  defaults write com.apple.finder AppleShowAllFiles YES
+  killall Finder
+
+  # Recent apps (clear)
+  rm -rf ~/Library/Application Support/com.apple.sharedfilelist/com.apple.LSSharedFileList.ApplicationRecentDocuments/*
+
+  # Trash
+  rm -rf ~/.Trash/*
+  ```
+
+  ## KEXT (Kernel Extensions)
+
+  ```bash
+  # List loaded
+  kextstat -l
+
+  # Load/unload (needs sudo on modern macOS)
+  sudo kextload /path/to/kext.kext
+  sudo kextunload /path/to/kext.kext
+
+  # System Integrity Protection prevents this on newer macOS
+  ```

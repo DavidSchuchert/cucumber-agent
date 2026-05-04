@@ -56,6 +56,15 @@ else
     uv tool install -e . --force
 fi
 
+# Sync new default skills
+SKILLS_DIR="${HOME}/.cucumber/skills"
+if [ -d "${INSTALL_DIR}/default-skills" ]; then
+    echo "→ Syncing default skills..."
+    mkdir -p "$SKILLS_DIR"
+    cp "${INSTALL_DIR}/default-skills/"*.yaml "$SKILLS_DIR/"
+    echo "✓ Skills synced to ${SKILLS_DIR}/"
+fi
+
 echo ""
 echo "✅ CucumberAgent successfully updated to the latest version!"
 echo ""
