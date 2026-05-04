@@ -1,7 +1,11 @@
 name: Herbert Swarm
 command: /herbert-swarm
-description: Native CucumberAgent skill for Herbert Swarm multi-agent project planning and execution.
-args_hint: "[project path] [spec path optional] [--dry-run] [--parallel N] [--timeout SECONDS]"
+aliases:
+  - /herbert
+  - /herbert swarm
+  - /swarm
+description: Startet Herbert Swarm nativ für Projektplanung und parallele Agent-Ausführung.
+args_hint: "[Projekt] [--dry-run] [--parallel N] [--timeout SEKUNDEN]"
 timeout: 1800
 handler: herbert_swarm
 steps:

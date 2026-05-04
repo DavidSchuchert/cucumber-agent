@@ -6,6 +6,7 @@ import asyncio
 import re
 import sys
 from collections.abc import AsyncIterator
+from difflib import get_close_matches
 from pathlib import Path
 
 import httpx
@@ -30,11 +31,87 @@ from cucumber_agent.memory import FactsStore, SessionLogger
 from cucumber_agent.session import Message as SessionMessage
 from cucumber_agent.session import Role as SessionRole
 from cucumber_agent.session import Session
-from cucumber_agent.skills import SkillLoader, SkillRunner
+from cucumber_agent.skills import Skill, SkillLoader, SkillRunner
 from cucumber_agent.tools.registry import ToolRegistry
 from cucumber_agent.workspace import WorkspaceDetector
 
 logger = get_logger("cli")
+
+_COMMAND_PUNCTUATION = ".,;:!?"
+STATIC_SLASH_COMMANDS = [
+    "/help",
+    "/exit",
+    "/quit",
+    "/clear",
+    "/config",
+    "/model",
+    "/debug",
+    "/optimize",
+    "/memory",
+    "/context",
+    "/autoapprove",
+    "/compact",
+    "/pin",
+    "/unpin",
+    "/cost",
+    "/remember",
+    "/forget",
+    "/skills",
+    "/tools",
+    "/history",
+    "/undo",
+    "/export",
+]
+
+
+def _normalize_command_word(word: str) -> str:
+    return word.strip().rstrip(_COMMAND_PUNCTUATION).lower()
+
+
+def _skill_command_candidates(skill: Skill) -> list[str]:
+    aliases = getattr(skill, "aliases", None) or []
+    return [skill.command, *aliases]
+
+
+def _resolve_skill_invocation(user_input: str, skill_loader: SkillLoader) -> tuple[Skill, str] | None:
+    """Resolve exact skill command or alias, tolerating punctuation on command words."""
+    words = user_input.strip().split()
+    if not words:
+        return None
+
+    candidates: list[tuple[int, str, Skill]] = []
+    for skill in skill_loader.skills:
+        for command in _skill_command_candidates(skill):
+            candidates.append((len(command.split()), command, skill))
+
+    for word_count, command, skill in sorted(candidates, reverse=True):
+        if len(words) < word_count:
+            continue
+        input_command = " ".join(_normalize_command_word(w) for w in words[:word_count])
+        candidate_command = " ".join(_normalize_command_word(w) for w in command.split())
+        if input_command == candidate_command:
+            return skill, " ".join(words[word_count:]).strip()
+
+    return None
+
+
+def _command_suggestion(
+    user_input: str,
+    skill_loader: SkillLoader,
+    static_commands: list[str],
+) -> str | None:
+    first_word = user_input.strip().split(None, 1)[0] if user_input.strip() else ""
+    normalized = _normalize_command_word(first_word)
+    commands = list(static_commands)
+    for skill in skill_loader.skills:
+        commands.extend(_skill_command_candidates(skill))
+
+    normalized_to_display = {
+        " ".join(_normalize_command_word(w) for w in command.split()): command
+        for command in commands
+    }
+    matches = get_close_matches(normalized, normalized_to_display.keys(), n=1, cutoff=0.55)
+    return normalized_to_display[matches[0]] if matches else None
 
 console = Console()
 
@@ -360,30 +437,10 @@ class CliSession:
         pers = self._config.personality
 
         # Build slash-command completer (static + skill commands)
-        slash_commands = [
-            "/help",
-            "/exit",
-            "/quit",
-            "/clear",
-            "/config",
-            "/model",
-            "/debug",
-            "/optimize",
-            "/memory",
-            "/context",
-            "/autoapprove",
-            "/compact",
-            "/pin",
-            "/unpin",
-            "/cost",
-            "/remember",
-            "/forget",
-            "/skills",
-            "/tools",
-            "/history",
-            "/undo",
-            "/export",
-        ] + [s.command for s in self._skill_loader.skills]
+        skill_commands = []
+        for skill in self._skill_loader.skills:
+            skill_commands.extend(_skill_command_candidates(skill))
+        slash_commands = STATIC_SLASH_COMMANDS + skill_commands
         completer = WordCompleter(sorted(set(slash_commands)), sentence=True)
 
         ptk_style = PtkStyle.from_dict(
@@ -789,12 +846,10 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
         if self._skill_loader.needs_reload():
             self._skill_loader.load_all()
 
-        # Check for skill commands first
-        parts = user_input.strip().split(None, 1)
-        cmd_key = parts[0].lower()
-        skill = self._skill_loader.get(cmd_key)
-        if skill:
-            args = parts[1] if len(parts) > 1 else ""
+        # Check for skill commands first, including aliases and punctuation-tolerant input.
+        skill_invocation = _resolve_skill_invocation(user_input, self._skill_loader)
+        if skill_invocation:
+            skill, args = skill_invocation
             console.print(f"  [dim magenta]⚡ Skill: {skill.name}[/dim magenta]\n")
 
             with console.status("  [dim]führe aus...[/dim]", spinner="dots", spinner_style="dim"):
@@ -812,11 +867,12 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
             console.print()
             return
 
-        cmd = user_input.strip().lower()
+        parts = user_input.strip().split(None, 1)
+        cmd = _normalize_command_word(parts[0]) if parts else ""
         # Extract argument for parametric commands
         arg = user_input.strip()[len(parts[0]) :].strip()
 
-        match cmd.split()[0] if cmd else cmd:
+        match cmd:
             case "/help":
                 print_help()
             case "/exit" | "/quit":
@@ -1075,9 +1131,11 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                     )
                     table.add_column("Befehl", style="bold cyan", no_wrap=True)
                     table.add_column("Args", style="dim", no_wrap=True)
+                    table.add_column("Aliase", style="dim")
                     table.add_column("Beschreibung", style="white")
                     for s in skills:
-                        table.add_row(s.command, s.args_hint, s.description)
+                        aliases = ", ".join(getattr(s, "aliases", None) or [])
+                        table.add_row(s.command, s.args_hint, aliases, s.description)
                     console.print()
                     console.print(
                         Panel(
@@ -1197,9 +1255,16 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                         f"  [green]✓ Session exportiert:[/green] [bold]{export_path}[/bold]\n"
                     )
             case _:
-                console.print(
-                    f"  [dim]Unbekannter Befehl: [bold]{cmd}[/bold]. Tippe /help für Hilfe.[/dim]\n"
-                )
+                suggestion = _command_suggestion(user_input, self._skill_loader, STATIC_SLASH_COMMANDS)
+                if suggestion:
+                    console.print(
+                        "  [dim]Unbekannter Befehl: "
+                        f"[bold]{cmd}[/bold]. Meintest du [bold cyan]{suggestion}[/bold cyan]?[/dim]\n"
+                    )
+                else:
+                    console.print(
+                        f"  [dim]Unbekannter Befehl: [bold]{cmd}[/bold]. Tippe /help für Hilfe.[/dim]\n"
+                    )
 
     async def _handle_tool_approval(self, user_input: str) -> None:
         """Handle user's response to a tool call."""

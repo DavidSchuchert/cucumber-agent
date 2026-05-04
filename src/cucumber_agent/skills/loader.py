@@ -27,6 +27,7 @@ class Skill:
     args_hint: str = ""  # e.g. "[Stadt]" shown in /skills list
     timeout: float = 30.0  # Per-step timeout in seconds
     handler: str = ""  # Optional native runner hook for bundled skills
+    aliases: list[str] | None = None  # Alternative slash commands, e.g. "/herbert swarm"
 
     @property
     def command_key(self) -> str:
@@ -108,6 +109,7 @@ class SkillLoader:
                     args_hint=data.get("args_hint", ""),
                     timeout=float(data.get("timeout", 30.0)),
                     handler=data.get("handler", ""),
+                    aliases=[str(a) for a in data.get("aliases", [])],
                 )
                 self._skills[yaml_file.stem] = skill
                 self._mtimes[yaml_file] = mtime

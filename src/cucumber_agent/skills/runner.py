@@ -28,6 +28,79 @@ class SkillRunner:
         return Path(workspace or Path.cwd()).expanduser().resolve()
 
     @staticmethod
+    def _extract_parallel_from_text(args: str) -> int | None:
+        lower = args.lower()
+        patterns = [
+            r"(?:parallel\w*|parralel\w*|parralele|agenten|agents)\D{0,20}(\d{1,2})",
+            r"(\d{1,2})\D{0,20}(?:parallel\w*|parralel\w*|parralele|agenten|agents)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, lower)
+            if match:
+                return int(match.group(1))
+        return None
+
+    @staticmethod
+    def _find_named_project(workspace: Path, name: str) -> Path | None:
+        cleaned = name.strip().strip(".,;:!?").lower()
+        if not cleaned:
+            return None
+
+        search_roots = []
+        for root in (workspace, Path.cwd(), workspace.parent):
+            resolved = root.expanduser().resolve()
+            if resolved not in search_roots:
+                search_roots.append(resolved)
+
+        for root in search_roots:
+            try:
+                children = [p for p in root.iterdir() if p.is_dir()]
+            except OSError:
+                continue
+            for child in children:
+                if child.name.lower() == cleaned:
+                    return child.resolve()
+        return None
+
+    @staticmethod
+    def _resolve_project_from_natural_args(
+        args: str,
+        positionals: list[str],
+        agent: Agent,
+    ) -> Path | None:
+        workspace = SkillRunner._default_workspace(agent)
+        lower = args.lower()
+
+        for token in positionals:
+            candidate = Path(token).expanduser()
+            if candidate.exists() or "/" in token or token.startswith((".", "~")):
+                return candidate.resolve()
+
+        project_match = re.search(r"(?:projekt|project)\s+([A-Za-z0-9_.-]+)", args, re.IGNORECASE)
+        if project_match:
+            found = SkillRunner._find_named_project(workspace, project_match.group(1))
+            if found:
+                return found
+
+        for token in positionals:
+            cleaned = token.strip().strip(".,;:!?")
+            found = SkillRunner._find_named_project(workspace, cleaned)
+            if found:
+                return found
+
+        # If a directory name appears in free text, use it even without explicit "project".
+        for root in (workspace, Path.cwd(), workspace.parent):
+            try:
+                children = [p for p in root.expanduser().resolve().iterdir() if p.is_dir()]
+            except OSError:
+                continue
+            for child in children:
+                if child.name.lower() in lower:
+                    return child.resolve()
+
+        return None
+
+    @staticmethod
     def _parse_herbert_swarm_args(args: str, agent: Agent) -> SimpleNamespace:
         tokens = shlex.split(args)
         project: str | None = None
@@ -38,13 +111,15 @@ class SkillRunner:
         dry_run = False
         retry_failed = False
         action = "full"
+        positionals: list[str] = []
 
         actions = {"status", "report", "brain", "reset", "run", "plan", "init"}
         i = 0
         while i < len(tokens):
             token = tokens[i]
-            if token in actions and action == "full":
-                action = token
+            normalized_token = token.strip().strip(".,;:!?").lower()
+            if normalized_token in actions and action == "full":
+                action = normalized_token
             elif token == "--dry-run":
                 dry_run = True
             elif token == "--retry-failed":
@@ -66,15 +141,29 @@ class SkillRunner:
                 spec = tokens[i]
             elif token.startswith("-"):
                 raise ValueError(f"Unbekannte Herbert-Swarm-Option: {token}")
-            elif project is None:
+            elif project is None and (
+                Path(token).expanduser().exists()
+                or "/" in token
+                or token.startswith((".", "~"))
+            ):
                 project = token
-            elif spec is None:
+            elif spec is None and token.lower().endswith((".md", ".txt")):
                 spec = token
             else:
-                raise ValueError(f"Unerwartetes Herbert-Swarm-Argument: {token}")
+                positionals.append(token)
             i += 1
 
-        project_path = Path(project).expanduser().resolve() if project else SkillRunner._default_workspace(agent)
+        natural_parallel = SkillRunner._extract_parallel_from_text(args)
+        if natural_parallel is not None:
+            parallel = natural_parallel
+
+        natural_project = SkillRunner._resolve_project_from_natural_args(args, positionals, agent)
+        if natural_project is not None and project is None:
+            project = str(natural_project)
+
+        project_path = (
+            Path(project).expanduser().resolve() if project else SkillRunner._default_workspace(agent)
+        )
         spec_path = Path(spec).expanduser().resolve() if spec else project_path / "SPEC.md"
         if parallel < 1:
             raise ValueError("--parallel muss mindestens 1 sein")

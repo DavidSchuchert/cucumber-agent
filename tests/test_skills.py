@@ -5,9 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+from cucumber_agent.session import Session
 from cucumber_agent.skills.loader import SkillLoader
 from cucumber_agent.skills.runner import SkillRunner
-from cucumber_agent.session import Session
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -279,6 +279,19 @@ class TestSkillRunner:
         assert parsed.dry_run is True
         assert parsed.parallel == 2
         assert parsed.timeout == 9
+
+    def test_parse_herbert_swarm_natural_parallel_and_project(self, tmp_path):
+        arcade = tmp_path / "Arcade"
+        arcade.mkdir()
+        agent = SimpleNamespace(_config=SimpleNamespace(workspace=tmp_path))
+
+        parsed = SkillRunner._parse_herbert_swarm_args(
+            "stelle das Arcade projekt fertig nutze 10 Parralele agenten mit swarm",
+            agent,
+        )
+
+        assert parsed.project == str(arcade.resolve())
+        assert parsed.parallel == 10
 
     def test_parse_herbert_swarm_rejects_bad_parallel(self, tmp_path):
         agent = SimpleNamespace(_config=SimpleNamespace(workspace=tmp_path))
