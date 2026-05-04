@@ -43,3 +43,7 @@ def test_command_suggestion_for_typo(tmp_path):
     suggestion = _command_suggestion("/ski", loader, STATIC_SLASH_COMMANDS)
 
     assert suggestion == "/skills"
+
+
+def test_static_commands_include_autopilot():
+    assert "/autopilot" in STATIC_SLASH_COMMANDS

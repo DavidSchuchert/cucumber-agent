@@ -114,6 +114,13 @@ The prompt switches to `  ...` while accumulating. Send a line without `\` to su
 | `/tools` | List all registered tools and their auto-approve status |
 | `/autoapprove` | Toggle session-wide tool auto-approve (incl. sub-agents) |
 | `/skills` | List installed YAML skills |
+| `/autopilot plan <goal>` | Create a safe project execution plan for the current workspace |
+| `/autopilot run [--dry-run] [--parallel N] [--timeout SECONDS]` | Execute or simulate the current Autopilot plan |
+| `/autopilot status` | Show Autopilot progress for this workspace |
+| `/autopilot report` | Show task results, failures, and next steps |
+| `/autopilot reset --yes` | Delete the local Autopilot state for this workspace |
+
+Autopilot state is stored in `~/.cucumber/autopilot/` by workspace hash, so normal planning and status checks do not dirty the project repository.
 
 **Tool Approval Dialog:**
 

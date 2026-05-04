@@ -63,6 +63,7 @@ cucumber run
 ├── user/
 │   └── user.md              # Your info (name, bio, github)
 ├── memory/                  # Session logs + persistent facts
+├── autopilot/               # Project Autopilot state, keyed by workspace
 ├── custom_tools/            # Hot-reload custom Python tools
 └── skills/                  # YAML skill manifests
 ```
@@ -107,6 +108,7 @@ cucumber-agent/
 - [x] **Thinking blocks** — display agent internal thoughts
 - [x] **Workspace detection** — auto-detect Python, Node, Rust, etc.
 - [x] **Sub-agent tool** — recursive delegation, 15-step loop, auto-approve propagation
+- [x] **Agent Autopilot** — `/autopilot plan/run/status/report` for safe project execution
 - [x] **Context management** — `/compact`, `/context`, `/pin`, `/unpin`
 - [x] **Token cost tracking** — `/cost` shows per-session usage and estimated USD
 - [x] **Multi-line input** — end any line with `\` to continue on the next line

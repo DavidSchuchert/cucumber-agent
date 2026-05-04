@@ -25,6 +25,15 @@ from rich.table import Table
 from rich.text import Text
 
 from cucumber_agent.agent import Agent
+from cucumber_agent.autopilot import (
+    AutopilotState,
+    AutopilotStore,
+    create_plan,
+    parse_autopilot_args,
+    report_text,
+    run_plan,
+    status_text,
+)
 from cucumber_agent.config import Config
 from cucumber_agent.logging_config import get_logger, setup_logging
 from cucumber_agent.memory import FactsStore, SessionLogger
@@ -49,6 +58,7 @@ STATIC_SLASH_COMMANDS = [
     "/optimize",
     "/memory",
     "/context",
+    "/autopilot",
     "/autoapprove",
     "/compact",
     "/pin",
@@ -222,6 +232,7 @@ def print_help() -> None:
         ("/debug", "Debug-Modus ein/ausschalten"),
         ("/memory", "Alle gemerkten Fakten anzeigen"),
         ("/context", "Aktuelle Context-Auslastung anzeigen"),
+        ("/autopilot <plan|run|status|report|reset>", "Projekt-Autopilot planen und ausführen"),
         ("/history [N]", "Letzte N Nachrichten anzeigen (Standard: 10)"),
         ("/undo", "Letzte Benutzer+Assistenten-Nachricht entfernen"),
         ("/export", "Session als Markdown-Datei exportieren"),
@@ -1069,6 +1080,8 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                     )
                 )
                 console.print()
+            case "/autopilot":
+                await self._handle_autopilot_command(arg)
             case "/remember":
                 if not arg:
                     console.print("  [dim]Verwendung: /remember key: wert[/dim]\n")
@@ -1265,6 +1278,134 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                     console.print(
                         f"  [dim]Unbekannter Befehl: [bold]{cmd}[/bold]. Tippe /help für Hilfe.[/dim]\n"
                     )
+
+    async def _handle_autopilot_command(self, args: str) -> None:
+        """Handle the native /autopilot command family."""
+        workspace = Path(self._config.workspace or Path.cwd()).expanduser().resolve()
+        store = AutopilotStore(workspace, self._config.config_dir / "autopilot")
+
+        try:
+            parsed = parse_autopilot_args(args)
+        except Exception as exc:
+            console.print(f"  [red]Autopilot: Ungueltige Argumente: {exc}[/red]\n")
+            return
+
+        if parsed.action == "plan":
+            if not parsed.goal:
+                console.print(
+                    "  [dim]Verwendung: /autopilot plan <ziel>, z.B. "
+                    "/autopilot plan verbessere das Arcade Projekt[/dim]\n"
+                )
+                return
+            state = create_plan(parsed.goal, workspace)
+            store.save(state)
+            self._print_autopilot_tasks(state, title="Autopilot Plan")
+            console.print(f"  [dim]State: {store.path}[/dim]\n")
+            return
+
+        if parsed.action == "status":
+            console.print()
+            console.print(
+                Panel(
+                    status_text(store.load()),
+                    title="[bold cyan]Agent Autopilot[/bold cyan]",
+                    border_style="cyan",
+                    padding=(0, 1),
+                )
+            )
+            console.print()
+            return
+
+        if parsed.action == "report":
+            console.print()
+            console.print(
+                Panel(
+                    report_text(store.load()),
+                    title="[bold cyan]Autopilot Report[/bold cyan]",
+                    border_style="cyan",
+                    padding=(0, 1),
+                )
+            )
+            console.print()
+            return
+
+        if parsed.action == "reset":
+            state = store.load()
+            if state is None:
+                console.print("  [dim]Autopilot: kein State fuer diesen Workspace vorhanden.[/dim]\n")
+                return
+            if not parsed.yes:
+                console.print(
+                    "  [yellow]Autopilot Reset abgebrochen.[/yellow] "
+                    "Nutze /autopilot reset --yes zum Bestaetigen.\n"
+                )
+                return
+            store.reset()
+            console.print("  [green]✓ Autopilot State geloescht.[/green]\n")
+            return
+
+        if parsed.action == "run":
+            state = store.load()
+            if state is None:
+                console.print(
+                    "  [dim]Autopilot: kein Plan vorhanden. Nutze zuerst "
+                    "/autopilot plan <ziel>.[/dim]\n"
+                )
+                return
+            with console.status(
+                "  [dim cyan]Autopilot arbeitet...[/dim cyan]",
+                spinner="dots",
+                spinner_style="dim cyan",
+            ):
+                try:
+                    state = await run_plan(
+                        state,
+                        parallel=parsed.parallel,
+                        timeout=parsed.timeout,
+                        dry_run=parsed.dry_run,
+                    )
+                except Exception as exc:
+                    console.print(f"  [red]Autopilot Fehler: {exc}[/red]\n")
+                    return
+            store.save(state)
+            self._print_autopilot_tasks(
+                state,
+                title="Autopilot Dry Run" if parsed.dry_run else "Autopilot Run",
+            )
+            return
+
+        console.print("  [dim]Verwendung: /autopilot <plan|run|status|report|reset>[/dim]\n")
+
+    def _print_autopilot_tasks(self, state: AutopilotState, *, title: str) -> None:
+        table = Table(show_header=True, header_style="bold cyan", box=None, padding=(0, 2))
+        table.add_column("Task", style="bold cyan", no_wrap=True)
+        table.add_column("Status", style="white", no_wrap=True)
+        table.add_column("Rolle", style="dim", no_wrap=True)
+        table.add_column("Beschreibung", style="white")
+
+        status_style = {
+            "pending": "dim",
+            "running": "yellow",
+            "done": "green",
+            "failed": "red",
+        }
+        for task in state.tasks:
+            style = status_style.get(task.status, "white")
+            detail = task.error or task.result or task.detail
+            if len(detail) > 90:
+                detail = detail[:87] + "..."
+            table.add_row(task.id, f"[{style}]{task.status}[/{style}]", task.agent_role, detail)
+
+        console.print()
+        console.print(
+            Panel(
+                table,
+                title=f"[bold cyan]{title}: {state.goal}[/bold cyan]",
+                border_style="cyan",
+                padding=(0, 1),
+            )
+        )
+        console.print()
 
     async def _handle_tool_approval(self, user_input: str) -> None:
         """Handle user's response to a tool call."""
