@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from cucumber_agent.skills.loader import SkillLoader
 from cucumber_agent.skills.runner import SkillRunner
+from cucumber_agent.session import Session
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -54,6 +56,20 @@ description: Only description present
 
 
 class TestSkillLoaderValidation:
+    def test_default_loader_includes_builtin_herbert_swarm(self, tmp_path):
+        loader = SkillLoader(skills_dir=tmp_path, include_builtin=True)
+        skills = loader.load_all()
+
+        skill = loader.get("/herbert-swarm")
+        assert skill is not None
+        assert skill.name == "Herbert Swarm"
+        assert "swarm" in skill.prompt
+        assert skill in skills
+
+    def test_explicit_skills_dir_stays_isolated_by_default(self, tmp_path):
+        loader = SkillLoader(skills_dir=tmp_path)
+        assert loader.load_all() == []
+
     def test_valid_skill_is_loaded(self, tmp_path):
         """A fully valid YAML is loaded without warnings."""
         write_skill(tmp_path, "valid.yaml", VALID_YAML)
@@ -250,6 +266,39 @@ class TestSkillRunner:
         required_keys = {"name", "command", "description", "args_hint", "steps", "timeout"}
         for item in SkillRunner.list_skills(loader):
             assert required_keys <= item.keys()
+
+    def test_parse_herbert_swarm_args(self, tmp_path):
+        agent = SimpleNamespace(_config=SimpleNamespace(workspace=tmp_path))
+        parsed = SkillRunner._parse_herbert_swarm_args(
+            f"{tmp_path} --dry-run --parallel 2 --timeout 9",
+            agent,
+        )
+
+        assert parsed.project == str(tmp_path.resolve())
+        assert parsed.spec == str((tmp_path / "SPEC.md").resolve())
+        assert parsed.dry_run is True
+        assert parsed.parallel == 2
+        assert parsed.timeout == 9
+
+    def test_parse_herbert_swarm_rejects_bad_parallel(self, tmp_path):
+        agent = SimpleNamespace(_config=SimpleNamespace(workspace=tmp_path))
+
+        import pytest
+
+        with pytest.raises(ValueError):
+            SkillRunner._parse_herbert_swarm_args("--parallel 0", agent)
+
+    async def test_herbert_swarm_handler_runs_dry_run_without_model(self, tmp_path):
+        skill = SkillLoader(skills_dir=tmp_path, include_builtin=True).load_all()[0]
+        (tmp_path / "SPEC.md").write_text("Build a FastAPI backend with pytest tests.", encoding="utf-8")
+        session = Session(id="test")
+        agent = SimpleNamespace(_config=SimpleNamespace(workspace=tmp_path))
+
+        result = await SkillRunner.run(skill, "--dry-run", session, agent)
+
+        assert "Herbert Swarm:" in result
+        assert "run: Swarm complete" in result
+        assert (tmp_path / ".swarm_brain.json").exists()
 
 
 # ---------------------------------------------------------------------------

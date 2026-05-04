@@ -153,21 +153,17 @@ class PersonalityConfig:
             "5. If a tool fails, analyze the error and either try a fix or inform the user clearly."
         )
 
-        # Skills - loaded from ~/.cucumber/skills/
-        skills_dir = Path.home() / ".cucumber" / "skills"
-        if skills_dir.exists():
-            skill_files = list(skills_dir.glob("*.yaml")) + list(skills_dir.glob("*.yml"))
-            if skill_files:
-                parts.append("AVAILABLE SKILLS: The user can invoke these /commands:")
-                for sf in sorted(skill_files):
-                    try:
-                        import yaml
+        # Skills - bundled built-ins plus ~/.cucumber/skills/
+        try:
+            from cucumber_agent.skills import SkillLoader
 
-                        data = yaml.safe_load(sf.read_text()) or {}
-                        desc = data.get("description", "")
-                        parts.append(f"- /{sf.stem}: {desc}")
-                    except Exception:
-                        pass
+            loader = SkillLoader()
+            loader.load_all()
+            if descriptions := loader.get_all_descriptions():
+                parts.append("AVAILABLE SKILLS: The user can invoke these /commands:")
+                parts.append(descriptions)
+        except Exception:
+            pass
 
         # Self-awareness
         project_path = Path.home() / "cucumber-agent"

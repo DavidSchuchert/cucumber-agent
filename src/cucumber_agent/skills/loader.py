@@ -26,6 +26,7 @@ class Skill:
     prompt: str = ""  # May contain {args} placeholder
     args_hint: str = ""  # e.g. "[Stadt]" shown in /skills list
     timeout: float = 30.0  # Per-step timeout in seconds
+    handler: str = ""  # Optional native runner hook for bundled skills
 
     @property
     def command_key(self) -> str:
@@ -36,8 +37,9 @@ class Skill:
 class SkillLoader:
     """Scans a directory for *.yaml skill manifests."""
 
-    def __init__(self, skills_dir: Path | None = None) -> None:
+    def __init__(self, skills_dir: Path | None = None, include_builtin: bool | None = None) -> None:
         self._dir = skills_dir or (Path.home() / ".cucumber" / "skills")
+        self._include_builtin = (skills_dir is None) if include_builtin is None else include_builtin
         self._skills: dict[str, Skill] = {}
         self._last_scan: float = 0.0
         self._mtimes: dict[Path, float] = {}
@@ -50,24 +52,35 @@ class SkillLoader:
         """Return list of missing required fields (empty = valid)."""
         return [f for f in _REQUIRED_FIELDS if not data.get(f)]
 
+    def _skill_dirs(self) -> list[Path]:
+        """Return skill directories in precedence order; later dirs override earlier ones."""
+        dirs: list[Path] = []
+        if self._include_builtin:
+            dirs.append(Path(__file__).parent / "builtin")
+        dirs.append(self._dir)
+        return dirs
+
+    def _skill_files(self) -> list[Path]:
+        files: list[Path] = []
+        for skill_dir in self._skill_dirs():
+            if not skill_dir.exists():
+                continue
+            files.extend(sorted(skill_dir.glob("*.yaml")))
+            files.extend(sorted(skill_dir.glob("*.yml")))
+        return files
+
     def load_all(self) -> list[Skill]:
         """Load (or reload if changed) all skills from the skills directory."""
         self._dir.mkdir(parents=True, exist_ok=True)
 
-        current_files = set(self._dir.glob("*.yaml")) | set(self._dir.glob("*.yml"))
-        removed = set(self._mtimes.keys()) - current_files
+        current_files = self._skill_files()
+        self._skills.clear()
+        self._mtimes = {}
 
-        # Remove skills for deleted files
-        for f in removed:
-            skill_key = f.stem
-            self._skills.pop(skill_key, None)
-            del self._mtimes[f]
-
-        # Load/reload changed files
-        for yaml_file in sorted(current_files):
+        # Load built-in skills first, then user skills. Same file stem in ~/.cucumber/skills
+        # intentionally overrides a bundled skill.
+        for yaml_file in current_files:
             mtime = yaml_file.stat().st_mtime
-            if self._mtimes.get(yaml_file) == mtime:
-                continue  # unchanged
             try:
                 data = yaml.safe_load(yaml_file.read_text(encoding="utf-8")) or {}
 
@@ -94,6 +107,7 @@ class SkillLoader:
                     prompt=data.get("prompt", ""),
                     args_hint=data.get("args_hint", ""),
                     timeout=float(data.get("timeout", 30.0)),
+                    handler=data.get("handler", ""),
                 )
                 self._skills[yaml_file.stem] = skill
                 self._mtimes[yaml_file] = mtime
@@ -114,11 +128,15 @@ class SkillLoader:
     def needs_reload(self) -> bool:
         """True if any skill file has changed since last load (mtime check)."""
         if not self._dir.exists():
-            return False
-        for pattern in ("*.yaml", "*.yml"):
-            for yaml_file in self._dir.glob(pattern):
-                if self._mtimes.get(yaml_file) != yaml_file.stat().st_mtime:
-                    return True
+            return bool(self._include_builtin and self._skill_files())
+
+        current_files = set(self._skill_files())
+        if current_files != set(self._mtimes.keys()):
+            return True
+
+        for yaml_file in current_files:
+            if self._mtimes.get(yaml_file) != yaml_file.stat().st_mtime:
+                return True
         return False
 
     def get_all_descriptions(self) -> str:

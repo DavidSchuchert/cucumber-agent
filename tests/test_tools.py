@@ -12,6 +12,7 @@ import pytest
 
 
 from cucumber_agent.tools.calculator import CalculatorTool, safe_calculate
+from cucumber_agent.tools.swarm import SwarmTool
 
 
 class TestSafeCalculate:
@@ -161,6 +162,38 @@ class TestCalculatorTool:
         assert result.success is True
         assert "3 * 3" in result.output
         assert "9" in result.output
+
+
+@pytest.mark.asyncio
+class TestSwarmTool:
+    async def test_full_dry_run_path(self, tmp_path):
+        (tmp_path / "SPEC.md").write_text(
+            "Build a FastAPI backend with SQLite database and pytest tests.",
+            encoding="utf-8",
+        )
+        tool = SwarmTool()
+
+        init = await tool.execute(command="init", project=str(tmp_path))
+        plan = await tool.execute(command="plan", project=str(tmp_path))
+        run = await tool.execute(command="run", project=str(tmp_path), dry_run=True)
+        report = await tool.execute(command="report", project=str(tmp_path))
+
+        assert init.success is True
+        assert plan.success is True
+        assert "Plan:" in plan.output
+        assert run.success is True
+        assert "Swarm complete" in run.output
+        assert report.success is True
+        assert "Report:" in report.output
+        brain = json.loads((tmp_path / ".swarm_brain.json").read_text(encoding="utf-8"))
+        assert "FRONTEND" not in brain["phases"]
+
+    async def test_run_rejects_invalid_parallel(self, tmp_path):
+        tool = SwarmTool()
+        result = await tool.execute(command="run", project=str(tmp_path), parallel=0)
+
+        assert result.success is True
+        assert result.output.startswith("ERROR:")
 
 
 # ── Datetime Tool ────────────────────────────────────────────────────────────

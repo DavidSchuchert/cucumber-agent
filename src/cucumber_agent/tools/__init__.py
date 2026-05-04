@@ -10,6 +10,7 @@ from cucumber_agent.tools import (  # noqa: F401
     remember,
     search,
     shell,
+    swarm,
     understand_image,
     web_reader,
     web_search,

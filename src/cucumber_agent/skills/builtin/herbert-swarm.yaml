@@ -1,0 +1,32 @@
+name: Herbert Swarm
+command: /herbert-swarm
+description: Native CucumberAgent skill for Herbert Swarm multi-agent project planning and execution.
+args_hint: "[project path] [spec path optional] [--dry-run] [--parallel N] [--timeout SECONDS]"
+timeout: 1800
+handler: herbert_swarm
+steps:
+  - Initialize a CucumberSwarm brain for the requested project path.
+  - Plan phased tasks from SPEC.md or from the optional spec path.
+  - Execute the planned swarm or simulate it when --dry-run is present.
+  - Report final swarm status.
+prompt: |
+  You are running Herbert Swarm natively inside CucumberAgent.
+
+  Interpret the user arguments: {args}
+
+  Use the `swarm` tool. Do not use external Hermes, Claude Flow, npm, npx, or shell-based swarm commands.
+
+  Defaults:
+  - project: current workspace if no path was provided
+  - spec: <project>/SPEC.md unless a spec path was provided
+  - parallel: 3 unless --parallel N was provided
+  - timeout: 300 unless --timeout SECONDS was provided
+  - dry_run: true only when --dry-run is present
+
+  Workflow:
+  1. Call swarm command "init" for the project.
+  2. Call swarm command "plan" for the project and spec.
+  3. Call swarm command "run" with parallel, timeout, dry_run, and retry_failed=false.
+  4. Call swarm command "report" for the project.
+
+  Return a concise German summary with the project path, task count/status, and any failed task guidance.
