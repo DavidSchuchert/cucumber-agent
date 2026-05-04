@@ -9,6 +9,7 @@ import re
 import shutil
 from datetime import datetime
 from io import StringIO
+from pathlib import Path
 
 # ─── prompt_toolkit ─────────────────────────────────────────────────────────
 from prompt_toolkit import print_formatted_text as _pt_print
@@ -32,6 +33,7 @@ from cucumber_agent.agent import Agent
 
 # ─── Cucumber ───────────────────────────────────────────────────────────────
 from cucumber_agent.config import Config
+from cucumber_agent.tools import ToolRegistry
 
 # ─── Colors ─────────────────────────────────────────────────────────────────
 
@@ -365,20 +367,21 @@ class CucumberTUI:
 
     def _init_agent_session(self):
         from cucumber_agent import tools as tools_module
-        from cucumber_agent.memory import FactsStore, SessionSummary
+        from cucumber_agent.memory import FactsStore, SessionLogger, SessionSummary
         from cucumber_agent.session import Session
         from cucumber_agent.workspace import WorkspaceDetector
 
         self._session = Session(id="tui", model=self.config.agent.model)
 
-        ws = WorkspaceDetector.detect(self.config.workspace)
+        workspace = self.config.workspace or Path.cwd()
+        ws = WorkspaceDetector.detect(workspace)
         self._session.metadata["workspace"] = ws.to_context_string()
 
         self._facts = FactsStore(self.config.memory.facts_file)
         self._session.metadata["facts_context"] = self._facts.to_context_string()
 
         config_dir = self.config.config_dir
-        wiki_dir = self.config.workspace / "wiki"
+        wiki_dir = workspace / "wiki"
         self._session.metadata["agent_context"] = (
             f"Agent Home: {config_dir} | "
             f"Personality File: {config_dir}/personality/personality.md | "
@@ -390,8 +393,6 @@ class CucumberTUI:
             summary_store = SessionSummary(self.config.memory.summary_file)
             summary = summary_store.load()
             if not summary:
-                from cucumber_agent.session_logger import SessionLogger
-
                 logger = SessionLogger(self.config.memory.log_dir)
                 summary = logger.get_recent_summary(days=3, max_entries=10)
             if summary:
@@ -407,16 +408,17 @@ class CucumberTUI:
 
     # ── Input handling ────────────────────────────────────────────────────
 
-    def _on_input(self, buffer) -> None:
+    def _on_input(self, buffer) -> bool:
         """Called by TextArea when user presses Enter."""
         text = buffer.text.strip()
         buffer.text = ""
         if not text:
-            return
+            return True
         if text.startswith("/"):
             self._handle_command(text)
         else:
             asyncio.create_task(self._run_chat(text))
+        return True
 
     def _handle_command(self, cmd: str):
         parts = cmd.strip().split(maxsplit=1)
@@ -449,6 +451,7 @@ class CucumberTUI:
             self.history.add_system(f"[cyan]Temperature:[/cyan] {cfg.temperature}")
             self._refresh_output()
         elif command == "/memory":
+            assert self._facts is not None
             facts = self._facts.all()
             if facts:
                 for k, v in facts.items():
@@ -464,6 +467,7 @@ class CucumberTUI:
                 self.history.add_system("[dim italic]Keine Skills installiert.[/dim italic]")
             self._refresh_output()
         elif command == "/context":
+            assert self._session is not None
             msgs = self.agent._build_messages(self._session)
             tokens = self.agent.estimate_tokens(msgs)
             max_ctx = self.config.context.max_tokens
@@ -496,6 +500,7 @@ class CucumberTUI:
     # ── Agent loop ─────────────────────────────────────────────────────────
 
     async def _run_chat(self, user_input: str):
+        assert self._session is not None
         self.history.add_user(user_input)
         self.history.add_system("[dim]Nachricht gesendet…[/]")
         self._refresh_output()
@@ -515,7 +520,7 @@ class CucumberTUI:
                     self._refresh_output()
 
                     try:
-                        result = await self.agent.tools.execute(tc.name, **tc.arguments)
+                        result = await ToolRegistry.execute(tc.name, **tc.arguments)
                         output = (
                             result.output
                             if result.success
@@ -552,6 +557,7 @@ class CucumberTUI:
             self._refresh_output()
 
     async def _maybe_compress(self):
+        assert self._session is not None
         max_msgs = self.config.memory.max_session_messages
         if len(self._session.messages) < max_msgs:
             return

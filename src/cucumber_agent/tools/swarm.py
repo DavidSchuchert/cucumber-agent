@@ -6,17 +6,17 @@ import asyncio
 import json
 import re
 import threading
+from collections.abc import Sequence
 from datetime import datetime
-from io import StringIO
 from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from cucumber_agent.session import Message, Role
 from cucumber_agent.tools.base import BaseTool, ToolResult
 from cucumber_agent.tools.registry import ToolRegistry
-from cucumber_agent.session import Message, Role
 
 console = Console()
 
@@ -67,6 +67,13 @@ def _scan_project_files(project_path: Path) -> set[str]:
     return found
 
 
+def _add_phase(phase_names: list[str], phase_map: dict[str, int], name: str) -> int:
+    phase = len(phase_names) + 1
+    phase_names.append(name)
+    phase_map[name] = phase
+    return phase
+
+
 def _has_keyword(text: str, keywords: list[str]) -> bool:
     for keyword in keywords:
         pattern = rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])"
@@ -78,18 +85,26 @@ def _has_keyword(text: str, keywords: list[str]) -> bool:
 def _analyze_and_plan(spec_content: str, project_path: Path) -> tuple[dict, list[str]]:
     lower = spec_content.lower()
 
-    backend_kw  = ["fastapi","flask","django","starlette","express","aiohttp","tornado",
-                   "backend","python","api","rest","graphql","grpc","server","endpoint",
-                   "routes","uvicorn","gunicorn"]
-    frontend_kw = ["react","next.js","nextjs","nuxt","sveltekit","svelte","vue","vite",
-                   "angular","astro","remix","frontend","typescript","tailwind","html",
-                   "css","ui","web app"]
-    database_kw = ["postgresql","postgres","mysql","mariadb","mongodb","mongo","redis",
-                   "sqlite","cassandra","elasticsearch","database","db","sqlalchemy",
-                   "prisma","alembic","migration"]
-    docker_kw   = ["docker","container","compose","kubernetes","k8s","helm"]
-    ci_kw       = ["github actions","github-actions","ci","pytest-cov","coverage","test",
-                   "pytest","unittest","jest","vitest","cypress"]
+    backend_kw = [
+        "fastapi", "flask", "django", "starlette", "express", "aiohttp", "tornado",
+        "backend", "python", "api", "rest", "graphql", "grpc", "server", "endpoint",
+        "routes", "uvicorn", "gunicorn",
+    ]
+    frontend_kw = [
+        "react", "next.js", "nextjs", "nuxt", "sveltekit", "svelte", "vue", "vite",
+        "angular", "astro", "remix", "frontend", "typescript", "tailwind", "html",
+        "css", "ui", "web app",
+    ]
+    database_kw = [
+        "postgresql", "postgres", "mysql", "mariadb", "mongodb", "mongo", "redis",
+        "sqlite", "cassandra", "elasticsearch", "database", "db", "sqlalchemy",
+        "prisma", "alembic", "migration",
+    ]
+    docker_kw = ["docker", "container", "compose", "kubernetes", "k8s", "helm"]
+    ci_kw = [
+        "github actions", "github-actions", "ci", "pytest-cov", "coverage", "test",
+        "pytest", "unittest", "jest", "vitest", "cypress",
+    ]
 
     has_backend  = _has_keyword(lower, backend_kw)
     has_frontend = _has_keyword(lower, frontend_kw)
@@ -100,94 +115,175 @@ def _analyze_and_plan(spec_content: str, project_path: Path) -> tuple[dict, list
     if not spec_content.strip() or len(spec_content.strip()) < 80:
         files = _scan_project_files(project_path)
         if not has_backend:
-            has_backend = bool(files & {"requirements.txt","pyproject.toml","setup.py",
-                                        "main.py","app.py","server.py","manage.py"})
+            has_backend = bool(
+                files
+                & {"requirements.txt", "pyproject.toml", "setup.py", "main.py", "app.py",
+                   "server.py", "manage.py"}
+            )
         if not has_frontend:
-            has_frontend = bool(files & {"package.json","vite.config.ts","vite.config.js",
-                                         "next.config.js","nuxt.config.ts","svelte.config.js",
-                                         "tailwind.config.js","tailwind.config.ts"})
+            has_frontend = bool(
+                files
+                & {"package.json", "vite.config.ts", "vite.config.js", "next.config.js",
+                   "nuxt.config.ts", "svelte.config.js", "tailwind.config.js",
+                   "tailwind.config.ts"}
+            )
         if not has_docker:
-            has_docker = bool(files & {"dockerfile","docker-compose.yml","docker-compose.yaml"})
+            has_docker = bool(files & {"dockerfile", "docker-compose.yml", "docker-compose.yaml"})
         if not has_ci:
-            has_ci = bool(files & {"pytest.ini","conftest.py"})
+            has_ci = bool(files & {"pytest.ini", "conftest.py"})
 
     tasks: dict = {}
     task_id = 1
 
-    def make_task(desc: str, role: str, files: list[str], deps: list[str], phase: int, priority: int) -> dict:
+    def make_task(
+        desc: str,
+        role: str,
+        files: list[str],
+        deps: Sequence[str | None],
+        phase: int,
+        priority: int,
+    ) -> dict:
         nonlocal task_id
         tid = f"task-{task_id:03d}"
         task_id += 1
-        return {"id": tid, "description": desc, "agent_role": role, "files": files,
-                "dependencies": [d for d in deps if d], "status": "pending",
-                "priority": priority, "phase": phase, "created_by": "planner"}
+        return {
+            "id": tid,
+            "description": desc,
+            "agent_role": role,
+            "files": files,
+            "dependencies": [d for d in deps if d],
+            "status": "pending",
+            "priority": priority,
+            "phase": phase,
+            "created_by": "planner",
+        }
 
     phase_names: list[str] = ["INFRA"]
     phase_map: dict[str, int] = {"INFRA": 1}
-    next_phase = 2
 
     if has_database:
-        phase_names.append("DATABASE"); phase_map["DATABASE"] = next_phase; next_phase += 1
+        _add_phase(phase_names, phase_map, "DATABASE")
     if has_backend:
-        phase_names.append("BACKEND_CORE"); phase_map["BACKEND_CORE"] = next_phase; next_phase += 1
-        phase_names.append("BACKEND_API");  phase_map["BACKEND_API"]  = next_phase; next_phase += 1
+        _add_phase(phase_names, phase_map, "BACKEND_CORE")
+        _add_phase(phase_names, phase_map, "BACKEND_API")
     if has_frontend:
-        phase_names.append("FRONTEND"); phase_map["FRONTEND"] = next_phase; next_phase += 1
+        _add_phase(phase_names, phase_map, "FRONTEND")
     if has_ci:
-        phase_names.append("TESTING"); phase_map["TESTING"] = next_phase; next_phase += 1
+        _add_phase(phase_names, phase_map, "TESTING")
 
     infra_files: list[str] = []
     if has_docker:
-        infra_files += ["docker/docker-compose.yml","docker/docker-compose.dev.yml",
-                        "docker/backend/Dockerfile","docker/frontend/Dockerfile","docker/.env.example"]
+        infra_files += [
+            "docker/docker-compose.yml",
+            "docker/docker-compose.dev.yml",
+            "docker/backend/Dockerfile",
+            "docker/frontend/Dockerfile",
+            "docker/.env.example",
+        ]
     if has_backend:
-        infra_files += ["backend/requirements.txt","backend/config.py"]
+        infra_files += ["backend/requirements.txt", "backend/config.py"]
     if has_frontend:
-        infra_files += ["frontend/package.json","frontend/vite.config.ts","frontend/tailwind.config.js"]
+        infra_files += [
+            "frontend/package.json",
+            "frontend/vite.config.ts",
+            "frontend/tailwind.config.js",
+        ]
 
     infra_id: str | None = None
     if infra_files:
-        t = make_task("Create infrastructure and configuration files","coder",infra_files,[],phase_map["INFRA"],1)
-        infra_id = t["id"]; tasks[infra_id] = t
+        t = make_task(
+            "Create infrastructure and configuration files",
+            "coder",
+            infra_files,
+            [],
+            phase_map["INFRA"],
+            1,
+        )
+        infra_id = t["id"]
+        tasks[infra_id] = t
 
     db_model_id: str | None = None
     if has_database and "DATABASE" in phase_map:
-        t = make_task("Create database models and migration scripts","coder",
-                      ["backend/core/database.py","backend/models/__init__.py","alembic/env.py"],
-                      [infra_id],phase_map["DATABASE"],2)
-        db_model_id = t["id"]; tasks[db_model_id] = t
+        t = make_task(
+            "Create database models and migration scripts",
+            "coder",
+            ["backend/core/database.py", "backend/models/__init__.py", "alembic/env.py"],
+            [infra_id],
+            phase_map["DATABASE"],
+            2,
+        )
+        db_model_id = t["id"]
+        tasks[db_model_id] = t
 
     core_task_ids: list[str] = []
     if has_backend and "BACKEND_CORE" in phase_map:
         core_deps = [infra_id, db_model_id]
         if not has_database:
-            t = make_task("Create database connection layer","coder",
-                          ["backend/core/database.py","backend/models/base.py"],core_deps,phase_map["BACKEND_CORE"],2)
+            t = make_task(
+                "Create database connection layer",
+                "coder",
+                ["backend/core/database.py", "backend/models/base.py"],
+                core_deps,
+                phase_map["BACKEND_CORE"],
+                2,
+            )
         else:
-            t = make_task("Create core services: business logic and helpers","coder",
-                          ["backend/core/service.py","backend/core/utils.py"],core_deps,phase_map["BACKEND_CORE"],2)
-        core_task_ids.append(t["id"]); tasks[t["id"]] = t
+            t = make_task(
+                "Create core services: business logic and helpers",
+                "coder",
+                ["backend/core/service.py", "backend/core/utils.py"],
+                core_deps,
+                phase_map["BACKEND_CORE"],
+                2,
+            )
+        core_task_ids.append(t["id"])
+        tasks[t["id"]] = t
 
     api_id: str | None = None
     if has_backend and "BACKEND_API" in phase_map:
-        t = make_task("Create API endpoints","coder",
-                      ["backend/api/routes.py","backend/main.py"],core_task_ids,phase_map["BACKEND_API"],3)
-        api_id = t["id"]; tasks[api_id] = t
+        t = make_task(
+            "Create API endpoints",
+            "coder",
+            ["backend/api/routes.py", "backend/main.py"],
+            core_task_ids,
+            phase_map["BACKEND_API"],
+            3,
+        )
+        api_id = t["id"]
+        tasks[api_id] = t
 
     fe_task_ids: list[str] = []
     if has_frontend and "FRONTEND" in phase_map:
         fe_deps = [infra_id, api_id]
-        t  = make_task("Create main pages","coder",
-                       ["frontend/src/pages/index.tsx","frontend/src/App.tsx"],fe_deps,phase_map["FRONTEND"],4)
-        t2 = make_task("Create UI components","coder",
-                       ["frontend/src/components/Layout.tsx","frontend/src/components/Card.tsx"],
-                       fe_deps,phase_map["FRONTEND"],4)
+        t = make_task(
+            "Create main pages",
+            "coder",
+            ["frontend/src/pages/index.tsx", "frontend/src/App.tsx"],
+            fe_deps,
+            phase_map["FRONTEND"],
+            4,
+        )
+        t2 = make_task(
+            "Create UI components",
+            "coder",
+            ["frontend/src/components/Layout.tsx", "frontend/src/components/Card.tsx"],
+            fe_deps,
+            phase_map["FRONTEND"],
+            4,
+        )
         fe_task_ids += [t["id"], t2["id"]]
-        tasks[t["id"]] = t; tasks[t2["id"]] = t2
+        tasks[t["id"]] = t
+        tasks[t2["id"]] = t2
 
     if has_ci and "TESTING" in phase_map:
-        t = make_task("Create tests for API and core services","reviewer",
-                      ["tests/test_api.py","tests/conftest.py"],[api_id]+fe_task_ids,phase_map["TESTING"],5)
+        t = make_task(
+            "Create tests for API and core services",
+            "reviewer",
+            ["tests/test_api.py", "tests/conftest.py"],
+            [api_id] + fe_task_ids,
+            phase_map["TESTING"],
+            5,
+        )
         tasks[t["id"]] = t
 
     if not tasks and spec_content.strip():
@@ -241,8 +337,8 @@ def _build_agent_prompt(task: dict, brain: dict, brain_file: Path) -> str:
 # ---------------------------------------------------------------------------
 
 async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -> dict:
-    from cucumber_agent.config import Config
     from cucumber_agent.agent import Agent
+    from cucumber_agent.config import Config
     from cucumber_agent.session import Session
     from cucumber_agent.tools import agent as agent_tool_module
 
@@ -306,7 +402,7 @@ def _run_task_thread(
             result = loop.run_until_complete(
                 asyncio.wait_for(_run_task_async(tid, task, brain, brain_file), timeout=timeout)
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             result = {"success": False, "output": f"Timed out after {timeout}s"}
         except Exception as e:
             result = {"success": False, "output": str(e)[:400]}

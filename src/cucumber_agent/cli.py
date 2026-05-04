@@ -198,7 +198,7 @@ def print_config(config: Config) -> None:
     console.print()
 
 
-def parse_personality_update(text: str) -> tuple[dict, str] | None:
+def parse_personality_update(text: str) -> tuple[dict | None, str] | None:
     """Parse PERSONITY_UPDATE:emoji=x,... from AI response. Returns (params, explanation)."""
     import re
 
@@ -329,13 +329,14 @@ class CliSession:
     async def run(self) -> None:
         """Run the REPL."""
         # Populate session metadata once at startup
-        ws = WorkspaceDetector.detect(self._config.workspace)
+        workspace = self._config.workspace or Path.cwd()
+        ws = WorkspaceDetector.detect(workspace)
         self._session.metadata["workspace"] = ws.to_context_string()
         self._session.metadata["facts_context"] = self._facts.to_context_string()
 
         # Self-awareness: Tell the agent where its own files are
         config_dir = self._config.config_dir
-        wiki_dir = self._config.workspace / "wiki"
+        wiki_dir = workspace / "wiki"
         self._session.metadata["agent_context"] = (
             f"Agent Home: {config_dir} | "
             f"Personality File: {config_dir}/personality/personality.md | "
@@ -924,7 +925,7 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                         else:
                             console.print(f"  [dim]Index {arg} ungültig. Zeige Pins mit /pin[/dim]\n")
                     except ValueError:
-                        console.print(f"  [dim]Bitte eine Zahl eingeben, z.B. /unpin 1[/dim]\n")
+                        console.print("  [dim]Bitte eine Zahl eingeben, z.B. /unpin 1[/dim]\n")
             case "/cost":
                 tok = self._session_tokens
                 provider = self._config.agent.provider

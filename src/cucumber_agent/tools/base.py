@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 
@@ -15,18 +15,14 @@ class ToolResult:
     error: str | None = None
 
 
-class BaseTool(ABC):
+class BaseTool:
     """Base class for all tools."""
 
     name: str
     description: str
     parameters: dict  # JSON Schema for tool parameters
     auto_approve: bool = False  # If True, executes without user confirmation
-
-    @abstractmethod
-    async def execute(self, **kwargs) -> ToolResult:
-        """Execute the tool with given parameters."""
-        ...
+    execute: Callable[..., Awaitable[ToolResult]]
 
     def get_spec(self, provider: str = "openrouter") -> dict:
         """Get provider-specific tool specification."""

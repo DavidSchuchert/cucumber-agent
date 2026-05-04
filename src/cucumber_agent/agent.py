@@ -15,7 +15,6 @@ from cucumber_agent.providers import (
 from cucumber_agent.session import ContentBlock, Message, Role, Session
 from cucumber_agent.tools import ToolRegistry
 
-
 _tiktoken_encoding = None
 
 

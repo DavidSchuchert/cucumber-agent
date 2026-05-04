@@ -14,3 +14,18 @@ build/
 .DS_Store
 .env
 *.log
+
+# Local agent/MCP runtime state and secrets
+.mcp.json
+.claude/
+.claude-flow/
+.swarm/
+claude-flow.config.json
+ruvector.db
+*_api_keys.txt
+nextcloud_*.yml
+romm/
+
+# Ad-hoc local smoke scripts
+test_agent_tool.py
+test_shell_agent.py
