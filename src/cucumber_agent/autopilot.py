@@ -194,11 +194,12 @@ def status_text(state: AutopilotState | None) -> str:
         counts[task.status] = counts.get(task.status, 0) + 1
     next_task = next((task for task in state.tasks if task.status in {"pending", "failed"}), None)
     suffix = f"\nNaechster Task: {next_task.id} - {next_task.title}" if next_task else ""
+    action_hint = "\nZum Starten: /autopilot run" if next_task else ""
     return (
         f"Autopilot: {state.goal}\n"
         f"Workspace: {state.workspace}\n"
         f"Tasks: {counts.get('done', 0)} done, {counts.get('pending', 0)} pending, "
-        f"{counts.get('failed', 0)} failed{suffix}"
+        f"{counts.get('failed', 0)} failed{suffix}{action_hint}"
     )
 
 

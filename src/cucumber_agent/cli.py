@@ -1474,7 +1474,8 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
             )
             return
 
-        console.print("  [dim]Verwendung: /autopilot <plan|run|status|report|reset>[/dim]\n")
+        console.print(f"  [dim]Zum Starten: [bold]/autopilot run[/bold] — "
+                      f"Oder neuer Plan: /autopilot plan <ziel>[/dim]\n")
 
     def _print_autopilot_tasks(self, state: AutopilotState, *, title: str) -> None:
         table = Table(show_header=True, header_style="bold cyan", box=None, padding=(0, 2))
