@@ -398,6 +398,41 @@ def _is_inside(path: Path, root: Path) -> bool:
         return False
 
 
+def _summarize_tool_args(tool_name: str, args: dict) -> str:
+    """Return a compact one-line preview of the most relevant tool arguments."""
+    if not args:
+        return ""
+    preview_parts = []
+    if tool_name == "shell":
+        cmd = str(args.get("command", ""))[:60]
+        preview_parts.append(cmd)
+    elif tool_name in ("write_file", "read_file", "patch"):
+        path = str(args.get("path", ""))
+        preview_parts.append(path)
+    elif tool_name == "browser_navigate":
+        url = str(args.get("url", ""))[:50]
+        preview_parts.append(url)
+    elif tool_name == "search_files":
+        pattern = str(args.get("pattern", ""))[:30]
+        preview_parts.append(f"pattern={pattern}")
+    elif tool_name == "delegate_task":
+        goal = str(args.get("goal", ""))[:50]
+        preview_parts.append(f"goal={goal}")
+    elif tool_name == "terminal":
+        cmd = str(args.get("command", ""))[:60]
+        preview_parts.append(cmd)
+    else:
+        # First key=value, prefer non-empty string values
+        for k, v in args.items():
+            if k in ("id", "name", "session", "target", "query"):
+                preview_parts.append(f"{k}={v}"[:40])
+                break
+        if not preview_parts:
+            first_val = next((str(v) for v in args.values() if str(v)), "")
+            preview_parts.append(first_val[:40])
+    return " | ".join(preview_parts)
+
+
 def _project_relative_path(path_value: str, project_path: Path) -> Path:
     candidate = Path(path_value).expanduser()
     if not candidate.is_absolute():
@@ -449,18 +484,42 @@ async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -
         current_input = prompt
         max_steps = 30
         import time as _time
+
+        # Show task header once
+        console.print(f"\n  [bold cyan]▶ {tid}[/bold cyan] [dim]{task['description'][:90]}[/dim]")
+        console.print(f"  [dim]    Gestartet: {datetime.now().strftime('%H:%M:%S')}[/dim]")
+
         for step in range(max_steps):
             step_start = _time.monotonic()
-            console.print(f"  [dim cyan][{tid}][/dim cyan] [dim]Schritt {step+1}: Denkt nach...[/dim]")
+
+            # Progress: step indicator
+            bar_len = 12
+            filled = int((step / max_steps) * bar_len)
+            bar = "█" * filled + "░" * (bar_len - filled)
+            console.print(f"  [dim cyan][{tid}][/dim cyan] [{step+1}/{max_steps}] [dim]{bar}[/dim] Denke... ")
+
             response = await agent.run_with_tools(session, current_input)
             step_duration = _time.monotonic() - step_start
+
             if step_duration > 60:
-                console.print(f"  [dim cyan][{tid}][/dim cyan] [yellow]  → LLM call dauerte {step_duration:.0f}s[/yellow]")
+                console.print(f"  [dim cyan][{tid}][/dim cyan]   [yellow]⚠ LLM: {step_duration:.0f}s[/yellow]")
+
+            # Show agent thought / reasoning before tools
+            if response.content and not response.tool_calls:
+                thought = response.content[:300].replace("\n", " ").strip()
+                console.print(f"  [dim cyan][{tid}][/dim cyan]   [dim]💡 {thought}[/dim]")
+
             if not response.tool_calls:
+                output_preview = (response.content or "")[:200].replace("\n", " ").strip()
+                console.print(f"  [dim cyan][{tid}][/dim cyan]   [green]✓ Abgeschlossen[/green] [dim]{output_preview}[/dim]")
                 return {"success": True, "output": (response.content or "")[:600]}
-            
+
+            # Execute each tool call
             for tc in response.tool_calls:
-                console.print(f"  [dim cyan][{tid}][/dim cyan] [dim]Nutzt Tool:[/dim] [cyan]{tc.name}[/cyan]")
+                # Show tool call with key args
+                args_preview = _summarize_tool_args(tc.name, tc.arguments)
+                console.print(f"  [dim cyan][{tid}][/dim cyan]   [cyan]→ {tc.name}[/cyan] [dim]{args_preview}[/dim]")
+
                 tool_args, blocked = _normalize_swarm_tool_args(
                     tc.name,
                     tc.arguments,
@@ -468,7 +527,7 @@ async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -
                 )
                 if blocked is not None:
                     return blocked
-                
+
                 try:
                     result = await ToolRegistry.execute(tc.name, **(tool_args or {}))
                 except Exception as e:
@@ -479,10 +538,15 @@ async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -
                 )
                 if len(output_text) > 4000:
                     output_text = output_text[:2000] + "\n... [TRUNCATED] ...\n" + output_text[-2000:]
-                
+
                 if not result.success and not output_text.strip():
                     output_text = "ERROR: Tool failed without stderr/output"
-                
+
+                # Show first line of result
+                first_line = output_text.split("\n")[0][:120].replace("\n", " ").strip()
+                status_icon = "[green]✓[/green]" if result.success else "[red]✗[/red]"
+                console.print(f"  [dim cyan][{tid}][/dim cyan]     {status_icon} {first_line}")
+
                 session.messages.append(
                     Message(
                         role=Role.TOOL,
@@ -491,12 +555,11 @@ async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -
                         tool_call_id=tc.id,
                     )
                 )
-            
+
             # If the agent used tools, inject a neutral continuation prompt.
-            # This keeps the tool-call/result sequence intact for all providers
-            # while signaling the agent to proceed with the next step.
             current_input = "[ Weiter mit dem nächsten Schritt — die vorherigen Tools wurden ausgeführt. ]"
- 
+
+        console.print(f"  [dim cyan][{tid}][/dim cyan]   [yellow]⚠ Step-Limit ({max_steps}) erreicht[/yellow]")
         return {"success": False, "output": "Step limit reached before task completion"}
     except Exception as e:
         logger.exception(f"Exception in swarm task {tid}")
@@ -637,8 +700,8 @@ async def _cmd_run(
         if not phase_tasks:
             continue
 
-        console.print(f"\n[bold cyan]── Phase {phase_num}: {phase_name} ──[/bold cyan] "
-                      f"({len(phase_tasks)} tasks, max {parallel} parallel)")
+        console.print(f"\n[bold cyan]═══ Phase {phase_num}: {phase_name} ═══[/bold cyan] "
+                      f"[dim]({len(phase_tasks)} tasks, max {parallel} parallel)[/dim]")
 
         for tid, task in phase_tasks:
             task["status"] = "running"
@@ -705,6 +768,12 @@ async def _cmd_run(
                         if key not in {"success"}
                     }
                 task["completed_at"] = datetime.now().isoformat()
+
+        # Phase summary after all tasks in this phase finish
+        phase_done   = sum(1 for t in phase_tasks if brain["tasks"][t[0]]["status"] == "done")
+        phase_failed = sum(1 for t in phase_tasks if brain["tasks"][t[0]]["status"] == "failed")
+        icon = "[green]✓[/green]" if not phase_failed else f"[red]⚠ {phase_failed} failed[/red]"
+        console.print(f"  [dim]Phase {phase_num} abgeschlossen:[/dim] {icon} {phase_done}/{len(phase_tasks)} done\n")
 
         await _save_brain(brain, brain_file)
         brain["current_phase"] = phase_num
