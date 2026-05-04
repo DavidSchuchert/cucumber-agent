@@ -1,10 +1,38 @@
 # Skills
 
-Skills are YAML manifests in `~/.cucumber/skills/` that provide `/slash` commands for common tasks.
+Skills are YAML manifests in `~/.cucumber/skills/` that provide `/slash` commands for common tasks. They are **hot-reloaded** when files change.
 
-## Built-in Skills
+## Built-in Skills (via `swarm` Tool)
 
-Skills are automatically loaded from `~/.cucumber/skills/*.yaml` and hot-reloaded when files change.
+Two powerful orchestration skills are built into the `swarm` tool itself:
+
+### Herbert Swarm (`/herbert-swarm`)
+
+**Native multi-agent project builder.** Analyzes a SPEC.md, creates phased tasks, runs real parallel sub-agents.
+
+```bash
+/herbert-swarm init --project ~/Documents/MeinProjekt
+/herbert-swarm plan --project ~/Documents/MeinProjekt
+/herbert-swarm run --project ~/Documents/MeinProjekt --parallel 5
+```
+
+See [Swarm.md](Swarm.md) for full documentation.
+
+### Autopilot (`/autopilot`)
+
+**Sequential task tracking.** Helps one agent break down and track a complex task into steps.
+
+```bash
+/autopilot start Mein großes Feature
+/autopilot plan Noch ein Step
+/autopilot status
+```
+
+See [Autopilot.md](Autopilot.md) for full documentation.
+
+## User-Defined Skills (YAML)
+
+Skills in `~/.cucumber/skills/*.yaml` are loaded as `/slash` commands.
 
 ### Available Skills
 
@@ -21,6 +49,7 @@ Skills are automatically loaded from `~/.cucumber/skills/*.yaml` and hot-reloade
 | **timer** | `/timer` | Set countdown timer |
 | **wetter** | `/wetter` | Weather forecast |
 | **wifi** | `/wifi` | WiFi status and networks |
+| **imessage** | `/imessage` | Send iMessage/SMS via Apple Messages |
 
 ## Skill Format
 
@@ -49,36 +78,6 @@ prompt: |
   2. Use tools to accomplish the task
   3. Confirm the result to the user
 ```
-
-## Example Skills
-
-### Reminder
-```
-/reminder Milch kaufen
-```
-→ Creates an Apple Reminder with AppleScript
-
-### Weather
-```
-/wetter Berlin
-```
-→ Searches DuckDuckGo for weather info
-
-### Screenshot
-```
-/screenshot full
-/screenshot area
-/screenshot window
-```
-→ Saves to ~/Desktop/
-
-### System Info
-```
-/sysinfo
-/sysinfo battery
-/sysinfo disk
-```
-→ Shows system statistics
 
 ## Commands
 

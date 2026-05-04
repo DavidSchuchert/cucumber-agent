@@ -10,6 +10,8 @@ Welcome to the CucumberAgent documentation!
 - [CLI Commands](CLI.md) — Command reference
 - [Skills](Skills.md) — Built-in and custom skills
 - [AgentGuide](AgentGuide.md) — Agent system guide
+- **[Swarm](Swarm.md)** — Multi-Agent Project Builder (Herbert Swarm)
+- **[Autopilot](Autopilot.md)** — Sequential Task Tracking
 
 ## Directory Structure
 
@@ -32,7 +34,9 @@ Welcome to the CucumberAgent documentation!
 - **Thinking Blocks** — Display agent internal thoughts
 - **Memory System** — 3-tier: pinned → session → recent
 - **Custom Tools** — Hot-reload from ~/.cucumber/custom_tools/
-- **Skills** — YAML manifests in ~/.cucumber/skills/
+- **Skills** — YAML manifests in ~/.cucumber/skills/ + built-in herbert-swarm
+- **/autopilot** — Native project-local task tracking (Sequential, not parallel)
+- **/herbert-swarm** — Native multi-agent parallel project builder (Parallel, shared brain)
 
 ## How It Works
 

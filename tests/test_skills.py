@@ -32,10 +32,11 @@ args_hint: "[value]"
 timeout: 15
 """
 
+# MISSING_STEPS_YAML — steps is now OPTIONAL for user skills, so this IS valid
 MISSING_STEPS_YAML = """\
 name: Bad Skill
 command: /bad
-description: Missing steps field
+description: Missing steps field (but steps is optional for user skills now)
 """
 
 MISSING_NAME_YAML = """\
@@ -84,18 +85,18 @@ class TestSkillLoaderValidation:
         assert s.timeout == 15.0
         assert s.args_hint == "[value]"
 
-    def test_missing_steps_skips_skill(self, tmp_path, caplog):
-        """A YAML missing 'steps' is skipped with a warning."""
+    def test_missing_name_or_command_skips_skill(self, tmp_path, caplog):
+        """Skills missing name or command are skipped (steps is optional)."""
         import logging
 
-        write_skill(tmp_path, "bad.yaml", MISSING_STEPS_YAML)
+        write_skill(tmp_path, "noname.yaml", MISSING_NAME_YAML)
         loader = SkillLoader(skills_dir=tmp_path)
 
         with caplog.at_level(logging.WARNING, logger="cucumber_agent.skills.loader"):
             skills = loader.load_all()
 
         assert len(skills) == 0
-        assert any("steps" in msg for msg in caplog.messages)
+        assert any("name" in msg for msg in caplog.messages)
 
     def test_missing_name_skips_skill(self, tmp_path, caplog):
         """A YAML missing 'name' is skipped with a warning."""
@@ -120,16 +121,16 @@ class TestSkillLoaderValidation:
         with caplog.at_level(logging.WARNING, logger="cucumber_agent.skills.loader"):
             loader.load_all()
 
-        # Should mention name, command, steps at minimum
+        # Should mention name and command at minimum (steps is now optional)
         combined = " ".join(caplog.messages)
         assert "name" in combined
         assert "command" in combined
-        assert "steps" in combined
 
     def test_valid_and_invalid_mixed(self, tmp_path):
-        """Only valid skills are loaded when mixed with invalid ones."""
+        """Only invalid skills (missing name/command) are filtered; steps is optional."""
         write_skill(tmp_path, "valid.yaml", VALID_YAML)
-        write_skill(tmp_path, "bad.yaml", MISSING_STEPS_YAML)
+        # MISSING_NAME_YAML has no name — invalid
+        write_skill(tmp_path, "noname.yaml", MISSING_NAME_YAML)
         loader = SkillLoader(skills_dir=tmp_path)
         skills = loader.load_all()
 

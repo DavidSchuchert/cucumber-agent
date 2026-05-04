@@ -1,8 +1,7 @@
 """CLI - Read-Eval-Print loop for CucumberAgent."""
-
 from __future__ import annotations
-
 import asyncio
+import os
 import re
 import sys
 from collections.abc import AsyncIterator
@@ -54,6 +53,7 @@ STATIC_SLASH_COMMANDS = [
     "/clear",
     "/config",
     "/model",
+    "/update",
     "/debug",
     "/optimize",
     "/memory",
@@ -178,6 +178,34 @@ async def stream_print(stream: AsyncIterator[str]) -> str:
     return full
 
 
+def get_git_behind_count(repo_path: str = "~/.cucumber-agent") -> int | None:
+    """Return number of commits behind origin/main, or None if unavailable."""
+    import subprocess
+    try:
+        expanded = os.path.expanduser(repo_path)
+        # fetch first (quiet)
+        subprocess.run(
+            ["git", "fetch", "origin"],
+            cwd=expanded,
+            capture_output=True,
+            timeout=10,
+        )
+        # count behind
+        result = subprocess.run(
+            ["git", "rev-list", "--count", "--left-right", "@{upstream}...HEAD"],
+            cwd=expanded,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            ahead, behind = result.stdout.strip().split()
+            return int(behind)
+    except Exception:
+        pass
+    return None
+
+
 def print_welcome(config: Config) -> None:
     """Print welcome message with personality branding."""
     pers = config.personality
@@ -221,6 +249,18 @@ def print_welcome(config: Config) -> None:
         f"\n  [dim]Provider:[/dim] [bold cyan]{agent_cfg.provider}[/bold cyan]  "
         f"[dim]Modell:[/dim] [bold cyan]{agent_cfg.model}[/bold cyan]"
     )
+
+    # Git behind notice
+    behind = get_git_behind_count()
+    if behind is not None and behind > 0:
+        console.print(
+            f"\n  [yellow]⚠️  {behind} Commit(s) hinter origin/main — "
+            f"[bold]/update[/bold] zum Aktualisieren[/yellow]"
+        )
+    elif behind is not None and behind == 0:
+        console.print(f"\n  [dim]✔  Auf Stand mit origin/main[/dim]")
+    # if None: git not available or not a repo — stay silent
+
     console.print("\n[dim]Tippe [bold]/help[/bold] für Befehle oder einfach loslegen![/dim]")
     console.print()
 
@@ -237,6 +277,7 @@ def print_help() -> None:
         ("/clear", "Gesprächsverlauf löschen (Kontext bleibt erhalten)"),
         ("/config", "Aktuelle Konfiguration anzeigen"),
         ("/model", "Aktuelles Modell anzeigen"),
+        ("/update", "Git pull origin/main — Updates einspielen"),
         ("/optimize", "Persönlichkeit basierend auf Namen optimieren"),
         ("/debug", "Debug-Modus ein/ausschalten"),
         ("/memory", "Alle gemerkten Fakten anzeigen"),
@@ -920,6 +961,29 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
             case "/model":
                 cfg = self._config.agent
                 console.print(f"  [dim]{cfg.provider}[/dim] / [bold cyan]{cfg.model}[/bold cyan]\n")
+            case "/update":
+                behind = get_git_behind_count()
+                if behind is None:
+                    console.print("  [red]Git nicht verfügbar oder kein Repo.[/red]\n")
+                elif behind == 0:
+                    console.print("  [dim]✔  Bereits auf neuestem Stand (origin/main).[/dim]\n")
+                else:
+                    console.print(f"  [yellow]⬇ {behind} Commit(s) werden eingepielt...[/yellow]")
+                    import subprocess as _subprocess
+                    try:
+                        res = _subprocess.run(
+                            ["git", "pull", "origin", "main"],
+                            cwd=os.path.expanduser("~/.cucumber-agent"),
+                            capture_output=True,
+                            text=True,
+                            timeout=60,
+                        )
+                        if res.returncode == 0:
+                            console.print(f"  [green]✔ Aktualisiert! Starte Cucumber neu für die Änderungen.[/green]\n")
+                        else:
+                            console.print(f"  [red]✘ Git-Fehler: {res.stderr or res.stdout}[/red]\n")
+                    except Exception as exc:
+                        console.print(f"  [red]✘ Fehler: {exc}[/red]\n")
             case "/debug":
                 self._debug_mode = not self._debug_mode
                 if self._debug_mode:

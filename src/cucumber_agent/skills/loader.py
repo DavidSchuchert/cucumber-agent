@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -12,7 +12,8 @@ import yaml
 logger = logging.getLogger(__name__)
 
 # Required fields for a valid skill YAML
-_REQUIRED_FIELDS = ("name", "command", "description", "steps")
+_REQUIRED_FIELDS = ("name", "command", "description")
+_REQUIRED_FIELDS_STRICT = ("name", "command", "description", "steps")  # built-in only
 
 
 @dataclass
@@ -22,7 +23,7 @@ class Skill:
     name: str
     command: str  # e.g. "/wetter"
     description: str
-    steps: list[str]  # Ordered list of steps the skill performs
+    steps: list[str] = field(default_factory=list)  # Ordered list of steps; optional for user skills
     prompt: str = ""  # May contain {args} placeholder
     args_hint: str = ""  # e.g. "[Stadt]" shown in /skills list
     timeout: float = 30.0  # Per-step timeout in seconds
@@ -96,15 +97,19 @@ class SkillLoader:
                     self._mtimes[yaml_file] = mtime  # mark so we don't warn repeatedly
                     continue
 
-                steps = data["steps"]
-                if not isinstance(steps, list):
-                    steps = [str(steps)]
+                steps = data.get("steps")
+                if steps:
+                    if not isinstance(steps, list):
+                        steps = [str(steps)]
+                    skill_steps = [str(s) for s in steps]
+                else:
+                    skill_steps = []
 
                 skill = Skill(
                     name=data["name"],
                     command=data["command"],
                     description=data["description"],
-                    steps=[str(s) for s in steps],
+                    steps=[str(s) for s in skill_steps],
                     prompt=data.get("prompt", ""),
                     args_hint=data.get("args_hint", ""),
                     timeout=float(data.get("timeout", 30.0)),
