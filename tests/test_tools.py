@@ -195,6 +195,102 @@ class TestSwarmTool:
         assert result.success is True
         assert result.output.startswith("ERROR:")
 
+    async def test_run_uses_async_tasks_without_thread_event_loops(self, tmp_path, monkeypatch):
+        from cucumber_agent.tools import swarm as swarm_module
+
+        tool = SwarmTool()
+        await tool.execute(command="init", project=str(tmp_path))
+        brain_file = tmp_path / ".swarm_brain.json"
+        brain = json.loads(brain_file.read_text(encoding="utf-8"))
+        brain["phases"] = ["IMPLEMENTATION"]
+        brain["tasks"] = {
+            f"task-{i:03d}": {
+                "id": f"task-{i:03d}",
+                "description": f"Task {i}",
+                "agent_role": "coder",
+                "files": [],
+                "dependencies": [],
+                "status": "pending",
+                "priority": i,
+                "phase": 1,
+                "created_by": "test",
+            }
+            for i in range(1, 4)
+        }
+        brain_file.write_text(json.dumps(brain), encoding="utf-8")
+
+        loop_ids = set()
+
+        async def fake_run_task(tid, task, brain, brain_file):
+            import asyncio
+
+            loop_ids.add(id(asyncio.get_running_loop()))
+            await asyncio.sleep(0)
+            return {"success": True, "output": f"done {tid}"}
+
+        monkeypatch.setattr(swarm_module, "_run_task_async", fake_run_task)
+
+        result = await tool.execute(command="run", project=str(tmp_path), parallel=3)
+
+        assert result.success is True
+        assert "3/3 tasks done" in result.output
+        assert len(loop_ids) == 1
+
+    async def test_run_stores_structured_failure_details(self, tmp_path, monkeypatch):
+        from cucumber_agent.tools import swarm as swarm_module
+
+        tool = SwarmTool()
+        await tool.execute(command="init", project=str(tmp_path))
+        brain_file = tmp_path / ".swarm_brain.json"
+        brain = json.loads(brain_file.read_text(encoding="utf-8"))
+        brain["phases"] = ["IMPLEMENTATION"]
+        brain["tasks"] = {
+            "task-001": {
+                "id": "task-001",
+                "description": "Failing task",
+                "agent_role": "coder",
+                "files": [],
+                "dependencies": [],
+                "status": "pending",
+                "priority": 1,
+                "phase": 1,
+                "created_by": "test",
+            }
+        }
+        brain_file.write_text(json.dumps(brain), encoding="utf-8")
+
+        async def fake_run_task(tid, task, brain, brain_file):
+            return {
+                "success": False,
+                "error_type": "ToolExecutionError",
+                "tool_name": "shell",
+                "message": "Tool failed without stderr/output",
+            }
+
+        monkeypatch.setattr(swarm_module, "_run_task_async", fake_run_task)
+
+        result = await tool.execute(command="run", project=str(tmp_path))
+
+        assert result.success is True
+        brain = json.loads(brain_file.read_text(encoding="utf-8"))
+        task = brain["tasks"]["task-001"]
+        assert task["status"] == "failed"
+        assert "ToolExecutionError" in task["error"]
+        assert task["error_details"]["tool_name"] == "shell"
+
+    async def test_swarm_tool_args_block_write_outside_project(self, tmp_path):
+        from cucumber_agent.tools.swarm import _normalize_swarm_tool_args
+
+        args, failure = _normalize_swarm_tool_args(
+            "write_file",
+            {"path": str(tmp_path.parent / "outside.txt"), "content": "x"},
+            tmp_path,
+        )
+
+        assert args is None
+        assert failure is not None
+        assert failure["error_type"] == "PathSafetyError"
+
 
 # ── Datetime Tool ────────────────────────────────────────────────────────────
 

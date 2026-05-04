@@ -333,8 +333,75 @@ def _build_agent_prompt(task: dict, brain: dict, brain_file: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Sub-agent execution (one cucumber Agent per task, in its own thread + event loop)
+# Sub-agent execution
 # ---------------------------------------------------------------------------
+
+def _format_failure(
+    message: str,
+    *,
+    error_type: str = "SwarmTaskError",
+    tool_name: str | None = None,
+    args: dict | None = None,
+    output: str = "",
+) -> dict:
+    clean_message = (message or "").strip() or "Tool failed without stderr/output"
+    failure = {
+        "success": False,
+        "output": clean_message[:800],
+        "error_type": error_type,
+        "message": clean_message[:800],
+    }
+    if tool_name:
+        failure["tool_name"] = tool_name
+    if args:
+        failure["args"] = {
+            key: (str(value)[:160] + ("..." if len(str(value)) > 160 else ""))
+            for key, value in args.items()
+        }
+    if output.strip():
+        failure["tool_output"] = output.strip()[:800]
+    return failure
+
+
+def _is_inside(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _project_relative_path(path_value: str, project_path: Path) -> Path:
+    candidate = Path(path_value).expanduser()
+    if not candidate.is_absolute():
+        candidate = project_path / candidate
+    return candidate.resolve()
+
+
+def _normalize_swarm_tool_args(
+    tool_name: str,
+    args: dict,
+    project_path: Path,
+) -> tuple[dict | None, dict | None]:
+    normalized = dict(args)
+
+    if tool_name == "shell":
+        normalized.setdefault("working_dir", str(project_path))
+        return normalized, None
+
+    if tool_name in {"write_file", "read_file"} and "path" in normalized:
+        target = _project_relative_path(str(normalized["path"]), project_path)
+        if not _is_inside(target, project_path):
+            return None, _format_failure(
+                f"{tool_name} path outside project blocked: {target}",
+                error_type="PathSafetyError",
+                tool_name=tool_name,
+                args=args,
+            )
+        normalized["path"] = str(target)
+
+    return normalized, None
+
 
 async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -> dict:
     from cucumber_agent.agent import Agent
@@ -345,6 +412,7 @@ async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -
     config = Config.load()
     agent  = Agent.from_config(config)
     session = Session(id=f"swarm-{tid}", model=config.agent.model)
+    project_path = Path(brain.get("project_path", ".")).resolve()
 
     # Sub-agents in swarm auto-approve tool calls — user initiated the swarm intentionally
     old_approve = agent_tool_module._subagent_auto_approve
@@ -360,12 +428,27 @@ async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -
             if not response.tool_calls:
                 return {"success": True, "output": (response.content or "")[:600]}
             for tc in response.tool_calls:
-                result = await ToolRegistry.execute(tc.name, **tc.arguments)
+                tool_args, blocked = _normalize_swarm_tool_args(
+                    tc.name,
+                    tc.arguments,
+                    project_path,
+                )
+                if blocked is not None:
+                    return blocked
+                result = await ToolRegistry.execute(tc.name, **(tool_args or {}))
                 output_text = (
                     result.output if result.success else "ERROR: " + (result.error or result.output)
                 )
                 if len(output_text) > 3000:
                     output_text = output_text[:1500] + "\n... [TRUNCATED] ...\n" + output_text[-1500:]
+                if not result.success:
+                    return _format_failure(
+                        result.error or result.output,
+                        error_type="ToolExecutionError",
+                        tool_name=tc.name,
+                        args=tool_args or tc.arguments,
+                        output=result.output,
+                    )
                 session.messages.append(
                     Message(
                         role=Role.TOOL,
@@ -380,44 +463,33 @@ async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -
             )
         return {"success": False, "output": "Step limit reached before task completion"}
     except Exception as e:
-        return {"success": False, "output": str(e)[:400]}
+        return _format_failure(str(e), error_type=type(e).__name__)
     finally:
         agent_tool_module._subagent_auto_approve = old_approve
+        provider = getattr(agent, "_provider", None)
+        close = getattr(provider, "close", None)
+        if close is not None:
+            try:
+                await close()
+            except Exception:
+                pass
 
 
-def _run_task_thread(
-    tid: str,
-    task: dict,
-    brain: dict,
-    brain_file: Path,
-    results: dict,
-    lock: threading.Lock,
-    semaphore: threading.Semaphore,
-    timeout: int,
-) -> None:
-    with semaphore:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            result = loop.run_until_complete(
-                asyncio.wait_for(_run_task_async(tid, task, brain, brain_file), timeout=timeout)
-            )
-        except TimeoutError:
-            result = {"success": False, "output": f"Timed out after {timeout}s"}
-        except Exception as e:
-            result = {"success": False, "output": str(e)[:400]}
-        finally:
-            loop.close()
+def _task_error_summary(result: dict) -> str:
+    message = str(result.get("message") or result.get("output") or "").strip()
+    if not message:
+        message = "Tool failed without stderr/output"
 
-        with lock:
-            results[tid] = result
-            ok = result.get("success", False)
-            status_icon = "[green]✓[/green]" if ok else "[red]✗[/red]"
-            console.print(
-                f"  {status_icon} [cyan]{tid}[/cyan]: {task['description'][:55]}"
-            )
-            if not ok:
-                console.print(f"    [red]Error:[/red] {result.get('output','')[:200]}")
+    error_type = str(result.get("error_type") or "").strip()
+    tool_name = str(result.get("tool_name") or "").strip()
+    prefix_parts = []
+    if error_type:
+        prefix_parts.append(error_type)
+    if tool_name:
+        prefix_parts.append(f"tool={tool_name}")
+
+    prefix = f"{' | '.join(prefix_parts)}: " if prefix_parts else ""
+    return f"{prefix}{message}"
 
 
 # ---------------------------------------------------------------------------
@@ -483,7 +555,7 @@ def _cmd_plan(project: str, spec: str | None = None) -> str:
     return f"Plan: {len(tasks)} tasks across {len(phases)} phases ({', '.join(phases)})"
 
 
-def _cmd_run(
+async def _cmd_run(
     project: str,
     parallel: int = 3,
     timeout: int = 300,
@@ -527,7 +599,7 @@ def _cmd_run(
         border_style="cyan",
     ))
 
-    semaphore = threading.Semaphore(parallel)
+    semaphore = asyncio.Semaphore(parallel)
 
     for phase_num, phase_name in enumerate(brain.get("phases", []), 1):
         phase_tasks = [
@@ -551,25 +623,36 @@ def _cmd_run(
                 task["completed_at"] = datetime.now().isoformat()
                 console.print(f"  [yellow][DRY][/yellow] [cyan]{tid}[/cyan]: {task['description'][:55]}")
         else:
-            results: dict = {}
-            lock    = threading.Lock()
-            threads: list[tuple[str, threading.Thread]] = []
+            async def run_one(tid: str, task: dict) -> tuple[str, dict]:
+                async with semaphore:
+                    try:
+                        result = await asyncio.wait_for(
+                            _run_task_async(tid, task, brain, brain_file),
+                            timeout=timeout,
+                        )
+                    except TimeoutError:
+                        result = _format_failure(
+                            f"Timed out after {timeout}s",
+                            error_type="TimeoutError",
+                        )
+                    except Exception as exc:
+                        result = _format_failure(str(exc), error_type=type(exc).__name__)
 
-            for tid, task in phase_tasks:
-                t = threading.Thread(
-                    target=_run_task_thread,
-                    args=(tid, task, brain, brain_file, results, lock, semaphore, timeout),
-                    daemon=True,
-                )
-                threads.append((tid, t))
-                t.start()
+                    ok = result.get("success", False)
+                    status_icon = "[green]✓[/green]" if ok else "[red]✗[/red]"
+                    console.print(
+                        f"  {status_icon} [cyan]{tid}[/cyan]: {task['description'][:55]}"
+                    )
+                    if not ok:
+                        console.print(
+                            f"    [red]Error:[/red] {_task_error_summary(result)[:240]}"
+                        )
+                    return tid, result
 
-            for tid, t in threads:
-                t.join(timeout=timeout + 15)
-                if t.is_alive():
-                    console.print(f"  [red]TIMEOUT:[/red] {tid}")
-                    with lock:
-                        results.setdefault(tid, {"success": False, "output": "Agent timed out"})
+            result_pairs = await asyncio.gather(
+                *(run_one(tid, task) for tid, task in phase_tasks)
+            )
+            results = dict(result_pairs)
 
             for tid, task in phase_tasks:
                 r = results.get(tid, {})
@@ -587,7 +670,12 @@ def _cmd_run(
                     }
                 else:
                     task["status"] = "failed"
-                    task["error"]  = r.get("output", "unknown")[:500]
+                    task["error"]  = _task_error_summary(r)[:500]
+                    task["error_details"] = {
+                        key: value
+                        for key, value in r.items()
+                        if key not in {"success"}
+                    }
                 task["completed_at"] = datetime.now().isoformat()
 
         _save_brain(brain, brain_file)
@@ -687,7 +775,19 @@ def _cmd_report(project: str | None) -> str:
     if failed:
         for tid, task in tasks.items():
             if task["status"] == "failed":
-                console.print(f"  [red]✗[/red] {tid}: {task.get('error','')[:150]}")
+                error = task.get("error", "") or "Tool failed without stderr/output"
+                console.print(f"  [red]✗[/red] {tid}: {error[:220]}")
+                details = task.get("error_details", {})
+                if isinstance(details, dict):
+                    tool_name = details.get("tool_name")
+                    error_type = details.get("error_type")
+                    if tool_name or error_type:
+                        console.print(
+                            "    [dim]"
+                            + " | ".join(str(v) for v in (error_type, tool_name) if v)
+                            + "[/dim]"
+                        )
+        console.print("  [dim]Retry: /herbert-swarm run --retry-failed[/dim]")
 
     return f"Report: {done}/{total} done ({pct}), {len(all_files)} files created"
 
@@ -822,8 +922,8 @@ class SwarmTool(BaseTool):
             elif command == "run":
                 if not project:
                     return ToolResult(success=False, output="", error="'project' path is required for run")
-                out = _cmd_run(project, parallel=parallel, timeout=timeout,
-                               dry_run=dry_run, retry_failed=retry_failed)
+                out = await _cmd_run(project, parallel=parallel, timeout=timeout,
+                                     dry_run=dry_run, retry_failed=retry_failed)
             elif command == "status":
                 out = _cmd_status(project)
             elif command == "report":

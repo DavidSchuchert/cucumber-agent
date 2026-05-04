@@ -293,6 +293,17 @@ class TestSkillRunner:
         assert parsed.project == str(arcade.resolve())
         assert parsed.parallel == 10
 
+    def test_parse_herbert_swarm_rejects_missing_named_project(self, tmp_path):
+        agent = SimpleNamespace(_config=SimpleNamespace(workspace=tmp_path))
+
+        import pytest
+
+        with pytest.raises(ValueError, match="nicht eindeutig gefunden"):
+            SkillRunner._parse_herbert_swarm_args(
+                "stelle das Arcade projekt fertig",
+                agent,
+            )
+
     def test_parse_herbert_swarm_rejects_bad_parallel(self, tmp_path):
         agent = SimpleNamespace(_config=SimpleNamespace(workspace=tmp_path))
 

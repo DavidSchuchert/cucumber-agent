@@ -52,6 +52,8 @@ class SkillRunner:
             if resolved not in search_roots:
                 search_roots.append(resolved)
 
+        exact_matches: list[Path] = []
+        fuzzy_matches: list[Path] = []
         for root in search_roots:
             try:
                 children = [p for p in root.iterdir() if p.is_dir()]
@@ -59,7 +61,24 @@ class SkillRunner:
                 continue
             for child in children:
                 if child.name.lower() == cleaned:
-                    return child.resolve()
+                    exact_matches.append(child.resolve())
+                elif cleaned in child.name.lower():
+                    fuzzy_matches.append(child.resolve())
+        if exact_matches:
+            return exact_matches[0]
+        unique_fuzzy = sorted(set(fuzzy_matches))
+        return unique_fuzzy[0] if len(unique_fuzzy) == 1 else None
+
+    @staticmethod
+    def _explicit_project_name(args: str) -> str | None:
+        patterns = [
+            r"([A-Za-z0-9_.-]+)\s+(?:projekt|project)",
+            r"(?:projekt|project)\s+([A-Za-z0-9_.-]+)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, args, re.IGNORECASE)
+            if match:
+                return match.group(1).strip().strip(".,;:!?")
         return None
 
     @staticmethod
@@ -76,11 +95,14 @@ class SkillRunner:
             if candidate.exists() or "/" in token or token.startswith((".", "~")):
                 return candidate.resolve()
 
-        project_match = re.search(r"(?:projekt|project)\s+([A-Za-z0-9_.-]+)", args, re.IGNORECASE)
-        if project_match:
-            found = SkillRunner._find_named_project(workspace, project_match.group(1))
+        explicit_name = SkillRunner._explicit_project_name(args)
+        if explicit_name:
+            found = SkillRunner._find_named_project(workspace, explicit_name)
             if found:
                 return found
+            raise ValueError(
+                f"Projekt '{explicit_name}' nicht eindeutig gefunden. Bitte Pfad explizit angeben."
+            )
 
         for token in positionals:
             cleaned = token.strip().strip(".,;:!?")
