@@ -421,15 +421,15 @@ def _summarize_tool_args(tool_name: str, args: dict) -> str:
     elif tool_name == "terminal":
         cmd = str(args.get("command", ""))[:60]
         preview_parts.append(cmd)
-    else:
-        # First key=value, prefer non-empty string values
-        for k, v in args.items():
-            if k in ("id", "name", "session", "target", "query"):
-                preview_parts.append(f"{k}={v}"[:40])
-                break
-        if not preview_parts:
-            first_val = next((str(v) for v in args.values() if str(v)), "")
-            preview_parts.append(first_val[:40])
+    # Skip positional parameters of known tools to avoid "multiple values for" errors
+    # when ToolRegistry.execute(name, **kwargs) forwards args to tool.execute()
+    skip_keys = {"name", "code", "task", "prompt", "image_url", "path", "url", "command",
+                 "pattern", "goal", "session", "target", "query", "working_dir"}
+    for k, v in args.items():
+        if k in skip_keys:
+            continue
+        preview_parts.append(f"{k}={v}"[:40])
+        break
     return " | ".join(preview_parts)
 
 
