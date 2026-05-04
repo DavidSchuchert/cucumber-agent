@@ -460,13 +460,6 @@ async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -
         return _format_failure(str(e), error_type=type(e).__name__)
     finally:
         agent_tool_module._subagent_auto_approve = old_approve
-        provider = getattr(agent, "_provider", None)
-        close = getattr(provider, "close", None)
-        if close is not None:
-            try:
-                await close()
-            except Exception:
-                pass
 
 
 def _task_error_summary(result: dict) -> str:

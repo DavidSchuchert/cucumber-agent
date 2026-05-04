@@ -236,6 +236,50 @@ class TestSwarmTool:
         assert "3/3 tasks done" in result.output
         assert len(loop_ids) == 1
 
+    async def test_run_does_not_close_shared_provider_between_tasks(self, tmp_path, monkeypatch):
+        from types import SimpleNamespace
+
+        from cucumber_agent.agent import Agent
+        from cucumber_agent.config import Config
+        from cucumber_agent.tools.swarm import _run_task_async
+
+        class FakeProvider:
+            def __init__(self):
+                self.closed = False
+
+            async def close(self):
+                self.closed = True
+
+        class FakeAgent:
+            def __init__(self, provider):
+                self._provider = provider
+
+            async def run_with_tools(self, session, current_input):
+                return SimpleNamespace(tool_calls=None, content="done")
+
+        provider = FakeProvider()
+        monkeypatch.setattr(
+            Config,
+            "load",
+            staticmethod(lambda: SimpleNamespace(agent=SimpleNamespace(model="fake"))),
+        )
+        monkeypatch.setattr(Agent, "from_config", classmethod(lambda cls, config: FakeAgent(provider)))
+
+        result = await _run_task_async(
+            "task-001",
+            {
+                "id": "task-001",
+                "description": "Task 1",
+                "agent_role": "coder",
+                "files": [],
+            },
+            {"project_path": str(tmp_path), "spec_summary": ""},
+            tmp_path / ".swarm_brain.json",
+        )
+
+        assert result == {"success": True, "output": "done"}
+        assert provider.closed is False
+
     async def test_run_stores_structured_failure_details(self, tmp_path, monkeypatch):
         from cucumber_agent.tools import swarm as swarm_module
 
