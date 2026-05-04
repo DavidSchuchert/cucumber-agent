@@ -125,6 +125,7 @@ CucumberAgent comes with built-in tools:
 | `web_search` | DuckDuckGo instant answers (no API key) |
 | `web_reader` | Extract content from URLs |
 | `agent` | Recursive sub-agent (max 15 steps) |
+| `capabilities` | List all available tools and skills |
 | `create_tool` | Self-generating custom tools |
 
 Add custom tools to `~/.cucumber/custom_tools/*.py`

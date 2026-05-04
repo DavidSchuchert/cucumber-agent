@@ -38,25 +38,29 @@ User: "/herbert-swarm RetroPixelArcade --parallel 10"
 └──────────┘ └──────────┘ └──────────┘
 ```
 
-## Commands
+## Features & Verbesserungen
 
-| Command | Beschreibung |
+- **Live-Feedback**: Der Swarm zeigt während der Ausführung live an, was jeder Agent gerade tut (z.B. `[task-001] Nutzt Tool: write_file`).
+- **Coding Standards**: Alle Swarm-Agenten folgen strikten Coding-Standards (modularer Code, Fehlerbehandlung, keine Platzhalter).
+- **Robuste Timeouts**: Provider-Timeouts wurden auf 5 Minuten erhöht mit automatischen Retries bei Netzwerkfehlern.
+- **Sicheres Scanning**: Der Planner ignoriert automatisch große Verzeichnisse wie `.git`, `node_modules` oder `.venv`.
+
+## Commands & Bedienung
+
+Gib einfach `/herbert-swarm` ein, um eine interaktive Hilfe zu erhalten.
+
+| Befehl | Beschreibung |
 |---------|-------------|
-| `init` | Swarm-Brain für ein Projekt anlegen |
-| `plan` | SPEC.md analysieren → Task-Plan erstellen |
-| `run` | Tasks parallel ausführen (sub-Agents) |
-| `status` | Fortschritt aller Tasks anzeigen |
-| `report` | Ergebnis + erstellte Dateien anzeigen |
-| `brain` | Internen Brain-State anzeigen |
-| `reset` | Brain löschen (alles zurücksetzen) |
+| `/herbert-swarm <pfad>` | Startet den vollen Zyklus (Init -> Plan -> Run -> Report) |
+| `/herbert-swarm status` | Zeigt den aktuellen Fortschritt aller Tasks |
+| `/herbert-swarm run` | Setzt die Ausführung fort (z.B. nach einem Abbruch) |
+| `/herbert-swarm reset` | Löscht das Swarm-Brain des Projekts (Vorsicht!) |
 
-## Workflow
+### Optionen
 
-```bash
-/herbert-swarm init --project ~/Documents/MeinProjekt
-/herbert-swarm plan --project ~/Documents/MeinProjekt
-/herbert-swarm run --project ~/Documents/MeinProjekt --parallel 5
-```
+- `--parallel N`: Anzahl der Agenten, die gleichzeitig arbeiten (Standard: 3)
+- `--dry-run`: Simuliert die Ausführung, ohne echte Dateien zu schreiben
+- `--spec <pfad>`: Nutzt eine spezifische SPEC-Datei statt der Standard-Datei im Projektordner
 
 ## Task Phasen
 
@@ -71,62 +75,13 @@ User: "/herbert-swarm RetroPixelArcade --parallel 10"
 
 `~/.swarm_brain.json` (oder `<projekt>/.swarm_brain.json`)
 
-```json
-{
-  "project_name": "MeinProjekt",
-  "project_path": "/path/to/project",
-  "spec_summary": "...",
-  "facts": {
-    "task_001_result": {
-      "files_created": ["/abs/path/to/file.py"],
-      "summary": "Created API endpoints"
-    }
-  },
-  "tasks": {
-    "task-001": {
-      "id": "task-001",
-      "description": "Create FastAPI endpoints",
-      "agent_role": "coder",
-      "files": ["backend/api/routes.py"],
-      "dependencies": [],
-      "status": "done",
-      "phase": 3
-    }
-  },
-  "phases": ["INFRA", "BACKEND_CORE", "BACKEND_API", "FRONTEND", "TESTING"],
-  "current_phase": 3
-}
-```
+Das "Brain" ist das geteilte Gedächtnis aller Agenten. Hier werden Ergebnisse, erstellte Dateien und der Status jedes Tasks gespeichert.
 
-## Wie der Planner Tasks erstellt
+## Bekannte Probleme / Pitfalls (Fixed!)
 
-Der Planner scannt die SPEC.md nach Keywords:
-
-| Keyword-Gruppe | Erkannte Tech-Stack |
-|----------------|---------------------|
-| FastAPI, Flask, Django, Express | → Backend |
-| React, Vue, Svelte, Next.js | → Frontend |
-| PostgreSQL, MongoDB, Redis | → Database |
-| Docker, Kubernetes | → Docker/Container |
-| pytest, Jest, GitHub Actions | → CI/Testing |
-
-**Achtung:** Der Planner erkennt **keine Vanilla-JS/HTML-Projekte**! Für solche Projekte müssen die Tasks manuell in den Brain geschrieben werden.
-
-## Für Agenten (KI)
-
-Wenn du als sub-agent im Swarm arbeitest:
-
-1. Du bekommst einen Prompt mit Task-Beschreibung und Datei-Liste
-2. Du sollst ALLE Dateien vollständig implementieren (keine TODOs)
-3. Nach Fertigstellung: Brain-Datei lesen → `facts.task_<id>_result` updaten
-4. Bei Fehlern: Brain-Datei lesen → `tasks.<id>.status = "failed"` setzen
-
-## Bekannte Probleme / Pitfalls
-
-1. **Planner generiert falsche Tasks für Vanilla-JS**: Lösung — Brain manuell mit korrekten Tasks füllen
-2. **Task-Dependencies werden ignoriert**: Alle Tasks einer Phase starten parallel, auch wenn sie Depts haben
-3. **Phase 2 startet bevor Phase 1 fertig ist**: Ist tatsächlich so — der Planner hat das Problem
-4. **Brain-Datei wird nicht aktualisiert wenn Agent abstürzt**: Manuell brain updaten
+- ~~**Planner hängt bei großen Projekten**~~: Behoben durch Verzeichnis-Filter.
+- ~~**Absturz bei paralleler Ausführung**~~: Behoben durch Entfernung von globalem State (Race Conditions).
+- ~~**Keine Info was passiert**~~: Behoben durch Live-Feedback-System.
 
 ## Siehe auch
 

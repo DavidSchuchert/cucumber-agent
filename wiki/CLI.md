@@ -166,12 +166,20 @@ When the agent wants to execute a tool that requires approval, a dialog appears:
 |---------|-------------|
 | `/optimize` | Let the AI analyse its own name and suggest personality improvements (emoji, greeting, strengths) |
 
-### Skills
+### Herbert Swarm
 
 | Command | Description |
 |---------|-------------|
-| `/skills` | List installed skills |
-| `/<skillname> [args]` | Run a skill by its command name |
+| `/herbert-swarm <pfad>` | Vollständiger Build-Zyklus (Init, Plan, Run, Report) |
+| `/herbert-swarm status` | Fortschritt des aktuellen Projekts anzeigen |
+| `/herbert-swarm run` | Geplante Tasks ausführen / fortsetzen |
+| `/herbert-swarm reset` | Swarm-Brain löschen |
+| `/herbert-swarm --help` | Interaktive Hilfe anzeigen |
+
+**Optionen:**
+- `--parallel N`: Anzahl gleichzeitiger Agenten
+- `--dry-run`: Simulation ohne Datei-Schreibzugriff
+- `--spec <datei>`: Eigene Spezifikation nutzen
 
 ---
 

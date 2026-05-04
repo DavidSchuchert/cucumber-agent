@@ -11,10 +11,17 @@ Two powerful orchestration skills are built into the `swarm` tool itself:
 **Native multi-agent project builder.** Analyzes a SPEC.md, creates phased tasks, runs real parallel sub-agents.
 
 ```bash
-/herbert-swarm init --project ~/Documents/MeinProjekt
-/herbert-swarm plan --project ~/Documents/MeinProjekt
-/herbert-swarm run --project ~/Documents/MeinProjekt --parallel 5
+# Voller Zyklus
+/herbert-swarm ~/Documents/MeinProjekt
+
+# Hilfe anzeigen
+/herbert-swarm --help
+
+# Nur Status prüfen
+/herbert-swarm status
 ```
+
+**Neu:** Nutzt jetzt ein Live-Feedback-System und verbesserte Agent-Prompts für höhere Code-Qualität.
 
 See [Swarm.md](Swarm.md) for full documentation.
 
