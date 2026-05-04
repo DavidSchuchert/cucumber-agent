@@ -597,10 +597,11 @@ async def _cmd_init(project: str, name: str | None = None) -> str:
     await _save_brain(brain, brain_file)
 
     console.print(Panel(
-        f"[bold green]Swarm initialized[/bold green]\n"
+        f"[bold green]✓ Swarm initialized[/bold green]\n"
         f"[bold]Project:[/bold] {project_name}\n"
         f"[bold]Path:[/bold]    {project_path}\n"
-        f"[bold]Brain:[/bold]   {brain_file}",
+        f"[bold]Brain:[/bold]   {brain_file}\n\n"
+        f"[bold cyan]→ Nächster Schritt:[/bold cyan] /herbert-swarm plan {project_path}",
         title="[bold cyan]🐝 CucumberSwarm[/bold cyan]",
         border_style="cyan",
     ))
@@ -627,12 +628,21 @@ async def _cmd_plan(project: str, spec: str | None = None) -> str:
     brain["phases"] = phases
     await _save_brain(brain, brain_file)
 
-    lines = [f"[bold]Plan created:[/bold] {len(tasks)} tasks across {len(phases)} phases\n"]
+    lines = [f"[bold]Plan erstellt:[/bold] {len(tasks)} Tasks in {len(phases)} Phasen\n"]
     for i, phase_name in enumerate(phases, 1):
         phase_tasks = [t for t in tasks.values() if t["phase"] == i]
         lines.append(f"  Phase {i}: [cyan]{phase_name}[/cyan] ({len(phase_tasks)} tasks)")
 
-    console.print(Panel("\n".join(lines), title="[bold cyan]🐝 CucumberSwarm — Plan[/bold cyan]", border_style="cyan"))
+    next_hint = (
+        f"\n[bold cyan]→ Nächster Schritt:[/bold cyan] /herbert-swarm run {project_path}"
+        if tasks else ""
+    )
+
+    console.print(Panel(
+        "\n".join(lines) + next_hint,
+        title="[bold cyan]🐝 CucumberSwarm — Plan[/bold cyan]",
+        border_style="cyan",
+    ))
     return f"Plan: {len(tasks)} tasks across {len(phases)} phases ({', '.join(phases)})"
 
 
@@ -907,6 +917,66 @@ async def _cmd_brain(project: str | None) -> str:
             f"{len(facts)} facts, phase {brain.get('current_phase',0)}")
 
 
+async def _cmd_welcome() -> str:
+    """Show the complete workflow guide."""
+    guide = """
+[bold cyan]🐝 CucumberSwarm — Workflow Guide[/bold cyan]
+
+Du hast ein Projekt und willst es bauen? Der Swarm hilft dir in 3 Schritten:
+
+[bold]1. [/bold][bold cyan]init[/bold cyan]   → Projekt beim Swarm anmelden
+[bold]2. [/bold][bold cyan]plan[/bold cyan]   → SPEC.md analysieren, Phasen & Tasks erstellen
+[bold]3. [/bold][bold cyan]run[/bold cyan]    → Alle Tasks parallel von Agenten erledigen
+
+[bold]Zusätzliche Commands:[/bold]
+  [dim]status[/dim]   → Fortschritt anzeigen (läuft gerade, was als nächstes)
+  [dim]report[/dim]   → Ergebnisse & erstellte Dateien
+  [dim]brain[/dim]    → Internes Gedächtnis anzeigen
+  [dim]reset[/dim]     → Alles löschen und von vorne anfangen
+
+[bold]Typischer Ablauf:[/bold]
+
+  # Projekt anmelden
+  /herbert-swarm init /pfad/zum/projekt
+
+  # Plan erstellen (einmalig nach init)
+  /herbert-swarm plan /pfad/zum/projekt
+  # → LLM analysiert SPEC.md und erstellt Phasen + Tasks
+
+  # Bauen!
+  /herbert-swarm run /pfad/zum/projekt
+  # → Agenten arbeiten Tasks ab, parallel, bis alles fertig
+
+  # Zwischendurch checken
+  /herbert-swarm status /pfad/zum/projekt
+  /herbert-swarm report /pfad/zum/projekt
+
+[bold]Was passiert in jeder Phase?[/bold]
+
+  [cyan]INFRA[/cyan]       → Docker, Config, Environment-Setup
+  [cyan]DATABASE[/cyan]    → Models, Migrations, Schema
+  [cyan]BACKEND[/cyan]     → API Server, Routes, Business Logic
+  [cyan]FRONTEND[/cyan]    → Pages, Components, Styling
+  [cyan]TESTING[/cyan]     → Tests, CI/CD Pipeline
+
+  Das System erkennt automatisch was dein Projekt braucht.
+
+[bold]Was, wenn etwas schief geht?[/bold]
+
+  # Fehlgeschlagene Tasks erneut versuchen
+  /herbert-swarm run /pfad/zum/projekt retry_failed=true
+
+  # Alles zurücksetzen und neu starten
+  /herbert-swarm reset /pfad/zum/projekt yes=true
+  /herbert-swarm plan /pfad/zum/projekt
+  /herbert-swarm run /pfad/zum/projekt
+
+[dim]Tipp: Starte mit [bold]init[/bold] → [bold]plan[/bold] → [bold]run[/bold]. Die meisten Commands brauchst du nie.[/dim]
+"""
+    console.print(Panel(guide.strip(), border_style="cyan", padding=(1, 1)))
+    return "Workflow guide shown above."
+
+
 async def _cmd_reset(project: str | None, yes: bool = False) -> str:
     brain_file = _brain_file_for(project)
     brain      = await _load_brain(brain_file)
@@ -946,8 +1016,8 @@ class SwarmTool(BaseTool):
         "properties": {
             "command": {
                 "type": "string",
-                "enum": ["init", "plan", "run", "status", "report", "brain", "reset"],
-                "description": "Subcommand to execute",
+                "enum": ["welcome", "init", "plan", "run", "status", "report", "brain", "reset"],
+                "description": "Subcommand to execute. Use 'welcome' first to see the complete workflow guide.",
             },
             "project": {
                 "type": "string",
@@ -998,7 +1068,9 @@ class SwarmTool(BaseTool):
         yes: bool = False,
     ) -> ToolResult:
         try:
-            if command == "init":
+            if command == "welcome":
+                out = await _cmd_welcome()
+            elif command == "init":
                 if not project:
                     return ToolResult(success=False, output="", error="'project' path is required for init")
                 out = await _cmd_init(project, name)
