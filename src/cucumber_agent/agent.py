@@ -369,6 +369,9 @@ class Agent:
         if agent_ctx := session.metadata.get("agent_context"):
             operational_parts.append(f"\n{agent_ctx}")
 
+        if wiki := session.metadata.get("wiki_knowledge"):
+            operational_parts.append(f"\n{wiki}")
+
         if pinned := session.metadata.get("pinned"):
             operational_parts.append(
                 f"\n\n### Gepinnter Kontext (IMMER beachten, höchste Priorität):\n{pinned}"

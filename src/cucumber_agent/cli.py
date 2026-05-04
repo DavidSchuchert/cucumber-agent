@@ -206,6 +206,31 @@ def get_git_behind_count(repo_path: str = "~/.cucumber-agent") -> int | None:
     return None
 
 
+def _load_wiki_key_files(wiki_dir: Path) -> str:
+    """
+    Load key wiki files (Swarm.md, Autopilot.md, README.md) into a
+    single context string so the agent always knows their content.
+    """
+    key_files = ["Swarm.md", "Autopilot.md", "README.md", "Skills.md", "AgentGuide.md"]
+    parts = []
+    for fname in key_files:
+        fpath = wiki_dir / fname
+        if fpath.exists():
+            try:
+                content = fpath.read_text(encoding="utf-8").strip()
+                if content:
+                    parts.append(f"## {wiki_dir.name}/{fname}\n\n{content}")
+            except Exception:
+                pass
+    if not parts:
+        return ""
+    return (
+        "## WICHTIG — Agent Wiki (IMMER wissen!)\n\n"
+        + "\n\n---\n\n".join(parts)
+        + "\n\n[Ende Wiki-Wissen]"
+    )
+
+
 def print_welcome(config: Config) -> None:
     """Print welcome message with personality branding."""
     pers = config.personality
@@ -481,6 +506,11 @@ class CliSession:
             f"Custom Tools: {config_dir}/custom_tools | "
             f"Project Wiki: {wiki_dir}"
         )
+
+        # ── Load key wiki files into context so the agent always knows them ──
+        wiki_content = _load_wiki_key_files(wiki_dir)
+        if wiki_content:
+            self._session.metadata["wiki_knowledge"] = wiki_content
 
         # Long-term Memory: Load recent conversations from logs + latest session summary
         if self._config.memory.enabled:
