@@ -447,10 +447,15 @@ async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -
 
     try:
         current_input = prompt
-        max_steps = 15
+        max_steps = 30
+        import time as _time
         for step in range(max_steps):
+            step_start = _time.monotonic()
             console.print(f"  [dim cyan][{tid}][/dim cyan] [dim]Schritt {step+1}: Denkt nach...[/dim]")
             response = await agent.run_with_tools(session, current_input)
+            step_duration = _time.monotonic() - step_start
+            if step_duration > 60:
+                console.print(f"  [dim cyan][{tid}][/dim cyan] [yellow]  → LLM call dauerte {step_duration:.0f}s[/yellow]")
             if not response.tool_calls:
                 return {"success": True, "output": (response.content or "")[:600]}
             
@@ -487,9 +492,11 @@ async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -
                     )
                 )
             
-            # If the agent used tools, we don't want to inject a user message 
-            # in the next step, as it breaks the tool-call/result sequence for some APIs.
-            current_input = "" 
+            # If the agent used tools, inject a neutral continuation prompt.
+            # This keeps the tool-call/result sequence intact for all providers
+            # while signaling the agent to proceed with the next step.
+            current_input = "[ Weiter mit dem nächsten Schritt — die vorherigen Tools wurden ausgeführt. ]"
+ 
         return {"success": False, "output": "Step limit reached before task completion"}
     except Exception as e:
         logger.exception(f"Exception in swarm task {tid}")
@@ -579,7 +586,7 @@ async def _cmd_plan(project: str, spec: str | None = None) -> str:
 async def _cmd_run(
     project: str,
     parallel: int = 3,
-    timeout: int = 300,
+    timeout: int = 600,
     dry_run: bool = False,
     retry_failed: bool = False,
 ) -> str:
@@ -901,7 +908,7 @@ class SwarmTool(BaseTool):
             },
             "timeout": {
                 "type": "integer",
-                "description": "Per-agent timeout in seconds for 'run' (default: 300)",
+                "description": "Per-agent timeout in seconds for 'run' (default: 600)",
             },
             "dry_run": {
                 "type": "boolean",
@@ -926,7 +933,7 @@ class SwarmTool(BaseTool):
         name: str | None = None,
         spec: str | None = None,
         parallel: int = 3,
-        timeout: int = 300,
+        timeout: int = 600,
         dry_run: bool = False,
         retry_failed: bool = False,
         yes: bool = False,
