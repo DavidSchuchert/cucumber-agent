@@ -372,6 +372,12 @@ class Agent:
         if wiki := session.metadata.get("wiki_knowledge"):
             operational_parts.append(f"\n{wiki}")
 
+        if caps := session.metadata.get("capabilities_context"):
+            operational_parts.append(f"\n### Deine Werkzeuge (Tools):\n{caps}")
+
+        if skills := session.metadata.get("skills_context"):
+            operational_parts.append(f"\n### Deine Spezial-Befehle (Skills):\n{skills}")
+
         if pinned := session.metadata.get("pinned"):
             operational_parts.append(
                 f"\n\n### Gepinnter Kontext (IMMER beachten, höchste Priorität):\n{pinned}"

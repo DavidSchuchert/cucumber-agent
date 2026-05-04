@@ -4,6 +4,7 @@
 from cucumber_agent.tools import (  # noqa: F401
     agent,
     calculator,
+    capabilities,
     create_tool,
     datetime_tool,
     read_file,

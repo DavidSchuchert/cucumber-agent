@@ -31,6 +31,14 @@ class ToolRegistry:
         return list(cls._tools.keys())
 
     @classmethod
+    def get_capabilities_summary(cls) -> list[dict[str, str]]:
+        """Return a list of tool names and their descriptions."""
+        return [
+            {"name": tool.name, "description": tool.description}
+            for tool in cls._tools.values()
+        ]
+
+    @classmethod
     def get_tools_spec(cls, provider: str = "openrouter") -> list[dict]:
         """Get specifications for all registered tools for a specific provider."""
         return [tool.get_spec(provider) for tool in cls._tools.values()]

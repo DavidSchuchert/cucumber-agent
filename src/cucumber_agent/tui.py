@@ -406,6 +406,17 @@ class CucumberTUI:
         self._custom_tool_loader = tools_module.CustomToolLoader()
         self._custom_tool_loader.load_all()
 
+        # Build capabilities context for the agent
+        tools_summary = ToolRegistry.get_capabilities_summary()
+        caps_text = "\n".join([f"- {t['name']}: {t['description']}" for t in tools_summary])
+        self._session.metadata["capabilities_context"] = caps_text
+
+        if self._skill_loader and self._skill_loader.skills:
+            skills_text = "\n".join(
+                [f"- {s.command}: {s.description}" for s in self._skill_loader.skills]
+            )
+            self._session.metadata["skills_context"] = skills_text
+
     # ── Input handling ────────────────────────────────────────────────────
 
     def _on_input(self, buffer) -> bool:

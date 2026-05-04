@@ -506,6 +506,17 @@ class CliSession:
             f"Project Wiki: {config_dir}/wiki"
         )
 
+        # Build capabilities context for the agent
+        tools_summary = ToolRegistry.get_capabilities_summary()
+        caps_text = "\n".join([f"- {t['name']}: {t['description']}" for t in tools_summary])
+        self._session.metadata["capabilities_context"] = caps_text
+
+        if self._skill_loader and self._skill_loader.skills:
+            skills_text = "\n".join(
+                [f"- {s.command}: {s.description}" for s in self._skill_loader.skills]
+            )
+            self._session.metadata["skills_context"] = skills_text
+
         # ── Load key wiki files into context so the agent always knows them ──
         # Wiki lives in the agent home, NOT in the workspace
         wiki_dir = self._config.config_dir / "wiki"
