@@ -4,7 +4,15 @@
 
 set -e
 
-INSTALL_DIR="${HOME}/.cucumber-agent"
+# Detect installation directory:
+# 1. Use the directory where this script is located (go up one level from installer/)
+# 2. Fallback to default ~/.cucumber-agent
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+if [ -d "$SCRIPT_DIR/../.git" ]; then
+    INSTALL_DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
+else
+    INSTALL_DIR="${HOME}/.cucumber-agent"
+fi
 
 echo ""
 echo -e "\033[1;32m           _____\033[0m"

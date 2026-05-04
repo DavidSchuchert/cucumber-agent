@@ -39,7 +39,7 @@ from cucumber_agent.memory import FactsStore, SessionLogger
 from cucumber_agent.session import Message as SessionMessage
 from cucumber_agent.session import Role as SessionRole
 from cucumber_agent.session import Session
-from cucumber_agent.skills import Skill, SkillLoader, SkillRunner
+from cucumber_agent.skills import Skill, SkillLoader, SkillRunner, SkillRouter
 from cucumber_agent.tools.registry import ToolRegistry
 from cucumber_agent.workspace import WorkspaceDetector
 
@@ -482,6 +482,7 @@ class CliSession:
         # Skills & Custom Tools
         self._skill_loader = SkillLoader()
         self._skill_loader.load_all()
+        self._skill_router = SkillRouter(self._skill_loader.skills)
 
         # Import tools
         from cucumber_agent import tools  # noqa: F401
@@ -628,6 +629,15 @@ class CliSession:
 
         try:
             offer_optimization = self._agent.needs_optimization(user_input)
+
+            # ── Skill routing: inject relevant skills ───────────────────
+            matched = self._skill_router.get_matching_skills(user_input)
+            if matched:
+                self._session.metadata["skills_context"] = (
+                    self._skill_router.format_for_system_prompt(matched)
+                )
+            # ──────────────────────────────────────────────────────────
+
             with console.status("  [dim]denkt nach...[/dim]", spinner="dots", spinner_style="dim"):
                 response = await self._agent.run_with_tools(self._session, user_input)
 

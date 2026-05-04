@@ -29,6 +29,7 @@ class Skill:
     timeout: float = 30.0  # Per-step timeout in seconds
     handler: str = ""  # Optional native runner hook for bundled skills
     aliases: list[str] | None = None  # Alternative slash commands, e.g. "/herbert swarm"
+    triggers: list[str] = field(default_factory=list)  # Keywords/patterns that auto-trigger this skill
 
     @property
     def command_key(self) -> str:
@@ -115,6 +116,7 @@ class SkillLoader:
                     timeout=float(data.get("timeout", 30.0)),
                     handler=data.get("handler", ""),
                     aliases=[str(a) for a in data.get("aliases", [])],
+                    triggers=[str(t) for t in data.get("triggers", [])],
                 )
                 self._skills[yaml_file.stem] = skill
                 self._mtimes[yaml_file] = mtime

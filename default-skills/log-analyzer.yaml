@@ -1,152 +1,288 @@
 name: log-analyzer
 command: /logs
-description: Log file analysis — systemd journal, grep/awk patterns, error clustering, real-time tail
-args_hint: "[source] [pattern] — z.B. 'journal nginx error' oder '/var/log/syslog warning'"
-prompt: |
-  Log Analyzer — read, search, and analyze log files and journals.
+description: Log file analysis — systemd journal, grep/awk patterns, error clustering,
+  real-time tail
+args_hint: '[source] [pattern] — z.B. ''journal nginx error'' oder ''/var/log/syslog
+  warning'''
+prompt: 'Log Analyzer — read, search, and analyze log files and journals.
+
 
   ## SOURCES
 
+
   ### systemd Journal
+
   ```bash
+
   # Recent entries
+
   journalctl -n 100
 
+
   # Follow (real-time)
+
   journalctl -f
 
+
   # Filter by unit
+
   journalctl -u nginx -n 50
+
   journalctl -u nginx --since "1 hour ago"
 
+
   # Filter by priority (0=emerg .. 7=debug)
+
   journalctl -p err -n 50          # errors only
+
   journalctl -p warning -n 100
 
+
   # Date range
+
   journalctl --since "2026-05-01" --until "2026-05-02"
 
+
   # All logs for a service (including boot)
+
   journalctl -u nginx -b           # current boot
+
   journalctl -u nginx --list-boots
 
+
   # Export to file
+
   journalctl -u nginx --since "1 day ago" > /tmp/nginx.log
+
   ```
+
 
   ### Plain Log Files
+
   ```bash
+
   tail -f /var/log/syslog          # follow real-time
+
   tail -n 100 /var/log/nginx/access.log  # last 100 lines
 
+
   # Common log locations
+
   /var/log/syslog
+
   /var/log/auth.log                 # authentication (sudo, ssh)
+
   /var/log/nginx/access.log
+
   /var/log/nginx/error.log
+
   /var/log/apache2/access.log
+
   /var/log/apache2/error.log
+
   /var/log/mysql/error.log
+
   ~/.local/share/containers/storage/  # podman logs
+
   ~/Library/Logs/                    # macOS apps
+
   ```
+
 
   ## SEARCH PATTERNS
 
+
   ```bash
+
   # grep basics
+
   grep "ERROR" /var/log/syslog
+
   grep -i "error\|warn\|fail" /var/log/syslog   # case insensitive
+
   grep -v "INFO" /var/log/syslog    # exclude
+
   grep -c "ERROR" /var/log/syslog   # count matches
+
   grep -n "ERROR" /var/log/syslog  # line numbers
 
+
   # Context (lines before/after)
+
   grep -B5 "ERROR" /var/log/syslog   # 5 lines before
+
   grep -A10 "ERROR" /var/log/syslog  # 10 lines after
+
   grep -C3 "ERROR" /var/log/syslog   # 3 lines before + after
 
+
   # Extended grep
+
   grep -E "ERROR|WARN|CRIT" /var/log/syslog
+
   grep -E "^[A-Z]{3} [0-9]{2}" /var/log/syslog  # regex
 
+
   # Multiple files
+
   grep -r "ERROR" /var/log/
 
+
   # awk (structured logs)
-  awk '/ERROR/ {print $1, $2, $NF}' /var/log/syslog
-  awk -F, '{print $NF}' access.log        # last field, comma-separated
-  awk '{sum+=$NF} END {print sum}' access.log  # sum a column
+
+  awk ''/ERROR/ {print $1, $2, $NF}'' /var/log/syslog
+
+  awk -F, ''{print $NF}'' access.log        # last field, comma-separated
+
+  awk ''{sum+=$NF} END {print sum}'' access.log  # sum a column
+
   ```
+
 
   ## ERROR CLUSTERING
 
+
   Find repeated errors:
+
   ```bash
+
   # Count unique error messages
+
   grep -h "ERROR" /var/log/syslog | sort | uniq -c | sort -rn | head -20
 
+
   # Most common IPs in access log
-  awk '{print $1}' access.log | sort | uniq -c | sort -rn | head -10
+
+  awk ''{print $1}'' access.log | sort | uniq -c | sort -rn | head -10
+
 
   # Failed login attempts
-  grep -i "failed" /var/log/auth.log | awk '{print $NF}' | sort | uniq -c | sort -rn | head -10
+
+  grep -i "failed" /var/log/auth.log | awk ''{print $NF}'' | sort | uniq -c | sort
+  -rn | head -10
+
 
   # HTTP status codes
-  awk '{print $NF}' access.log | sort | uniq -c | sort -rn
+
+  awk ''{print $NF}'' access.log | sort | uniq -c | sort -rn
+
   ```
+
 
   ## TIME-BASED ANALYSIS
 
+
   ```bash
+
   # Errors per hour
-  grep "ERROR" /var/log/syslog | awk '{print $1, $2}' | sort | uniq -c
+
+  grep "ERROR" /var/log/syslog | awk ''{print $1, $2}'' | sort | uniq -c
+
 
   # Requests per minute (apache/nginx access log)
-  awk '{print $4}' access.log | cut -d: -f1,2 | sort | uniq -c | sort -rn | head -20
+
+  awk ''{print $4}'' access.log | cut -d: -f1,2 | sort | uniq -c | sort -rn | head
+  -20
+
 
   # Slow requests (nginx by response time)
-  awk '{if($NF ~ /[0-9]+ms/) print $NF, $0}' access.log | sort -rn | head -20
+
+  awk ''{if($NF ~ /[0-9]+ms/) print $NF, $0}'' access.log | sort -rn | head -20
+
   ```
+
 
   ## LOG FORMAT PARSING
 
+
   ```bash
+
   # JSON logs (structured)
-  grep "{" app.log | jq '.level, .message, .timestamp' 2>/dev/null
+
+  grep "{" app.log | jq ''.level, .message, .timestamp'' 2>/dev/null
+
 
   # nginx/apache combined log format:
-  # $remote_addr - $remote_user [$time_local] "$request" $status $body_bytes_sent "$http_referer" "$http_user_agent"
+
+  # $remote_addr - $remote_user [$time_local] "$request" $status $body_bytes_sent
+  "$http_referer" "$http_user_agent"
+
   # Extract status codes
-  awk -F'"' '{print $3}' access.log | awk '{print $1}' | sort | uniq -c | sort -rn
+
+  awk -F''"'' ''{print $3}'' access.log | awk ''{print $1}'' | sort | uniq -c | sort
+  -rn
+
 
   # syslog format:
+
   # $month $day $time $host $program[$pid]: $message
+
   ```
+
 
   ## REAL-TIME MONITORING
 
+
   ```bash
+
   # Live error monitoring
+
   journalctl -f -p err
 
+
   # Live access log
-  tail -f /var/log/nginx/access.log | awk '{print $1, $7, $9}'
+
+  tail -f /var/log/nginx/access.log | awk ''{print $1, $7, $9}''
+
 
   # Watch command output
-  watch -n 5 'journalctl -u nginx -n 5 --no-pager'
+
+  watch -n 5 ''journalctl -u nginx -n 5 --no-pager''
+
   ```
+
 
   ## OUTPUT FORMATTING
 
+
   For error reports, present as:
+
   ```
+
   ## Log Analysis: [source]
+
   **Time range:** [from] — [to]
+
   **Total errors:** N
+
   **Top errors:**
+
   1. [N occurrences] — [error message excerpt]
+
   2. ...
+
   **Anomalies:**
+
   - [unusual pattern]
+
   ```
+
+  '
+triggers:
+- log
+- journalctl
+- systemd journal
+- syslog
+- log file
+- log analysis
+- fehler
+- error log
+- access log
+- nginx log
+- apache log
+- debug log
+- tail
+- grep log
+- log durchsuchen
+- log watching
+- real-time log

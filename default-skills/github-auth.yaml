@@ -1,67 +1,33 @@
 name: github-auth
 command: /ghauth
-description: GitHub authentication — detect gh/git status, set up gh login, manage tokens
-args_hint: "check | login | setup"
-prompt: |
-  GitHub Authentication — check status and set up gh CLI auth.
-
-  ## CHECK AUTH STATUS
-  ```bash
-  gh auth status 2>&1
-  git config --global credential.helper
-  gh --version
-  ```
-
-  ## LOGIN (if gh not authenticated)
-  ```bash
-  gh auth login
-  # Then follow prompts:
-  # - HTTPS or SSH? → HTTPS recommended
-  # - Login with browser or token? → browser easiest
-  ```
-
-  ## MANUAL TOKEN LOGIN
-  ```bash
-  gh auth login --with-token < ~/.cucumber/github_token.txt
-  # or paste token directly
-  gh auth login --with-token
-  ```
-
-  ## STORE TOKEN FILE
-  ```bash
-  gh auth token > ~/.cucumber/github_token.txt
-  chmod 600 ~/.cucumber/github_token.txt
-  ```
-
-  ## LOGOUT
-  ```bash
-  gh auth logout
-  git credential-cache exit  # if using cache helper
-  git config --global --unset credential.helper
-  ```
-
-  ## SSH KEY SETUP
-  ```bash
-  # Check existing keys
-  ls ~/.ssh/
-
-  # Generate new key if needed
-  ssh-keygen -t ed25519 -C "your@email.com" -f ~/.ssh/github_ed25519
-
-  # Add to ssh-agent
-  ssh-add ~/.ssh/github_ed25519
-
-  # Add to GitHub:
-  # Settings → SSH and GPG keys → New SSH key
-  # Paste: cat ~/.ssh/github_ed25519.pub
-
-  # Test:
-  ssh -T git@github.com
-  ```
-
-  ## AUTH FOR SCRIPTS (token from file)
-  ```bash
-  if [ -f ~/.cucumber/github_token.txt ]; then
-    export GITHUB_TOKEN=$(cat ~/.cucumber/github_token.txt)
-  fi
-  ```
+description: GitHub authentication — detect gh/git status, set up gh login, manage
+  tokens
+args_hint: check | login | setup
+prompt: "GitHub Authentication — check status and set up gh CLI auth.\n\n## CHECK\
+  \ AUTH STATUS\n```bash\ngh auth status 2>&1\ngit config --global credential.helper\n\
+  gh --version\n```\n\n## LOGIN (if gh not authenticated)\n```bash\ngh auth login\n\
+  # Then follow prompts:\n# - HTTPS or SSH? → HTTPS recommended\n# - Login with browser\
+  \ or token? → browser easiest\n```\n\n## MANUAL TOKEN LOGIN\n```bash\ngh auth login\
+  \ --with-token < ~/.cucumber/github_token.txt\n# or paste token directly\ngh auth\
+  \ login --with-token\n```\n\n## STORE TOKEN FILE\n```bash\ngh auth token > ~/.cucumber/github_token.txt\n\
+  chmod 600 ~/.cucumber/github_token.txt\n```\n\n## LOGOUT\n```bash\ngh auth logout\n\
+  git credential-cache exit  # if using cache helper\ngit config --global --unset\
+  \ credential.helper\n```\n\n## SSH KEY SETUP\n```bash\n# Check existing keys\nls\
+  \ ~/.ssh/\n\n# Generate new key if needed\nssh-keygen -t ed25519 -C \"your@email.com\"\
+  \ -f ~/.ssh/github_ed25519\n\n# Add to ssh-agent\nssh-add ~/.ssh/github_ed25519\n\
+  \n# Add to GitHub:\n# Settings → SSH and GPG keys → New SSH key\n# Paste: cat ~/.ssh/github_ed25519.pub\n\
+  \n# Test:\nssh -T git@github.com\n```\n\n## AUTH FOR SCRIPTS (token from file)\n\
+  ```bash\nif [ -f ~/.cucumber/github_token.txt ]; then\n  export GITHUB_TOKEN=$(cat\
+  \ ~/.cucumber/github_token.txt)\nfi\n```\n"
+triggers:
+- github auth
+- gh auth
+- authenticate
+- login
+- token
+- ssh key
+- github login
+- github token
+- credential
+- github credentials
+- auth status

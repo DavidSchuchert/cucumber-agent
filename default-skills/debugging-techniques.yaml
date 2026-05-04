@@ -1,99 +1,51 @@
 name: debugging-techniques
 command: /debug
-description: Debug Python and Node.js — pdb, debugpy, node --inspect, stack traces, common errors
-args_hint: "[language] [problem] — z.B. 'python pandas error' oder 'node express 500'"
-prompt: |
-  Debugging techniques for Python and Node.js.
-
-  ## PYTHON DEBUGGING
-
-  ### Quick debug in script
-  ```python
-  import pdb; pdb.set_trace()
-  ```
-
-  ### Modern breakpoint (Python 3.7+)
-  ```python
-  breakpoint()  # calls pdb by default
-  ```
-
-  ### pdb commands
-  ```
-  n = next line
-  s = step into function
-  c = continue
-  l = list source
-  p variable = print variable
-  pp variable = pretty print
-  w = where (stack trace)
-  u = up (caller)
-  d = down
-  ```
-
-  ### Remote/container debugging with debugpy
-  ```bash
-  # In the Python script (server side):
-  import debugpy
-  debugpy.listen(("0.0.0.0", 5678))  # port
-  breakpoint()  # or debugpy.breakpoint()
-  ```
-
-  ### Post-mortem (after crash)
-  ```bash
-  python -m pdb script.py
-  # or after exception:
-  import traceback; traceback.print_exc()
-  ```
-
-  ### Common Python errors
-  ```
-  ModuleNotFoundError → pip install MODULE
-  SyntaxError → check line number + parentheses/brackets
-  IndentationError → mixed tabs/spaces — set editor to spaces
-  NameError → variable not defined, check spelling
-  TypeError → wrong argument type, check function signature
-  ImportError → circular import or missing __init__.py
-  ```
-
-  ### Debug Flask/FastAPI
-  ```bash
-  export FLASK_DEBUG=1
-  python -m flask --app app.py run --debug
-  ```
-
-  ## NODE.JS DEBUGGING
-
-  ### Inspect mode
-  ```bash
-  node --inspect index.js
-  # then open chrome://inspect in Chrome
-  ```
-
-  ### Inspect with breakpoint
-  ```bash
-  node --inspect-brk index.js
-  ```
-
-  ### Common Node errors
-  ```
-  Cannot find module 'X' → npm install X
-  ECONNREFUSED → server not running or wrong port
-  TypeError: Cannot read property 'X' of undefined → check if object exists before accessing
-  ```
-
-  ### Express error handling
-  ```javascript
-  app.use((err, req, res, next) => {
-    console.error(err.stack);
-    res.status(500).send('Something broke!');
-  });
-  ```
-
-  ## SYSTEMATIC DEBUGGING
-
-  1. Get the exact error message + stack trace
-  2. Find the line it crashes on
-  3. Check all variables at that line (add print)
-  4. Is the data what you expect? If not → trace back
-  5. Fix the root cause, not the symptom
-  6. Verify fix with same input
+description: Debug Python and Node.js — pdb, debugpy, node --inspect, stack traces,
+  common errors
+args_hint: '[language] [problem] — z.B. ''python pandas error'' oder ''node express
+  500'''
+prompt: "Debugging techniques for Python and Node.js.\n\n## PYTHON DEBUGGING\n\n###\
+  \ Quick debug in script\n```python\nimport pdb; pdb.set_trace()\n```\n\n### Modern\
+  \ breakpoint (Python 3.7+)\n```python\nbreakpoint()  # calls pdb by default\n```\n\
+  \n### pdb commands\n```\nn = next line\ns = step into function\nc = continue\nl\
+  \ = list source\np variable = print variable\npp variable = pretty print\nw = where\
+  \ (stack trace)\nu = up (caller)\nd = down\n```\n\n### Remote/container debugging\
+  \ with debugpy\n```bash\n# In the Python script (server side):\nimport debugpy\n\
+  debugpy.listen((\"0.0.0.0\", 5678))  # port\nbreakpoint()  # or debugpy.breakpoint()\n\
+  ```\n\n### Post-mortem (after crash)\n```bash\npython -m pdb script.py\n# or after\
+  \ exception:\nimport traceback; traceback.print_exc()\n```\n\n### Common Python\
+  \ errors\n```\nModuleNotFoundError → pip install MODULE\nSyntaxError → check line\
+  \ number + parentheses/brackets\nIndentationError → mixed tabs/spaces — set editor\
+  \ to spaces\nNameError → variable not defined, check spelling\nTypeError → wrong\
+  \ argument type, check function signature\nImportError → circular import or missing\
+  \ __init__.py\n```\n\n### Debug Flask/FastAPI\n```bash\nexport FLASK_DEBUG=1\npython\
+  \ -m flask --app app.py run --debug\n```\n\n## NODE.JS DEBUGGING\n\n### Inspect\
+  \ mode\n```bash\nnode --inspect index.js\n# then open chrome://inspect in Chrome\n\
+  ```\n\n### Inspect with breakpoint\n```bash\nnode --inspect-brk index.js\n```\n\n\
+  ### Common Node errors\n```\nCannot find module 'X' → npm install X\nECONNREFUSED\
+  \ → server not running or wrong port\nTypeError: Cannot read property 'X' of undefined\
+  \ → check if object exists before accessing\n```\n\n### Express error handling\n\
+  ```javascript\napp.use((err, req, res, next) => {\n  console.error(err.stack);\n\
+  \  res.status(500).send('Something broke!');\n});\n```\n\n## SYSTEMATIC DEBUGGING\n\
+  \n1. Get the exact error message + stack trace\n2. Find the line it crashes on\n\
+  3. Check all variables at that line (add print)\n4. Is the data what you expect?\
+  \ If not → trace back\n5. Fix the root cause, not the symptom\n6. Verify fix with\
+  \ same input\n"
+triggers:
+- debug
+- breakpoint
+- pdb
+- debugpy
+- stack trace
+- error
+- fehler
+- debugger
+- traceback
+- exception
+- bug
+- inspect
+- debugging
+- post-mortem
+- crash
+- problem
+- fehlersuche

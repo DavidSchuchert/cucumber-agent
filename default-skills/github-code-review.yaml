@@ -1,66 +1,130 @@
 name: github-code-review
 command: /review
-description: Review code — local diffs check, PR review with gh, inline comments, approve/request-changes
-args_hint: "[PR-Nummer] oder 'local' für ungestellte Änderungen"
-prompt: |
-  GitHub Code Review — review local changes or pull requests.
+description: Review code — local diffs check, PR review with gh, inline comments,
+  approve/request-changes
+args_hint: '[PR-Nummer] oder ''local'' für ungestellte Änderungen'
+prompt: 'GitHub Code Review — review local changes or pull requests.
+
 
   ## Two modes:
 
+
   ### Mode A: Local changes (pre-push)
+
   ```bash
+
   # Get overview
+
   git diff main...HEAD --stat
+
   git log main..HEAD --oneline
 
+
   # Full diff
+
   git diff main...HEAD
 
+
   # Check for common issues
+
   git diff main...HEAD | grep -n "print(\|console\.log\|TODO\|FIXME\|HACK\|password\|secret\|api_key"
+
   git diff main...HEAD | grep -n "<<<<<<\|>>>>>>\|======"
 
+
   # Present findings in format:
+
   # ## Code Review Summary
+
   # ### Critical
+
   # ### Warnings
+
   # ### Suggestions
+
   # ### Looks Good
+
   ```
+
 
   ### Mode B: PR review
+
   ```bash
+
   # PR metadata
+
   gh pr view N
 
+
   # Changed files
+
   gh pr diff N --name-only
 
+
   # Checkout PR locally for full review
+
   gh pr checkout N
 
+
   # Run tests / linter if available
+
   ruff check . 2>&1 | head -20
 
+
   # Review checklist:
+
   # - Correctness (logic, edge cases, error handling)
+
   # - Security (no secrets, SQL injection, XSS)
+
   # - Code quality (naming, complexity, DRY)
+
   # - Testing (coverage, edge cases)
+
   # - Performance (N+1, blocking ops)
+
   # - Documentation
 
+
   # Post review to GitHub
+
   gh pr review N --approve --body "LGTM!"
+
   # or:
+
   gh pr review N --request-changes --body "See inline comments."
+
   ```
 
+
   ## /review [N] — Full PR review workflow:
+
   1. gh pr view N — get context
+
   2. gh pr diff N --name-only — see what changed
+
   3. gh pr checkout N — checkout for detailed review
+
   4. git diff main...HEAD — read the diff
+
   5. Apply checklist
+
   6. Post review with gh pr review
+
   7. git checkout main — clean up
+
+  '
+triggers:
+- github pr review
+- pull request review
+- code review
+- pr kommentieren
+- review pr
+- pr begutachten
+- pr check
+- github code review
+- pr feedback
+- lgtm
+- request changes
+- inline comment
+- pr approval

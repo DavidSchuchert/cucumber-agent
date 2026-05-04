@@ -1,247 +1,97 @@
 name: cicd-pipeline
 command: /cicd
-description: CI/CD pipelines — GitHub Actions and GitLab CI authoring, debugging, troubleshooting, and optimization
-args_hint: "[repo] [action] — z.B. 'myrepo logs' oder 'frontend debug workflow'"
-prompt: |
-  CI/CD Pipeline Skill — build, debug, and optimize GitHub Actions and GitLab CI pipelines.
-
-  ## Your tools
-  - shell/terminal for CLI tools (gh, glab, git)
-  - web_search for error lookups and docs
-  - browser_navigate for GitHub/GitLab UI
-  - file editing tools for workflow files
-
-  ## WORKFLOW DETECTION
-  Identify what the user needs:
-  - "create [workflow]" → scaffolding a new pipeline
-  - "debug [repo]" / "fix [repo]" → troubleshoot failing pipeline
-  - "logs [repo] [workflow]" → fetch pipeline run logs
-  - "status [repo]" → check recent runs
-  - "optimize [repo]" → suggest improvements
-  - "trigger [repo]" → manually run a workflow
-  - "secret [repo]" → manage secrets
-
-  ## GITHUB ACTIONS
-
-  ### File locations
-  - Workflows: `.github/workflows/*.yml`
-  - reusable workflows: `.github/workflows/` with `workflow_call`
-  - secrets: GitHub repo Settings → Secrets and variables → Actions
-
-  ### CLI Reference
-  ```bash
-  # Workflow runs
-  gh run list --repo OWNER/REPO --limit 20
-  gh run view RUN_ID --repo OWNER/REPO
-  gh run view RUN_ID --log --repo OWNER/REPO          # Full logs
-  gh run watch RUN_ID --repo OWNER/REPO               # Follow live
-  gh run cancel RUN_ID --repo OWNER/REPO
-  gh run rerun RUN_ID --repo OWNER/REPO
-
-  # Workflow management
-  gh workflow list --repo OWNER/REPO
-  gh workflow view WORKFLOW --repo OWNER/REPO
-  gh workflow enable/disable WORKFLOW --repo OWNER/REPO
-  gh workflow run WORKFLOW --repo OWNER/REPO --field name=value
-
-  # Secrets
-  gh secret list --repo OWNER/REPO
-  gh secret set NAME --body VALUE --repo OWNER/REPO
-  gh secret delete NAME --repo OWNER/REPO
-
-  # Artifacts
-  gh run download RUN_ID --repo OWNER/REPO --name ARTIFACT
-  ```
-
-  ### Common Workflow Patterns
-
-  **Basic test + build:**
-  ```yaml
-  name: Test & Build
-  on: [push, pull_request]
-  jobs:
-    test:
-      runs-on: ubuntu-latest
-      steps:
-        - uses: actions/checkout@v4
-        - uses: actions/setup-python@v5
-          with:
-            python-version: '3.12'
-        - run: pip install uv
-        - run: uv run pytest
-        - run: uv run pytest --cov
-        - uses: actions/upload-artifact@v4
-          with:
-            name: coverage
-            path: coverage.xml
-  ```
-
-  **Matrix builds:**
-  ```yaml
-  strategy:
-    matrix:
-      python: [ '3.10', '3.11', '3.12' ]
-      os: [ ubuntu-latest, macos-latest ]
-  ```
-
-  **Caching:**
-  ```yaml
-  - uses: actions/cache@v4
-    with:
-      path: ~/.cache/pip
-      key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-  ```
-
-  **Docker build + push:**
-  ```yaml
-  - uses: docker/build-push-action@v5
-    with:
-      push: ${{ github.ref == 'refs/heads/main' }}
-      tags: ghcr.io/OWNER/IMAGE:latest
-      cache-from: type=gha
-      cache-to: type=gha,mode=max
-  ```
-
-  ### Debugging GitHub Actions
-  ```bash
-  # Get full error log
-  gh run view RUN_ID --log --repo OWNER/REPO 2>&1 | head -200
-
-  # Enable debug logging (set secret ACTIONS_RUNNER_DEBUG=true)
-
-  # Check runner status
-  gh api repos/OWNER/REPO/actions/runners
-
-  # Check workflow syntax
-  cat .github/workflows/*.yml | python3 -c "import yaml, sys; yaml.safe_load(sys.stdin)"
-
-  # Common issues:
-  # - "秒見つかりません" / "not found" → action version wrong or typo
-  # - "No such file or directory" → path case sensitive on Linux runner
-  # - "Permission denied" → permissions not granted in workflow
-  # - "Resource not found" → secret/variable doesn't exist
-  # - Timeout → increase timeout-minutes or optimize step
-  ```
-
-  ## GITLAB CI
-
-  ### File location
-  - `.gitlab-ci.yml` in repo root
-
-  ### CLI Reference (glab)
-  ```bash
-  # Pipeline runs
-  glab pipeline list --repo OWNER/REPO
-  glab pipeline view PIPELINE_ID --repo OWNER/REPO
-  glab pipeline trace PIPELINE_ID --repo OWNER/REPO  # Full logs
-
-  # Jobs
-  glab job view JOB_ID --repo OWNER/REPO
-  glab job trace JOB_ID --repo OWNER/REPO
-
-  # Trigger
-  glab pipeline create --repo OWNER/REPO --ref main
-  glab pipeline retry PIPELINE_ID --repo OWNER/REPO
-
-  # Variables / Secrets
-  glab variable list --repo OWNER/REPO
-  glab variable set NAME --value VALUE --repo OWNER/REPO
-  glab variable delete NAME --repo OWNER/REPO
-  ```
-
-  ### Common GitLab CI Patterns
-
-  ```yaml
-  stages:
-    - test
-    - build
-    - deploy
-
-  variables:
-    IMAGE: registry.gitlab.com/owner/image
-
-  .test_template:
-    stage: test
-    image: python:3.12
-    before_script:
-      - pip install uv
-    script:
-      - uv run pytest
-    artifacts:
-      reports:
-        junit: junit.xml
-
-  test:unit:
-    extends: .test_template
-  test:integration:
-    extends: .test_template
-    variables:
-      INTEGRATION: true
-
-  build:
-    stage: build
-    script:
-      - docker build -t $IMAGE:$CI_COMMIT_SHA .
-      - docker push $IMAGE:$CI_COMMIT_SHA
-    only:
-      - main
-
-  deploy:
-    stage: deploy
-    script:
-      - docker pull $IMAGE:$CI_COMMIT_SHA
-      - docker-compose up -d
-    environment:
-      name: production
-    only:
-      - main
-  ```
-
-  ### Debugging GitLab CI
-  ```bash
-  # Validate syntax locally
-  gitlab-ci-lint validate .gitlab-ci.yml
-
-  # Full trace
-  glab pipeline trace PIPELINE_ID --repo OWNER/REPO
-
-  # Common issues:
-  # - "Jobs failed" → check .gitlab-ci.yml syntax
-  # - "No such image" → Docker image not found or private registry auth missing
-  # - "Runner is not running" → check GitLab runner registration
-  # - "Script errors" → check script: commands for shell errors
-  # - "Stuck pending" → no runner available for tags/constraints
-  ```
-
-  ## DEBUGGING WORKFLOW
-
-  Step 1: Get the error
-  - GitHub: `gh run view ID --log`
-  - GitLab: `glab pipeline trace ID`
-
-  Step 2: Identify the failing step
-  - Parse output for error keywords: ERROR, FAILED, Traceback, exit code
-
-  Step 3: Check common causes
-  - Syntax errors in workflow YAML
-  - Missing secrets/variables
-  - Wrong action version
-  - Permission issues
-  - Network / rate limiting
-  - Timeout
-
-  Step 4: Fix and retry
-  - GitHub: `gh run rerun ID`
-  - GitLab: `glab pipeline retry ID`
-
-  Step 5: If not obvious → web search the error message
-
-  ## OUTPUT FORMAT
-  ```
-  ## CI/CD: [action] on [repo]
-  **Status:** success / error / unknown
-  **Failing step:** (if applicable)
-  **Error:** (error message)
-  **Likely cause:** ...
-  **Fix:** ...
-  ```
+description: CI/CD pipelines — GitHub Actions and GitLab CI authoring, debugging,
+  troubleshooting, and optimization
+args_hint: '[repo] [action] — z.B. ''myrepo logs'' oder ''frontend debug workflow'''
+prompt: "CI/CD Pipeline Skill — build, debug, and optimize GitHub Actions and GitLab\
+  \ CI pipelines.\n\n## Your tools\n- shell/terminal for CLI tools (gh, glab, git)\n\
+  - web_search for error lookups and docs\n- browser_navigate for GitHub/GitLab UI\n\
+  - file editing tools for workflow files\n\n## WORKFLOW DETECTION\nIdentify what\
+  \ the user needs:\n- \"create [workflow]\" → scaffolding a new pipeline\n- \"debug\
+  \ [repo]\" / \"fix [repo]\" → troubleshoot failing pipeline\n- \"logs [repo] [workflow]\"\
+  \ → fetch pipeline run logs\n- \"status [repo]\" → check recent runs\n- \"optimize\
+  \ [repo]\" → suggest improvements\n- \"trigger [repo]\" → manually run a workflow\n\
+  - \"secret [repo]\" → manage secrets\n\n## GITHUB ACTIONS\n\n### File locations\n\
+  - Workflows: `.github/workflows/*.yml`\n- reusable workflows: `.github/workflows/`\
+  \ with `workflow_call`\n- secrets: GitHub repo Settings → Secrets and variables\
+  \ → Actions\n\n### CLI Reference\n```bash\n# Workflow runs\ngh run list --repo OWNER/REPO\
+  \ --limit 20\ngh run view RUN_ID --repo OWNER/REPO\ngh run view RUN_ID --log --repo\
+  \ OWNER/REPO          # Full logs\ngh run watch RUN_ID --repo OWNER/REPO       \
+  \        # Follow live\ngh run cancel RUN_ID --repo OWNER/REPO\ngh run rerun RUN_ID\
+  \ --repo OWNER/REPO\n\n# Workflow management\ngh workflow list --repo OWNER/REPO\n\
+  gh workflow view WORKFLOW --repo OWNER/REPO\ngh workflow enable/disable WORKFLOW\
+  \ --repo OWNER/REPO\ngh workflow run WORKFLOW --repo OWNER/REPO --field name=value\n\
+  \n# Secrets\ngh secret list --repo OWNER/REPO\ngh secret set NAME --body VALUE --repo\
+  \ OWNER/REPO\ngh secret delete NAME --repo OWNER/REPO\n\n# Artifacts\ngh run download\
+  \ RUN_ID --repo OWNER/REPO --name ARTIFACT\n```\n\n### Common Workflow Patterns\n\
+  \n**Basic test + build:**\n```yaml\nname: Test & Build\non: [push, pull_request]\n\
+  jobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n\
+  \      - uses: actions/setup-python@v5\n        with:\n          python-version:\
+  \ '3.12'\n      - run: pip install uv\n      - run: uv run pytest\n      - run:\
+  \ uv run pytest --cov\n      - uses: actions/upload-artifact@v4\n        with:\n\
+  \          name: coverage\n          path: coverage.xml\n```\n\n**Matrix builds:**\n\
+  ```yaml\nstrategy:\n  matrix:\n    python: [ '3.10', '3.11', '3.12' ]\n    os: [\
+  \ ubuntu-latest, macos-latest ]\n```\n\n**Caching:**\n```yaml\n- uses: actions/cache@v4\n\
+  \  with:\n    path: ~/.cache/pip\n    key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt')\
+  \ }}\n```\n\n**Docker build + push:**\n```yaml\n- uses: docker/build-push-action@v5\n\
+  \  with:\n    push: ${{ github.ref == 'refs/heads/main' }}\n    tags: ghcr.io/OWNER/IMAGE:latest\n\
+  \    cache-from: type=gha\n    cache-to: type=gha,mode=max\n```\n\n### Debugging\
+  \ GitHub Actions\n```bash\n# Get full error log\ngh run view RUN_ID --log --repo\
+  \ OWNER/REPO 2>&1 | head -200\n\n# Enable debug logging (set secret ACTIONS_RUNNER_DEBUG=true)\n\
+  \n# Check runner status\ngh api repos/OWNER/REPO/actions/runners\n\n# Check workflow\
+  \ syntax\ncat .github/workflows/*.yml | python3 -c \"import yaml, sys; yaml.safe_load(sys.stdin)\"\
+  \n\n# Common issues:\n# - \"秒見つかりません\" / \"not found\" → action version wrong or\
+  \ typo\n# - \"No such file or directory\" → path case sensitive on Linux runner\n\
+  # - \"Permission denied\" → permissions not granted in workflow\n# - \"Resource\
+  \ not found\" → secret/variable doesn't exist\n# - Timeout → increase timeout-minutes\
+  \ or optimize step\n```\n\n## GITLAB CI\n\n### File location\n- `.gitlab-ci.yml`\
+  \ in repo root\n\n### CLI Reference (glab)\n```bash\n# Pipeline runs\nglab pipeline\
+  \ list --repo OWNER/REPO\nglab pipeline view PIPELINE_ID --repo OWNER/REPO\nglab\
+  \ pipeline trace PIPELINE_ID --repo OWNER/REPO  # Full logs\n\n# Jobs\nglab job\
+  \ view JOB_ID --repo OWNER/REPO\nglab job trace JOB_ID --repo OWNER/REPO\n\n# Trigger\n\
+  glab pipeline create --repo OWNER/REPO --ref main\nglab pipeline retry PIPELINE_ID\
+  \ --repo OWNER/REPO\n\n# Variables / Secrets\nglab variable list --repo OWNER/REPO\n\
+  glab variable set NAME --value VALUE --repo OWNER/REPO\nglab variable delete NAME\
+  \ --repo OWNER/REPO\n```\n\n### Common GitLab CI Patterns\n\n```yaml\nstages:\n\
+  \  - test\n  - build\n  - deploy\n\nvariables:\n  IMAGE: registry.gitlab.com/owner/image\n\
+  \n.test_template:\n  stage: test\n  image: python:3.12\n  before_script:\n    -\
+  \ pip install uv\n  script:\n    - uv run pytest\n  artifacts:\n    reports:\n \
+  \     junit: junit.xml\n\ntest:unit:\n  extends: .test_template\ntest:integration:\n\
+  \  extends: .test_template\n  variables:\n    INTEGRATION: true\n\nbuild:\n  stage:\
+  \ build\n  script:\n    - docker build -t $IMAGE:$CI_COMMIT_SHA .\n    - docker\
+  \ push $IMAGE:$CI_COMMIT_SHA\n  only:\n    - main\n\ndeploy:\n  stage: deploy\n\
+  \  script:\n    - docker pull $IMAGE:$CI_COMMIT_SHA\n    - docker-compose up -d\n\
+  \  environment:\n    name: production\n  only:\n    - main\n```\n\n### Debugging\
+  \ GitLab CI\n```bash\n# Validate syntax locally\ngitlab-ci-lint validate .gitlab-ci.yml\n\
+  \n# Full trace\nglab pipeline trace PIPELINE_ID --repo OWNER/REPO\n\n# Common issues:\n\
+  # - \"Jobs failed\" → check .gitlab-ci.yml syntax\n# - \"No such image\" → Docker\
+  \ image not found or private registry auth missing\n# - \"Runner is not running\"\
+  \ → check GitLab runner registration\n# - \"Script errors\" → check script: commands\
+  \ for shell errors\n# - \"Stuck pending\" → no runner available for tags/constraints\n\
+  ```\n\n## DEBUGGING WORKFLOW\n\nStep 1: Get the error\n- GitHub: `gh run view ID\
+  \ --log`\n- GitLab: `glab pipeline trace ID`\n\nStep 2: Identify the failing step\n\
+  - Parse output for error keywords: ERROR, FAILED, Traceback, exit code\n\nStep 3:\
+  \ Check common causes\n- Syntax errors in workflow YAML\n- Missing secrets/variables\n\
+  - Wrong action version\n- Permission issues\n- Network / rate limiting\n- Timeout\n\
+  \nStep 4: Fix and retry\n- GitHub: `gh run rerun ID`\n- GitLab: `glab pipeline retry\
+  \ ID`\n\nStep 5: If not obvious → web search the error message\n\n## OUTPUT FORMAT\n\
+  ```\n## CI/CD: [action] on [repo]\n**Status:** success / error / unknown\n**Failing\
+  \ step:** (if applicable)\n**Error:** (error message)\n**Likely cause:** ...\n**Fix:**\
+  \ ...\n```\n"
+triggers:
+- github actions
+- gitlab ci
+- ci cd
+- pipeline
+- deploy
+- build
+- workflow
+- github-actions
+- github workflow
+- cd pipeline
+- continuous deployment
+- continuous integration
+- release
+- automated build
+- automated deploy
+- runner

@@ -1,167 +1,314 @@
 name: database-helper
 command: /db
-description: SQLite, PostgreSQL, MySQL — query, dump, restore, schema inspection, migrations
-args_hint: "[dbtype] [action] — z.B. 'sqlite db.sqlite query' oder 'postgres backup mydb'"
-prompt: |
-  Database Helper — SQLite, PostgreSQL, MySQL operations.
+description: SQLite, PostgreSQL, MySQL — query, dump, restore, schema inspection,
+  migrations
+args_hint: '[dbtype] [action] — z.B. ''sqlite db.sqlite query'' oder ''postgres backup
+  mydb'''
+prompt: 'Database Helper — SQLite, PostgreSQL, MySQL operations.
+
 
   ## DETECT DB TYPE
+
   ```bash
+
   # Check file type
+
   file mydb.sqlite     # SQLite
+
   file mydb.dump       # Postgres dump
 
+
   # Try connecting
+
   sqlite3 mydb.sqlite ".tables"           # SQLite
+
   psql -U user -d mydb -c "\\dt"         # Postgres
+
   mysql -u user -p mydb -e "SHOW TABLES"  # MySQL
+
   ```
+
 
   ## SQLITE
 
+
   ```bash
+
   # Connect
+
   sqlite3 mydb.sqlite
 
+
   # Tables
+
   .tables
+
   .schema
+
   .schema TABLE_NAME
 
+
   # Query
+
   sqlite3 mydb.sqlite "SELECT * FROM users LIMIT 5;"
 
+
   # Export CSV
+
   sqlite3 -header -csv mydb.sqlite "SELECT * FROM users;" > users.csv
 
+
   # Import CSV
+
   sqlite3 mydb.sqlite ".import users.csv users"
 
+
   # Backup
+
   sqlite3 mydb.sqlite ".backup mydb_backup.sqlite"
 
+
   # Vacuum (compact)
+
   sqlite3 mydb.sqlite "VACUUM;"
 
+
   # Index info
-  sqlite3 mydb.sqlite "SELECT * FROM sqlite_master WHERE type='index';"
+
+  sqlite3 mydb.sqlite "SELECT * FROM sqlite_master WHERE type=''index'';"
+
 
   # Quit
+
   .quit
+
   ```
+
 
   ## POSTGRES
 
+
   ```bash
+
   # Connect
+
   psql -U user -d mydb
+
   psql -U user -d mydb -h localhost -p 5432
 
+
   # With password
+
   PGPASSWORD=secret psql -U user -d mydb
 
+
   # Common commands
+
   \\dt           # list tables
+
   \\d TABLE      # describe table
+
   \\l            # list databases
+
   \\du           # list users
+
   \\x            # expanded output (for wide rows)
+
   \\h SQL        # help on SQL command
+
   \\?            # psql commands
 
+
   # Query
+
   SELECT * FROM users LIMIT 5;
 
+
   # Export CSV
-  \\COPY users TO '/tmp/users.csv' CSV HEADER;
+
+  \\COPY users TO ''/tmp/users.csv'' CSV HEADER;
+
 
   # Import CSV
-  \\COPY users FROM '/tmp/users.csv' CSV HEADER;
+
+  \\COPY users FROM ''/tmp/users.csv'' CSV HEADER;
+
 
   # Backup (dump)
+
   pg_dump -U user -d mydb > mydb_dump.sql
+
   pg_dump -U user -d mydb -Fc > mydb_dump.dump   # custom format (compressed)
+
   pg_dump -U user -d mydb --schema-only           # schema only
 
+
   # Restore
+
   psql -U user -d mydb < mydb_dump.sql
+
   pg_restore -U user -d mydb mydb_dump.dump       # custom format
 
+
   # Create DB
+
   createdb -U user newdb
 
+
   # Kill connections
-  SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'mydb';
+
+  SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ''mydb'';
+
   ```
+
 
   ## MYSQL
 
+
   ```bash
+
   # Connect
+
   mysql -u user -p mydb
+
   mysql -u user -p mydb -h localhost
 
+
   # Common commands
+
   SHOW DATABASES;
+
   USE mydb;
+
   SHOW TABLES;
+
   DESCRIBE TABLE;
+
   SHOW INDEX FROM TABLE;
 
+
   # Query
+
   SELECT * FROM users LIMIT 5\\G;
 
+
   # Export CSV
-  SELECT * FROM users INTO OUTFILE '/tmp/users.csv' FIELDS TERMINATED BY ',' ENCLOSED BY '"' LINES TERMINATED BY '\n';
+
+  SELECT * FROM users INTO OUTFILE ''/tmp/users.csv'' FIELDS TERMINATED BY '','' ENCLOSED
+  BY ''"'' LINES TERMINATED BY ''\n'';
+
 
   # Backup
+
   mysqldump -u user -p mydb > mydb_dump.sql
+
   mysqldump -u user -p mydb --all-databases > all_dbs.sql
+
   mysqldump -u user -p mydb --no-data            # schema only
 
+
   # Restore
+
   mysql -u user -p mydb < mydb_dump.sql
 
+
   # Create DB
+
   CREATE DATABASE newdb;
+
   ```
+
 
   ## SCHEMA INSPECTION (all DBs)
+
   ```bash
+
   # Tables + columns
+
   # SQLite
+
   sqlite3 db.sqlite "PRAGMA table_info(users);"
 
+
   # Postgres
+
   psql -U user -d mydb -c "\\d users"
 
+
   # MySQL
+
   mysql -u user -p mydb -e "DESCRIBE users;"
 
+
   # Row counts
+
   # SQLite
+
   sqlite3 db.sqlite "SELECT COUNT(*) FROM users;"
+
   # Postgres
+
   psql -U user -d mydb -c "SELECT COUNT(*) FROM users;"
+
   # MySQL
+
   mysql -u user -p mydb -e "SELECT COUNT(*) FROM users;"
+
   ```
+
 
   ## TROUBLESHOOTING
+
   ```bash
+
   # DB locked (SQLite)
+
   # → another process is using it, or previous crash left lock
+
   rm db.sqlite-journal   # if sure no other process
 
+
   # Postgres: "Connection refused"
+
   # → check if postgres is running
+
   sudo systemctl status postgresql
 
+
   # Postgres: "too many connections"
+
   # → reduce connection pool or check idle connections
-  SELECT * FROM pg_stat_activity WHERE state = 'idle';
+
+  SELECT * FROM pg_stat_activity WHERE state = ''idle'';
+
 
   # MySQL: "Access denied"
+
   # → check user permissions
-  SHOW GRANTS FOR 'user'@'localhost';
+
+  SHOW GRANTS FOR ''user''@''localhost'';
+
   ```
+
+  '
+triggers:
+- database
+- sql
+- sqlite
+- postgres
+- postgresql
+- mysql
+- query
+- db
+- datenbank
+- tabelle
+- schema
+- dump
+- backup database
+- restore database
+- sql query
+- select
+- migration
+- redis
+- mariadb
+- sql server
