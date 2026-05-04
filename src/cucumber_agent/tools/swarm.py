@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
@@ -62,96 +61,117 @@ async def _save_brain(brain: dict, brain_file: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def _scan_project_files(project_path: Path) -> set[str]:
-    """Scan project files while skipping common large or irrelevant directories."""
-    found: set[str] = set()
-    skip_dirs = {
-        ".git", ".svn", ".hg", "node_modules", "vendor", ".venv", "venv",
-        "__pycache__", ".pytest_cache", ".ruff_cache", "dist", "build",
-        ".next", ".nuxt", ".svelte-kit", "target"
-    }
+    """Scan project root and return a set of lowercase filenames/dirnames."""
+    files: set[str] = set()
     try:
-        # Limit depth to avoid infinite recursion or scanning massive trees
-        for entry in project_path.rglob("*"):
-            # Check if any part of the path is in skip_dirs
-            if any(part in skip_dirs for part in entry.parts):
-                continue
-            if entry.is_file():
-                found.add(entry.name.lower())
-            if len(found) > 1000:  # Safety limit
-                break
+        for entry in project_path.iterdir():
+            files.add(entry.name.lower())
+            if entry.is_dir():
+                for sub in entry.iterdir():
+                    files.add(f"{entry.name.lower()}/{sub.name.lower()}")
+    except PermissionError:
+        pass
+    return files
+
+
+async def _llm_detect_phases(spec_content: str, project_path: Path) -> dict[str, bool]:
+    """Ask the LLM which phases this project needs based on the SPEC.md content."""
+    import json
+    from cucumber_agent.agent import Agent
+    from cucumber_agent.config import Config
+    from cucumber_agent.session import Session
+
+    config = Config.load()
+    agent = Agent.from_config(config)
+    session = Session(id="swarm-plan", model=config.agent.model)
+
+    # Truncate spec to avoid huge prompts (first 4000 chars usually enough)
+    spec_preview = spec_content[:4000] if spec_content else ""
+
+    prompt = f"""Du bist ein erfahrener Software-Architect. Analysiere die folgende SPEC.md und entscheide welche Phasen das Projekt braucht.
+
+Antworte AUSSCHLIESSLICH mit einem JSON-Objekt (kein Markdown, kein Text drumherum):
+{{
+  "has_infra": true/false,
+  "has_database": true/false,
+  "has_backend": true/false,
+  "has_frontend": true/false,
+  "has_testing": true/false,
+  "phase_order": ["INFRA", "DATABASE", "BACKEND", "FRONTEND", "TESTING"],
+  "plain_html_js": true/false,
+  "reasoning": "kurze Begründung"
+}}
+
+Regeln:
+- has_infra: Docker/Kubernetes/Containerization gewünscht?
+- has_database: Echte Datenbank (Postgres, MySQL, MongoDB, etc.) — NICHT localStorage!
+- has_backend: API-Server, Backend-Framework (Express, FastAPI, Django, etc.)
+- has_frontend: Frontend-Framework ODER Plain HTML/CSS/JS
+- has_testing: Unittests, Integrationstests, CI/CD?
+- plain_html_js: Reines HTML/CSS/JS ohne Framework?
+- phase_order: Nur die Phasen die wirklich gebraucht werden, in der richtigen Reihenfolge
+
+Wenn das Projekt nur Plain HTML/CSS/JS ist (kein Backend, keine DB):
+  - phase_order: ["FRONTEND"]
+  - plain_html_js: true
+
+SPEC.md:
+{spec_preview}
+
+[{project_path.name}] Projekt-Dateien: {sorted(_scan_project_files(project_path))}"""
+
+    try:
+        response = await agent.run_with_tools(session, prompt)
+        # Extract JSON from response
+        content = response.content.strip() if response.content else "{}"
+        # Try to find JSON block
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0]
+        elif "```" in content:
+            content = content.split("```")[1].split("```")[0]
+        result = json.loads(content.strip())
+
+        console.print(f"  [dim]🤖 LLM: {result.get('reasoning', '')[:120]}[/dim]")
+
+        return {
+            "has_infra": bool(result.get("has_infra", False)),
+            "has_database": bool(result.get("has_database", False)),
+            "has_backend": bool(result.get("has_backend", False)),
+            "has_frontend": bool(result.get("has_frontend", True)),
+            "has_testing": bool(result.get("has_testing", False)),
+            "phase_order": result.get("phase_order", ["FRONTEND"]),
+            "plain_html_js": bool(result.get("plain_html_js", False)),
+        }
     except Exception as e:
-        logger.warning(f"Error scanning project files in {project_path}: {e}")
-    return found
-
-
-def _add_phase(phase_names: list[str], phase_map: dict[str, int], name: str) -> int:
-    phase = len(phase_names) + 1
-    phase_names.append(name)
-    phase_map[name] = phase
-    return phase
-
-
-def _has_keyword(text: str, keywords: list[str]) -> bool:
-    for keyword in keywords:
-        pattern = rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])"
-        if re.search(pattern, text):
-            return True
-    return False
-
-
-def _analyze_and_plan(spec_content: str, project_path: Path) -> tuple[dict, list[str]]:
-    lower = spec_content.lower()
-
-    backend_kw = [
-        "fastapi", "flask", "django", "starlette", "express", "aiohttp", "tornado",
-        "uvicorn", "gunicorn", "node.js", "nodejs", "bun",
-    ]
-    frontend_kw = [
-        "react", "next.js", "nextjs", "nuxt", "sveltekit", "svelte", "vue", "vite",
-        "angular", "astro", "remix", "tailwind", "html/css",
-    ]
-    database_kw = [
-        "postgresql", "postgres", "mysql", "mariadb", "mongodb", "mongo", "redis",
-        "sqlite", "cassandra", "elasticsearch", "prisma", "alembic",
-    ]
-    docker_kw = ["docker", "container", "compose", "kubernetes", "k8s", "helm"]
-    ci_kw = [
-        "github actions", "github-actions", "ci", "pytest-cov", "coverage", "test",
-        "pytest", "unittest", "jest", "vitest", "cypress",
-    ]
-
-    has_backend  = _has_keyword(lower, backend_kw)
-    has_frontend = _has_keyword(lower, frontend_kw)
-    has_database = _has_keyword(lower, database_kw)
-    has_docker   = _has_keyword(lower, docker_kw)
-    has_ci       = _has_keyword(lower, ci_kw)
-
-    if not spec_content.strip() or len(spec_content.strip()) < 80:
+        console.print(f"  [yellow]⚠ LLM phase detection failed: {e} — falling back to file scan[/yellow]")
+        # Fallback: scan files
         files = _scan_project_files(project_path)
-        if not has_backend:
-            has_backend = bool(
-                files
-                & {"requirements.txt", "pyproject.toml", "setup.py", "main.py", "app.py",
-                   "server.py", "manage.py"}
-            )
-        if not has_frontend:
-            has_frontend = bool(
-                files
-                & {"package.json", "vite.config.ts", "vite.config.js", "next.config.js",
-                   "nuxt.config.ts", "svelte.config.js", "tailwind.config.js",
-                   "tailwind.config.ts"}
-            )
-            # Also detect plain HTML/CSS/JS projects
-            if not has_frontend:
-                has_frontend = bool(
-                    {"index.html", "style.css", "script.js", "styles.css", "main.js"}
-                    & {f.lower() for f in files}
-                )
-        if not has_docker:
-            has_docker = bool(files & {"dockerfile", "docker-compose.yml", "docker-compose.yaml"})
-        if not has_ci:
-            has_ci = bool(files & {"pytest.ini", "conftest.py"})
+        return {
+            "has_infra": bool(files & {"dockerfile", "docker-compose.yml", "docker-compose.yaml", "kubernetes"}),
+            "has_database": bool(files & {"requirements.txt", "pyproject.toml", "package.json"}),
+            "has_backend": bool(files & {"requirements.txt", "pyproject.toml", "package.json"}),
+            "has_frontend": True,
+            "has_testing": bool(files & {"pytest.ini", "conftest.py", "jest.config.js", "vitest.config.ts"}),
+            "phase_order": ["FRONTEND"],
+            "plain_html_js": True,
+        }
 
+async def _analyze_and_plan(spec_content: str, project_path: Path) -> tuple[dict, list[str]]:
+    """Analyze SPEC.md and create a task plan. Uses LLM for intelligent phase detection."""
+    # Step 1: LLM-powered phase detection
+    phase_info = await _llm_detect_phases(spec_content, project_path)
+    has_infra = phase_info["has_infra"]
+    has_database = phase_info["has_database"]
+    has_backend = phase_info["has_backend"]
+    has_frontend = phase_info["has_frontend"]
+    has_testing = phase_info["has_testing"]
+    plain_html_js = phase_info["plain_html_js"]
+
+    # Step 2: Build phase list from LLM response
+    phase_names: list[str] = phase_info["phase_order"]
+    phase_map: dict[str, int] = {name: i + 1 for i, name in enumerate(phase_names)}
+
+    # Step 3: Create tasks based on detected phases
     tasks: dict = {}
     task_id = 1
 
@@ -178,49 +198,13 @@ def _analyze_and_plan(spec_content: str, project_path: Path) -> tuple[dict, list
             "created_by": "planner",
         }
 
-    phase_names: list[str] = []
-    phase_map: dict[str, int] = {}
-
-    if has_docker or has_backend:
-        _add_phase(phase_names, phase_map, "INFRA")
-    if has_database:
-        _add_phase(phase_names, phase_map, "DATABASE")
-    if has_backend:
-        _add_phase(phase_names, phase_map, "BACKEND_CORE")
-        _add_phase(phase_names, phase_map, "BACKEND_API")
-    if has_frontend:
-        _add_phase(phase_names, phase_map, "FRONTEND")
-    if has_ci:
-        _add_phase(phase_names, phase_map, "TESTING")
-
-    # If no phases at all (pure static site), default to FRONTEND
-    if not phase_names:
-        _add_phase(phase_names, phase_map, "FRONTEND")
-
-    infra_files: list[str] = []
-    if has_docker:
-        infra_files += [
-            "docker/docker-compose.yml",
-            "docker/docker-compose.dev.yml",
-            "docker/backend/Dockerfile",
-            "docker/frontend/Dockerfile",
-            "docker/.env.example",
-        ]
-    if has_backend:
-        infra_files += ["backend/requirements.txt", "backend/config.py"]
-    if has_frontend:
-        infra_files += [
-            "frontend/package.json",
-            "frontend/vite.config.ts",
-            "frontend/tailwind.config.js",
-        ]
-
+    # INFRA phase
     infra_id: str | None = None
-    if infra_files and "INFRA" in phase_map:
+    if has_infra and "INFRA" in phase_map:
         t = make_task(
             "Create infrastructure and configuration files",
             "coder",
-            infra_files,
+            ["docker/docker-compose.yml", "docker/.env.example"],
             [],
             phase_map["INFRA"],
             1,
@@ -228,101 +212,80 @@ def _analyze_and_plan(spec_content: str, project_path: Path) -> tuple[dict, list
         infra_id = t["id"]
         tasks[infra_id] = t
 
+    # DATABASE phase
     db_model_id: str | None = None
     if has_database and "DATABASE" in phase_map:
         t = make_task(
             "Create database models and migration scripts",
             "coder",
             ["backend/core/database.py", "backend/models/__init__.py", "alembic/env.py"],
-            [infra_id],
+            [infra_id] if infra_id else [],
             phase_map["DATABASE"],
             2,
         )
         db_model_id = t["id"]
         tasks[db_model_id] = t
 
-    core_task_ids: list[str] = []
-    if has_backend and "BACKEND_CORE" in phase_map:
-        core_deps = [infra_id, db_model_id]
-        if not has_database:
-            t = make_task(
-                "Create database connection layer",
-                "coder",
-                ["backend/core/database.py", "backend/models/base.py"],
-                core_deps,
-                phase_map["BACKEND_CORE"],
-                2,
-            )
-        else:
-            t = make_task(
-                "Create core services: business logic and helpers",
-                "coder",
-                ["backend/core/service.py", "backend/core/utils.py"],
-                core_deps,
-                phase_map["BACKEND_CORE"],
-                2,
-            )
-        core_task_ids.append(t["id"])
-        tasks[t["id"]] = t
-
-    api_id: str | None = None
-    if has_backend and "BACKEND_API" in phase_map:
+    # BACKEND phases (BACKEND_CORE + BACKEND_API as single BACKEND)
+    backend_id: str | None = None
+    if has_backend and "BACKEND" in phase_map:
         t = make_task(
-            "Create API endpoints",
+            "Create backend API server and business logic",
             "coder",
-            ["backend/api/routes.py", "backend/main.py"],
-            core_task_ids,
-            phase_map["BACKEND_API"],
+            ["backend/server.py", "backend/routes/api.py", "backend/core/service.py"],
+            [infra_id, db_model_id] if infra_id or db_model_id else [],
+            phase_map["BACKEND"],
             3,
         )
-        api_id = t["id"]
-        tasks[api_id] = t
+        backend_id = t["id"]
+        tasks[backend_id] = t
 
-    fe_task_ids: list[str] = []
+    # FRONTEND phase
     if has_frontend and "FRONTEND" in phase_map:
-        fe_deps = [d for d in [infra_id, api_id] if d]
-        if has_backend:
+        fe_deps = [d for d in [infra_id, backend_id] if d]
+        if plain_html_js:
+            # Plain HTML/CSS/JS project
+            fe_files = ["index.html", "css/style.css", "js/app.js"]
+        else:
             # Framework project
             fe_files = [
                 "frontend/src/pages/index.tsx", "frontend/src/App.tsx",
                 "frontend/src/components/Layout.tsx", "frontend/src/components/Card.tsx",
             ]
-        else:
-            # Plain HTML/CSS/JS project
-            fe_files = ["index.html", "styles/main.css", "script.js"]
         t = make_task(
-            "Create main pages",
+            "Create main pages and UI components",
             "coder",
             fe_files[:2],
             fe_deps,
             phase_map["FRONTEND"],
             4,
         )
-        t2 = make_task(
-            "Create UI components",
-            "coder",
-            fe_files[2:],
-            fe_deps,
-            phase_map["FRONTEND"],
-            4,
-        )
-        fe_task_ids += [t["id"], t2["id"]]
         tasks[t["id"]] = t
-        tasks[t2["id"]] = t2
+        if len(fe_files) > 2:
+            t2 = make_task(
+                "Create additional UI components",
+                "coder",
+                fe_files[2:],
+                fe_deps,
+                phase_map["FRONTEND"],
+                4,
+            )
+            tasks[t2["id"]] = t2
 
-    if has_ci and "TESTING" in phase_map and (api_id or fe_task_ids or core_task_ids):
+    # TESTING phase
+    if has_testing and "TESTING" in phase_map and tasks:
         t = make_task(
-            "Create tests for API and core services",
+            "Create tests and CI/CD pipeline",
             "reviewer",
-            ["tests/test_api.py", "tests/conftest.py"],
-            [api_id] + fe_task_ids,
+            ["tests/test_api.py", "tests/conftest.py", ".github/workflows/ci.yml"],
+            list(tasks.keys()),
             phase_map["TESTING"],
             5,
         )
         tasks[t["id"]] = t
 
-    if not tasks and spec_content.strip():
-        phase_names = ["IMPLEMENTATION"]
+    # Fallback: if no tasks created, create a generic implementation task
+    if not tasks:
         t = make_task(
             "Implement the project requirements described in SPEC.md",
             "coder",
@@ -332,6 +295,8 @@ def _analyze_and_plan(spec_content: str, project_path: Path) -> tuple[dict, list
             1,
         )
         tasks[t["id"]] = t
+        phase_names = ["IMPLEMENTATION"]
+        phase_map = {"IMPLEMENTATION": 1}
 
     return tasks, phase_names
 
@@ -657,7 +622,7 @@ async def _cmd_plan(project: str, spec: str | None = None) -> str:
         spec_content = ""
         console.print(f"[yellow]No spec file at {spec_path} — scanning project files[/yellow]")
 
-    tasks, phases = _analyze_and_plan(spec_content, project_path)
+    tasks, phases = await _analyze_and_plan(spec_content, project_path)
     brain["tasks"]  = tasks
     brain["phases"] = phases
     await _save_brain(brain, brain_file)
