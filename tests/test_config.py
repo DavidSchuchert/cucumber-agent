@@ -93,6 +93,23 @@ def test_env_cucumber_provider_overrides(tmp_path, monkeypatch):
     assert cfg.agent.provider == "deepseek"
 
 
+def test_preferences_notify_sound_loads_from_yaml(tmp_path):
+    """preferences.notify_sound should be configurable."""
+    cfg_dir = _make_minimal_config_dir(tmp_path)
+    _write_yaml(
+        cfg_dir / "config.yaml",
+        {
+            "agent": {"provider": "openrouter", "model": "openai/gpt-4o-mini"},
+            "providers": {"openrouter": {"api_key": "test-key"}},
+            "preferences": {"notify_sound": False},
+        },
+    )
+
+    cfg = Config.load(config_dir=cfg_dir)
+
+    assert cfg.preferences.notify_sound is False
+
+
 def test_system_prompt_uses_cucumber_install_dir_for_wiki(tmp_path, monkeypatch):
     """Project self-awareness should follow the configured installation directory."""
     install_dir = tmp_path / "install"

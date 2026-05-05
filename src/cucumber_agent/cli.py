@@ -38,6 +38,7 @@ from cucumber_agent.autopilot import (
 from cucumber_agent.config import Config
 from cucumber_agent.logging_config import get_logger, setup_logging
 from cucumber_agent.memory import FactsStore, SessionLogger
+from cucumber_agent.notifications import play_agent_message_sound
 from cucumber_agent.session import Message as SessionMessage
 from cucumber_agent.session import Role as SessionRole
 from cucumber_agent.session import Session
@@ -1314,6 +1315,7 @@ class CliSession:
                 padding=(1, 2),
             )
             console.print(panel)
+            play_agent_message_sound(self._config.preferences.notify_sound)
 
             # Show context usage
             current_messages = self._agent._build_messages(self._session)

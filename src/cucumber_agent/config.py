@@ -209,6 +209,7 @@ class PreferencesConfig:
     can_code: bool = True
     can_remember: bool = True
     smart_retry: bool = True  # Auto-retry safe commands on path errors
+    notify_sound: bool = True  # Play a short sound when an agent message arrives
 
 
 @dataclass
@@ -350,6 +351,7 @@ class Config:
             can_code=pref_data.get("can_code", True),
             can_remember=pref_data.get("can_remember", True),
             smart_retry=pref_data.get("smart_retry", True),
+            notify_sound=pref_data.get("notify_sound", True),
         )
 
         # Load context
@@ -558,6 +560,7 @@ class Config:
                 "can_code": self.preferences.can_code,
                 "can_remember": self.preferences.can_remember,
                 "smart_retry": self.preferences.smart_retry,
+                "notify_sound": self.preferences.notify_sound,
             },
             "context": {
                 "max_tokens": self.context.max_tokens,

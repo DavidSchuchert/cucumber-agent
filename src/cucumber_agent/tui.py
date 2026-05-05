@@ -33,6 +33,7 @@ from cucumber_agent.agent import Agent
 
 # ─── Cucumber ───────────────────────────────────────────────────────────────
 from cucumber_agent.config import Config
+from cucumber_agent.notifications import play_agent_message_sound
 from cucumber_agent.tools import ToolRegistry
 
 # ─── Colors ─────────────────────────────────────────────────────────────────
@@ -524,6 +525,7 @@ class CucumberTUI:
                 if clean.strip():
                     self.history.add_assistant(clean)
                     self._refresh_output()
+                    play_agent_message_sound(self.config.preferences.notify_sound)
 
             if response.tool_calls:
                 for tc in response.tool_calls:
