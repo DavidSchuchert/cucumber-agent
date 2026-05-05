@@ -16,6 +16,8 @@ from cucumber_agent.cli import (
     _get_install_dir,
     _read_doc_excerpt,
     _resolve_skill_invocation,
+    get_git_behind_count,
+    get_git_short_revision,
 )
 from cucumber_agent.config import Config
 from cucumber_agent.skills import SkillLoader
@@ -129,6 +131,41 @@ def test_get_install_dir_respects_env(tmp_path, monkeypatch):
     monkeypatch.setenv("CUCUMBER_INSTALL_DIR", str(tmp_path))
 
     assert _get_install_dir() == str(tmp_path.resolve())
+
+
+def test_get_git_behind_count_reads_left_side_as_behind(tmp_path, monkeypatch):
+    (tmp_path / ".git").mkdir()
+
+    calls: list[list[str]] = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+
+        class Result:
+            returncode = 0
+            stdout = "2\t0\n"
+
+        return Result()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert get_git_behind_count(str(tmp_path)) == 2
+    assert calls[-1] == ["git", "rev-list", "--count", "--left-right", "@{upstream}...HEAD"]
+
+
+def test_get_git_short_revision(tmp_path, monkeypatch):
+    (tmp_path / ".git").mkdir()
+
+    def fake_run(args, **kwargs):
+        class Result:
+            returncode = 0
+            stdout = "abc1234\n"
+
+        return Result()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert get_git_short_revision(str(tmp_path)) == "abc1234"
 
 
 def test_docs_topic_map_and_excerpt(tmp_path, monkeypatch):

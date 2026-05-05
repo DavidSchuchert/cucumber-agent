@@ -256,8 +256,32 @@ def get_git_behind_count(repo_path: str | None = None) -> int | None:
             timeout=5,
         )
         if result.returncode == 0:
-            ahead, behind = result.stdout.strip().split()
+            # For "@{upstream}...HEAD", the left count is upstream-only commits.
+            # That is exactly how many commits the local installation is behind.
+            behind, _ahead = result.stdout.strip().split()
             return int(behind)
+    except Exception:
+        pass
+    return None
+
+
+def get_git_short_revision(repo_path: str | None = None) -> str | None:
+    """Return the current short git revision for the installation repo."""
+    import subprocess
+
+    try:
+        expanded = repo_path or _get_install_dir()
+        if not os.path.exists(os.path.join(expanded, ".git")):
+            return None
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=expanded,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
     except Exception:
         pass
     return None
@@ -332,15 +356,18 @@ def print_welcome(config: Config) -> None:
         f"[dim]Modell:[/dim] [bold cyan]{agent_cfg.model}[/bold cyan]"
     )
 
-    # Git behind notice
-    behind = get_git_behind_count()
+    # Git behind notice for the actual installation checkout.
+    install_dir = _get_install_dir()
+    revision = get_git_short_revision(install_dir)
+    revision_label = f" [dim]({revision})[/dim]" if revision else ""
+    behind = get_git_behind_count(install_dir)
     if behind is not None and behind > 0:
         console.print(
-            f"\n  [yellow]⚠️  {behind} Commit(s) hinter origin/main — "
+            f"\n  [yellow]⚠️  Installation{revision_label} ist {behind} Commit(s) hinter origin/main — "
             f"[bold]/update[/bold] zum Aktualisieren[/yellow]"
         )
     elif behind is not None and behind == 0:
-        console.print("\n  [dim]✔  Auf Stand mit origin/main[/dim]")
+        console.print(f"\n  [dim]✔  Installation{revision_label} auf Stand mit origin/main[/dim]")
     # if None: git not available or not a repo — stay silent
 
     console.print(
@@ -1585,6 +1612,18 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                             timeout=60,
                         )
                         if res.returncode == 0:
+                            install = _subprocess.run(
+                                ["uv", "tool", "install", "-e", ".", "--force"],
+                                cwd=install_dir,
+                                capture_output=True,
+                                text=True,
+                                timeout=120,
+                            )
+                            if install.returncode != 0:
+                                console.print(
+                                    f"  [red]✘ Reinstall fehlgeschlagen: {install.stderr or install.stdout}[/red]\n"
+                                )
+                                return
                             console.print(
                                 "  [green]✔ Aktualisiert! Starte Cucumber neu für die Änderungen.[/green]\n"
                             )
