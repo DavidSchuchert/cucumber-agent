@@ -20,6 +20,24 @@ if TYPE_CHECKING:
     from cucumber_agent.session import ContentBlock
 
 
+_RETRY_STATUSES = {429, 529, 500, 502, 503}
+
+
+def _retry_delay(attempt: int) -> int:
+    """Return exponential backoff delay for a zero-based attempt."""
+    return 2**attempt
+
+
+def _print_retry_notice(reason: str, attempt: int, max_retries: int, wait_time: int) -> None:
+    """Show visible retry progress for provider throttling/transient errors."""
+    console.print(
+        "[yellow]"
+        f"↻ MiniMax Retry {attempt + 1}/{max_retries} nach {reason} — "
+        f"warte {wait_time}s..."
+        "[/yellow]"
+    )
+
+
 @ProviderRegistry.register("minimax")
 class MiniMaxProvider(BaseProvider):
     """Provider for MiniMax API using OpenAI compatibility layer."""
@@ -78,10 +96,16 @@ class MiniMaxProvider(BaseProvider):
                     json=body,
                 )
 
-                # Handle 529 or 429 with retry
-                if response.status_code in (429, 529):
-                    wait_time = 2**attempt
+                # Handle retryable provider statuses before raising.
+                if response.status_code in _RETRY_STATUSES:
+                    wait_time = _retry_delay(attempt)
                     if attempt < max_retries - 1:
+                        _print_retry_notice(
+                            f"HTTP {response.status_code}",
+                            attempt,
+                            max_retries,
+                            wait_time,
+                        )
                         await asyncio.sleep(wait_time)
                         continue
                     else:
@@ -104,19 +128,18 @@ class MiniMaxProvider(BaseProvider):
                 # Determine if we should retry (only for transient errors)
                 is_transient = isinstance(e, httpx.TimeoutException)
                 if isinstance(e, httpx.HTTPStatusError):
-                    is_transient = (
-                        e.response.status_code in (429, 529) or e.response.status_code >= 500
-                    )
+                    is_transient = e.response.status_code in _RETRY_STATUSES
 
                 if is_transient and attempt < max_retries - 1:
-                    wait_time = 2**attempt
+                    wait_time = _retry_delay(attempt)
                     if isinstance(e, httpx.TimeoutException):
-                        console.print(
-                            f"[yellow]MiniMax Timeout (Versuch {attempt + 1}/{max_retries}): {e}[/yellow]"
-                        )
+                        _print_retry_notice("Timeout", attempt, max_retries, wait_time)
                     else:
-                        console.print(
-                            f"[yellow]MiniMax API Fehler {e.response.status_code} (Versuch {attempt + 1}/{max_retries})[/yellow]"
+                        _print_retry_notice(
+                            f"HTTP {e.response.status_code}",
+                            attempt,
+                            max_retries,
+                            wait_time,
                         )
                     await asyncio.sleep(wait_time)
                     continue
@@ -144,8 +167,15 @@ class MiniMaxProvider(BaseProvider):
                 async with self._client.stream(
                     "POST", f"{self._base_url}/chat/completions", json=body
                 ) as resp:
-                    if resp.status_code in (429, 529) and attempt < max_retries - 1:
-                        await asyncio.sleep(2**attempt)
+                    if resp.status_code in _RETRY_STATUSES and attempt < max_retries - 1:
+                        wait_time = _retry_delay(attempt)
+                        _print_retry_notice(
+                            f"HTTP {resp.status_code}",
+                            attempt,
+                            max_retries,
+                            wait_time,
+                        )
+                        await asyncio.sleep(wait_time)
                         continue
                     resp.raise_for_status()
                     async for line in resp.aiter_lines():
@@ -168,21 +198,20 @@ class MiniMaxProvider(BaseProvider):
                 # Determine if we should retry (only for transient errors)
                 is_transient = isinstance(e, httpx.TimeoutException)
                 if isinstance(e, httpx.HTTPStatusError):
-                    is_transient = (
-                        e.response.status_code in (429, 529) or e.response.status_code >= 500
-                    )
+                    is_transient = e.response.status_code in _RETRY_STATUSES
 
                 if not is_transient or attempt >= max_retries - 1:
                     raise
 
-                wait_time = 2**attempt
+                wait_time = _retry_delay(attempt)
                 if isinstance(e, httpx.TimeoutException):
-                    console.print(
-                        f"[yellow]MiniMax Stream Timeout (Versuch {attempt + 1}/{max_retries})[/yellow]"
-                    )
+                    _print_retry_notice("Stream Timeout", attempt, max_retries, wait_time)
                 else:
-                    console.print(
-                        f"[yellow]MiniMax Stream API Fehler {e.response.status_code} (Versuch {attempt + 1}/{max_retries})[/yellow]"
+                    _print_retry_notice(
+                        f"Stream HTTP {e.response.status_code}",
+                        attempt,
+                        max_retries,
+                        wait_time,
                     )
                 await asyncio.sleep(wait_time)
 

@@ -9,6 +9,7 @@ import pytest
 
 from cucumber_agent.provider import BaseProvider, ModelResponse, ProviderRegistry
 from cucumber_agent.providers.deepseek import DeepSeekProvider
+from cucumber_agent.providers.minimax import MiniMaxProvider
 from cucumber_agent.providers.ollama import OllamaProvider
 from cucumber_agent.providers.openrouter import OpenRouterProvider
 from cucumber_agent.session import Message, Role
@@ -137,6 +138,32 @@ async def test_openrouter_retries_on_429():
 
     assert result.content == "Retry OK"
     assert mock_client.post.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_minimax_retries_visibly_on_429():
+    """MiniMaxProvider prints retry progress for rate limits."""
+    rate_limited = _fake_response(429)
+    success = _fake_response(200, _default_chat_response("MiniMax retry OK"))
+    success.text = '{"choices":[{"message":{"content":"MiniMax retry OK"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5}}'
+
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(side_effect=[rate_limited, success])
+    mock_client.aclose = AsyncMock()
+
+    with (
+        patch("cucumber_agent.providers.minimax.httpx.AsyncClient", return_value=mock_client),
+        patch("cucumber_agent.providers.minimax.asyncio.sleep", new_callable=AsyncMock) as sleep,
+        patch("cucumber_agent.providers.minimax.console.print") as print_mock,
+    ):
+        provider = MiniMaxProvider(api_key="test-key")
+        result = await provider.complete(_make_messages(), "MiniMax-M2.7", max_retries=3)
+
+    assert result.content == "MiniMax retry OK"
+    assert mock_client.post.call_count == 2
+    sleep.assert_awaited_once_with(1)
+    assert "Retry 1/3" in str(print_mock.call_args_list[0])
+    assert "HTTP 429" in str(print_mock.call_args_list[0])
 
 
 # ---------------------------------------------------------------------------
