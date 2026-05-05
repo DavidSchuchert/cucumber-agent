@@ -4,6 +4,42 @@ All notable changes to CucumberAgent are documented here.
 
 ---
 
+## [Unreleased] — 2026-05-05
+
+### Added
+- **Memory & Identity Contract** — Every model call now includes an explicit contract that protects the immutable personality, persistent facts, pinned context and durable summaries from accidental loss during long sessions or compression.
+- **Persistent facts fallback** — The agent now reloads facts directly from the configured `FactsStore` when building prompts, so stored memories still appear even if live session metadata is missing.
+- **Beginner-friendly UX commands** — Added top-level and REPL helpers such as `doctor`, `quickstart`, `what-now`, `tips`, `examples`, `docs`, `shortcuts` and `spec-template`.
+- **`/docs memory` topic** — The CLI can now show the new Memory & Personality wiki page directly from the chat or terminal.
+- **Installer regression tests** — Added coverage for safer installer/update behavior.
+- **Memory regression tests** — Added tests for the identity contract, persistent facts injection, pinned context, summaries and TUI compression.
+- **New wiki page: `wiki/Memory.md`** — Documents the memory guarantee, file locations, commands and developer-facing implementation points.
+
+### Changed
+- **Herbert Swarm planning** — Swarm planning is now AI-generated from `SPEC.md` and project inventory instead of keyword-based stack guessing. CucumberAgent validates and normalizes the provider's JSON plan.
+- **README overhaul** — Reworked the README into a user-first quickstart with Memory-Garantie, Herbert Swarm explanation, important commands and development checks.
+- **Wiki refresh** — Updated Architecture, CLI, Configuration, Providers, AgentGuide, Swarm and the wiki index to match the current UX and memory behavior.
+- **Installer and updater hardening** — Install/update/uninstall scripts were made safer and more idempotent. The updater refuses dirty installation checkouts and uses fast-forward updates instead of destructive resets.
+- **Provider registration** — MiniMax, OpenRouter, DeepSeek and Ollama setup paths are now aligned between wizard, config and provider registry.
+- **Provider cache behavior** — Provider instances are recreated when constructor kwargs change, avoiding stale API key/base URL/model reuse.
+- **TUI compression** — TUI summaries now append to existing summaries instead of replacing them.
+
+### Fixed
+- **Memory loss risk in prompt building** — Active facts, pins and historical summaries are now explicitly preserved in built messages.
+- **Documentation lookup** — Wiki paths now resolve more reliably across local development, installed checkouts and custom install directories.
+- **Installer provider mismatch** — The setup wizard no longer offers providers that are not registered in code.
+- **Unsafe update behavior** — The updater no longer uses `git reset --hard`.
+
+### Verified
+- `uv run ruff check`
+- `uv run ruff format --check`
+- `uv run pyright`
+- `uv run pytest` (`269 passed`)
+- `uv run cucumber docs memory`
+- `uv run cucumber doctor`
+
+---
+
 ## [Unreleased] — 2026-05-03
 
 ### Added
