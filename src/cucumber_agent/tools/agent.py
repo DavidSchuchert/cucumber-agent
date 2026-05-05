@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 
 from prompt_toolkit import prompt as ptk_prompt
 from prompt_toolkit.formatted_text import HTML
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -20,6 +22,8 @@ console = Console()
 
 # Max characters of tool output to keep in session context (prevents blowup)
 MAX_TOOL_OUTPUT_CHARS = 3000
+MAX_PROGRESS_NOTE_CHARS = 220
+MAX_RESULT_PREVIEW_CHARS = 700
 
 # Session-level auto-approve flag — set to True by the main CLI when
 # _auto_approve_session is enabled so sub-agents skip approval prompts too.
@@ -50,6 +54,53 @@ def _format_args_display(args: dict) -> str:
             display_val = display_val[:120] + "…"
         lines.append(f"  [cyan]{key}:[/cyan] {display_val}")
     return "\n".join(lines)
+
+
+def _compact_text(text: str, max_chars: int) -> str:
+    """Collapse whitespace and shorten a string for terminal status display."""
+    compact = re.sub(r"\s+", " ", text).strip()
+    if len(compact) <= max_chars:
+        return compact
+    return compact[: max_chars - 1].rstrip() + "…"
+
+
+def _public_progress_note(text: str) -> str:
+    """Extract a short public progress note from assistant content."""
+    if not text or not text.strip():
+        return ""
+
+    for line in text.splitlines():
+        clean = line.strip().strip("-*• ")
+        if clean and not clean.startswith("```"):
+            return _compact_text(clean, MAX_PROGRESS_NOTE_CHARS)
+    return ""
+
+
+def _tool_stage_summary(tool_calls: list) -> str:
+    """Summarise the visible action for a step from its tool calls."""
+    if not tool_calls:
+        return "Ergebnis formulieren"
+
+    names = ", ".join(tc.name for tc in tool_calls[:3])
+    if len(tool_calls) > 3:
+        names += f" +{len(tool_calls) - 3}"
+
+    first_args = tool_calls[0].arguments or {}
+    reason = first_args.get("reason") or first_args.get("query") or first_args.get("path") or ""
+    if not reason and tool_calls[0].name == "shell":
+        reason = first_args.get("command", "")
+
+    if reason:
+        return f"{names}: {_compact_text(str(reason), 120)}"
+    return f"{names} vorbereiten"
+
+
+def _result_preview(result: ToolResult) -> str:
+    """Return a short result preview suitable for display."""
+    text = result.output if result.success else result.error or result.output
+    if not text or not text.strip():
+        return ""
+    return _compact_text(text, MAX_RESULT_PREVIEW_CHARS)
 
 
 class AgentTool(BaseTool):
@@ -100,6 +151,9 @@ class AgentTool(BaseTool):
             "WICHTIG: Du bist ein SUB-AGENT. Dir wurde eine komplexe Aufgabe übertragen. "
             "Nutze deine Tools (shell, search), um die Aufgabe Schritt für Schritt zu lösen. "
             "BENUTZE NIEMALS das 'agent' Tool — du bist selbst der Sub-Agent! "
+            "Wenn du ein Tool nutzt, schreibe vorher genau eine kurze öffentliche Fortschrittsnotiz "
+            "(ein Satz, was du als Nächstes prüfst oder baust; keine privaten Gedankengänge). "
+            "Setze im Tool-Argument 'reason' einen konkreten, nutzerverständlichen Zweck. "
             "Wenn du fertig bist, fasse das Ergebnis zusammen und beende deine Arbeit "
             "ohne weitere Tool-Aufrufe. Mache keine Konversation, liefere nur Ergebnisse."
         )
@@ -113,16 +167,10 @@ class AgentTool(BaseTool):
 
         while step < max_steps:
             step += 1
-            # Step progress indicator
-            progress_bar = "█" * step + "░" * (max_steps - step)
-            console.print(
-                f"  [dim magenta]Schritt {step}/{max_steps}[/dim magenta]  "
-                f"[magenta]{progress_bar}[/magenta]"
-            )
 
             try:
                 with console.status(
-                    "  [dim magenta]Sub-Agent denkt nach...[/dim magenta]",
+                    f"  [dim magenta]Sub-Agent plant Schritt {step}...[/dim magenta]",
                     spinner="dots",
                     spinner_style="dim magenta",
                 ):
@@ -141,6 +189,15 @@ class AgentTool(BaseTool):
                     error=f"Sub-agent crashed after {elapsed:.1f}s: {e}",
                 )
 
+            progress_bar = "█" * step + "░" * (max_steps - step)
+            stage = _tool_stage_summary(response.tool_calls or [])
+            console.print(
+                f"  [bold magenta]Schritt {step}[/bold magenta] "
+                f"[dim magenta](max. {max_steps})[/dim magenta]  "
+                f"[magenta]{progress_bar}[/magenta]\n"
+                f"  [magenta]→[/magenta] {escape(stage)}"
+            )
+
             # No tool calls → agent is done
             if not response.tool_calls:
                 final_response = response.content or ""
@@ -156,9 +213,10 @@ class AgentTool(BaseTool):
                     )
                 break
 
-            # Show thinking text (dimmed)
-            if response.content and response.content.strip():
-                console.print(f"  [dim magenta]💭 {response.content.strip()}[/dim magenta]")
+            # Show a public progress note, not private chain-of-thought.
+            progress_note = _public_progress_note(response.content)
+            if progress_note:
+                console.print(f"  [dim magenta]Notiz:[/dim magenta] {escape(progress_note)}")
 
             # Handle each tool call
             for tc in response.tool_calls:
@@ -284,7 +342,7 @@ class AgentTool(BaseTool):
 
         # Summary table
         summary = Table.grid(padding=(0, 2))
-        summary.add_row("[bold]Schritte:[/bold]", f"{step}/{max_steps}")
+        summary.add_row("[bold]Schritte:[/bold]", f"{step} genutzt (Limit: {max_steps})")
         summary.add_row("[bold]Dauer:[/bold]", f"{elapsed:.1f}s")
         summary.add_row(
             "[bold]Status:[/bold]",
@@ -337,6 +395,9 @@ class AgentTool(BaseTool):
 
         if result.success:
             console.print("  [green]✓ Erfolg[/green]")
+            preview = _result_preview(result)
+            if preview:
+                console.print(f"  [dim]Ausgabe:[/dim] {escape(preview)}")
             truncated = _truncate_output(result.output)
             session.messages.append(
                 Message(
@@ -346,7 +407,8 @@ class AgentTool(BaseTool):
             )
         else:
             error_msg = result.error or result.output
-            console.print(f"  [red]✗ Fehler:[/red] {error_msg[:200]}")
+            preview = _result_preview(result) or error_msg[:200]
+            console.print(f"  [red]✗ Fehler:[/red] {escape(preview)}")
             session.messages.append(
                 Message(
                     role=Role.USER,

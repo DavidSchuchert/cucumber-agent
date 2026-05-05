@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
 # ── Calculator ───────────────────────────────────────────────────────────────
+from cucumber_agent.tools.agent import (
+    _public_progress_note,
+    _result_preview,
+    _tool_stage_summary,
+)
 from cucumber_agent.tools.base import BaseTool, ToolResult
 from cucumber_agent.tools.calculator import CalculatorTool, safe_calculate
 from cucumber_agent.tools.datetime_tool import DatetimeTool
@@ -715,6 +721,31 @@ class TestToolRegistry:
         specs = ToolRegistry.get_tools_spec()
         names = [s["function"]["name"] for s in specs]
         assert "dummy_test_tool" in names
+
+
+class TestAgentToolProgressDisplay:
+    """Tests for the sub-agent progress display helpers."""
+
+    def test_tool_stage_summary_uses_tool_reason(self):
+        tool_call = SimpleNamespace(
+            name="shell",
+            arguments={"command": "python build_audio.py", "reason": "Audio-Bibliotheken prüfen"},
+        )
+
+        assert _tool_stage_summary([tool_call]) == "shell: Audio-Bibliotheken prüfen"
+
+    def test_public_progress_note_is_short_single_line(self):
+        note = _public_progress_note(
+            "Ich prüfe zuerst, welche Audio-Tools lokal verfügbar sind.\n"
+            "Danach erstelle ich den Track."
+        )
+
+        assert note == "Ich prüfe zuerst, welche Audio-Tools lokal verfügbar sind."
+
+    def test_result_preview_collapses_output(self):
+        result = ToolResult(success=True, output="numpy OK\n/usr/bin/ffmpeg\n")
+
+        assert _result_preview(result) == "numpy OK /usr/bin/ffmpeg"
 
 
 # ── CustomToolLoader hot-reload ───────────────────────────────────────────────
