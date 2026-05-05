@@ -4,8 +4,17 @@ from __future__ import annotations
 
 import httpx
 
+from cucumber_agent.minimax_mcp import (
+    MiniMaxMCPError,
+    call_minimax_mcp_tool,
+    can_try_minimax_mcp,
+    minimax_mcp_mode,
+)
 from cucumber_agent.tools.base import BaseTool, ToolResult
 from cucumber_agent.tools.registry import ToolRegistry
+
+_SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+_MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
 
 class UnderstandImageTool(BaseTool):
@@ -33,7 +42,34 @@ class UnderstandImageTool(BaseTool):
     }
 
     async def execute(self, prompt: str, image_url: str) -> ToolResult:
-        """Analyze an image using MiniMax API."""
+        """Analyze an image using MiniMax MCP, with legacy API fallback."""
+        validation_error = _validate_image_reference(image_url)
+        if validation_error:
+            return ToolResult(success=False, output="", error=validation_error)
+
+        if can_try_minimax_mcp():
+            try:
+                output = await call_minimax_mcp_tool(
+                    "understand_image",
+                    {"prompt": prompt, "image_url": image_url},
+                )
+                return ToolResult(success=True, output=output)
+            except MiniMaxMCPError as exc:
+                if minimax_mcp_mode() == "always":
+                    return ToolResult(
+                        success=False,
+                        output="",
+                        error=(
+                            "MiniMax MCP understand_image fehlgeschlagen. "
+                            "Prüfe `uvx`, `MINIMAX_API_KEY` und `MINIMAX_API_HOST`. "
+                            f"Details: {exc}"
+                        ),
+                    )
+
+        return await self._execute_legacy_chat_vision(prompt, image_url)
+
+    async def _execute_legacy_chat_vision(self, prompt: str, image_url: str) -> ToolResult:
+        """Fallback image analysis via MiniMax OpenAI-compatible chat endpoint."""
         import os
 
         # Try env var first, then fall back to config
@@ -113,6 +149,23 @@ class UnderstandImageTool(BaseTool):
             return ToolResult(success=False, output="", error="Bildanalyse Timeout (60s).")
         except Exception as e:
             return ToolResult(success=False, output="", error=str(e))
+
+
+def _validate_image_reference(image_url: str) -> str | None:
+    """Validate local image references before sending them to MiniMax MCP/API."""
+    if image_url.startswith(("http://", "https://")):
+        return None
+
+    from pathlib import Path
+
+    path = Path(image_url.replace("file://", "")).expanduser()
+    if not path.exists():
+        return f"Bild nicht gefunden: {path}"
+    if path.suffix.lower() not in _SUPPORTED_EXTENSIONS:
+        return "Unsupported image format. Erlaubt: JPEG, PNG, GIF, WebP."
+    if path.stat().st_size > _MAX_IMAGE_BYTES:
+        return "Bild ist größer als 20MB; MiniMax MCP unterstützt maximal 20MB."
+    return None
 
 
 # Register the tool

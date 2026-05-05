@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from cucumber_agent.minimax_mcp import MiniMaxMCPError
 from cucumber_agent.tools.web_search import WebSearchTool, _extract_real_url, _strip_tags
 
 
@@ -35,8 +36,9 @@ def test_extract_real_url_plain():
 
 
 @pytest.mark.asyncio
-async def test_web_search_returns_results():
+async def test_web_search_returns_results(monkeypatch):
     """Successful DDG response → results returned."""
+    monkeypatch.setenv("CUCUMBER_MINIMAX_MCP", "never")
     fake_html = """
     <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com">Python Docs</a>
     <a class="result__snippet" href="#">The official Python documentation.</a>
@@ -60,8 +62,43 @@ async def test_web_search_returns_results():
 
 
 @pytest.mark.asyncio
-async def test_web_search_no_results():
+async def test_web_search_uses_minimax_mcp_when_enabled():
+    tool = WebSearchTool()
+    with (
+        patch("cucumber_agent.tools.web_search.should_use_minimax_mcp", return_value=True),
+        patch(
+            "cucumber_agent.tools.web_search.call_minimax_mcp_tool",
+            new=AsyncMock(return_value="MiniMax results"),
+        ) as call_mcp,
+    ):
+        result = await tool.execute(query="MiniMax MCP")
+
+    assert result.success is True
+    assert result.output == "MiniMax results"
+    call_mcp.assert_awaited_once_with("web_search", {"query": "MiniMax MCP"})
+
+
+@pytest.mark.asyncio
+async def test_web_search_returns_mcp_error_when_forced(monkeypatch):
+    monkeypatch.setenv("CUCUMBER_MINIMAX_MCP", "always")
+    tool = WebSearchTool()
+    with (
+        patch("cucumber_agent.tools.web_search.should_use_minimax_mcp", return_value=True),
+        patch(
+            "cucumber_agent.tools.web_search.call_minimax_mcp_tool",
+            new=AsyncMock(side_effect=MiniMaxMCPError("uvx missing")),
+        ),
+    ):
+        result = await tool.execute(query="MiniMax MCP")
+
+    assert result.success is False
+    assert "uvx missing" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_web_search_no_results(monkeypatch):
     """Empty HTML → graceful no-results message."""
+    monkeypatch.setenv("CUCUMBER_MINIMAX_MCP", "never")
     mock_response = MagicMock()
     mock_response.text = "<html><body>No results</body></html>"
     mock_response.raise_for_status = MagicMock()

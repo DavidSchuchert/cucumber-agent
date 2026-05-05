@@ -583,6 +583,8 @@ def _doc_topic_map() -> dict[str, str]:
         "memories": "Memory.md",
         "personality": "Memory.md",
         "remember": "Memory.md",
+        "mcp": "Providers.md",
+        "minimax-mcp": "Providers.md",
         "config": "Configuration.md",
         "configuration": "Configuration.md",
         "providers": "Providers.md",
@@ -735,6 +737,12 @@ def _build_doctor_rows(
         rows.append(("Provider", "[green]OK[/green]", f"{provider_name} API-Key vorhanden"))
     else:
         rows.append(("Provider", "[yellow]HINWEIS[/yellow]", f"{provider_name} API-Key fehlt"))
+
+    if provider_name == "minimax":
+        from cucumber_agent.minimax_mcp import minimax_mcp_diagnostic
+
+        status, detail = minimax_mcp_diagnostic(config)
+        rows.append(("MiniMax MCP", status, detail))
 
     docs_dir = _docs_dir(config)
     rows.append(

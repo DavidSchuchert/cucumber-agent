@@ -139,6 +139,7 @@ cucumber-agent/
 
 - Streaming-Antworten und Thinking-Block-Darstellung
 - Multi-Provider: MiniMax, OpenRouter, DeepSeek, Ollama
+- MiniMax Token Plan MCP für `web_search` und `understand_image`
 - Tool-System mit Approval-Flow, Auto-Approve und Smart Retry
 - Custom Tools aus `~/.cucumber/custom_tools/*.py`
 - YAML-Skills mit Hot-Reload

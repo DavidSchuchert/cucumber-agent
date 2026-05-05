@@ -7,6 +7,12 @@ from urllib.parse import unquote
 
 import httpx
 
+from cucumber_agent.minimax_mcp import (
+    MiniMaxMCPError,
+    call_minimax_mcp_tool,
+    minimax_mcp_mode,
+    should_use_minimax_mcp,
+)
 from cucumber_agent.tools.base import BaseTool, ToolResult
 from cucumber_agent.tools.registry import ToolRegistry
 
@@ -49,6 +55,19 @@ class WebSearchTool(BaseTool):
     }
 
     async def execute(self, query: str, max_results: int = 5) -> ToolResult:
+        if should_use_minimax_mcp():
+            try:
+                output = await call_minimax_mcp_tool("web_search", {"query": query})
+                return ToolResult(success=True, output=output)
+            except MiniMaxMCPError as exc:
+                if minimax_mcp_mode() == "always":
+                    return ToolResult(
+                        success=False,
+                        output="",
+                        error=f"MiniMax MCP web_search fehlgeschlagen: {exc}",
+                    )
+                # In auto mode, keep the existing web search behavior available.
+
         try:
             async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
                 resp = await client.post(

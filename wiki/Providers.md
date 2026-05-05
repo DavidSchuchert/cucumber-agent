@@ -100,25 +100,59 @@ class ToolCall:
 ### MiniMax
 
 - **Name**: `minimax`
-- **API URL**: `https://api.minimax.io/anthropic`
+- **API URL**: `https://api.minimax.io/v1`
 - **Models**: MiniMax-M2.7
 - **Speed**: Fast, 204k context
 - **Cost**: Cheap
-- **Features**: Thinking blocks, tool use, 529 retry logic
+- **Features**: Thinking blocks, tool use, 529 retry logic, Token Plan MCP integration
 
 ### MiniMax MCP Tools
 
-CucumberAgent unterstützt MiniMax MCP-Tools:
+CucumberAgent unterstützt die offiziellen MiniMax Token Plan MCP-Tools über den
+stdio-Server `minimax-coding-plan-mcp`. Laut MiniMax-Doku stellt dieser Server
+zwei Tools bereit: `web_search` und `understand_image`.
+
+#### Setup
+
+```bash
+export MINIMAX_API_KEY="dein-token-plan-api-key"
+export MINIMAX_API_HOST="https://api.minimax.io"
+
+# optional: MCP für Websuche immer erzwingen
+export CUCUMBER_MINIMAX_MCP=always
+```
+
+Voraussetzung ist `uvx`, weil der MCP-Server so gestartet wird:
+
+```bash
+uvx minimax-coding-plan-mcp -y
+```
+
+Konfiguration über Environment:
+
+| Variable | Default | Zweck |
+|----------|---------|-------|
+| `CUCUMBER_MINIMAX_MCP` | `auto` | `auto`, `always` oder `never` |
+| `MINIMAX_MCP_COMMAND` | `uvx` | Launcher-Kommando |
+| `MINIMAX_MCP_ARGS` | `minimax-coding-plan-mcp -y` | MCP-Server-Argumente |
+| `MINIMAX_API_HOST` | `https://api.minimax.io` | MiniMax API Host |
+| `MINIMAX_MCP_BASE_PATH` | unset | Optionaler lokaler Ausgabeordner |
+| `MINIMAX_API_RESOURCE_MODE` | unset | Optional `url` oder `local` |
+
+`cucumber doctor` zeigt bei aktivem MiniMax-Provider den MCP-Status an.
 
 #### web_search
 - Sucht im Internet nach aktuellen Informationen
-- Nutzt MiniMax API wenn `MINIMAX_API_KEY` gesetzt ist
-- Fallback auf DuckDuckGo wenn kein API Key
+- Im `auto` Modus nutzt CucumberAgent MiniMax MCP, wenn der aktive Provider `minimax` ist, ein API-Key vorhanden ist und `uvx` gefunden wird
+- Fallback auf DuckDuckGo, wenn MCP im `auto` Modus nicht verfügbar ist
+- Bei `CUCUMBER_MINIMAX_MCP=always` wird ein MCP-Fehler direkt angezeigt
 
 #### understand_image
 - Analysiert Bilder und beschreibt deren Inhalt
 - Unterstützt HTTP/HTTPS URLs und lokale Dateien
 - Formate: JPEG, PNG, GIF, WebP (max 20MB)
+- Nutzt MiniMax MCP zuerst, wenn API-Key und `uvx` verfügbar sind
+- Lokale Dateien werden vorab auf Existenz, Format und 20MB-Limit geprüft
 
 ### OpenRouter
 

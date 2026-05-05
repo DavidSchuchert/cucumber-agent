@@ -7,6 +7,8 @@ All notable changes to CucumberAgent are documented here.
 ## [Unreleased] — 2026-05-05
 
 ### Added
+- **MiniMax Token Plan MCP integration** — Added a dependency-free stdio MCP client for `minimax-coding-plan-mcp`, enabling MiniMax-backed `web_search` and `understand_image`.
+- **MiniMax MCP doctor check** — `cucumber doctor` now reports whether `uvx`, `MINIMAX_API_KEY` and MiniMax MCP routing are ready when MiniMax is active.
 - **Memory & Identity Contract** — Every model call now includes an explicit contract that protects the immutable personality, persistent facts, pinned context and durable summaries from accidental loss during long sessions or compression.
 - **Persistent facts fallback** — The agent now reloads facts directly from the configured `FactsStore` when building prompts, so stored memories still appear even if live session metadata is missing.
 - **Beginner-friendly UX commands** — Added top-level and REPL helpers such as `doctor`, `quickstart`, `what-now`, `tips`, `examples`, `docs`, `shortcuts` and `spec-template`.
@@ -16,6 +18,8 @@ All notable changes to CucumberAgent are documented here.
 - **New wiki page: `wiki/Memory.md`** — Documents the memory guarantee, file locations, commands and developer-facing implementation points.
 
 ### Changed
+- **Image understanding routing** — `understand_image` now tries MiniMax MCP first and falls back to the legacy MiniMax chat vision path when MCP is not explicitly required.
+- **Web search routing** — `web_search` can use MiniMax MCP in `auto`/`always` mode while keeping DuckDuckGo as the auto-mode fallback.
 - **Herbert Swarm planning** — Swarm planning is now AI-generated from `SPEC.md` and project inventory instead of keyword-based stack guessing. CucumberAgent validates and normalizes the provider's JSON plan.
 - **README overhaul** — Reworked the README into a user-first quickstart with Memory-Garantie, Herbert Swarm explanation, important commands and development checks.
 - **Wiki refresh** — Updated Architecture, CLI, Configuration, Providers, AgentGuide, Swarm and the wiki index to match the current UX and memory behavior.
