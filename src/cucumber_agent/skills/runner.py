@@ -164,9 +164,7 @@ class SkillRunner:
             elif token.startswith("-"):
                 raise ValueError(f"Unbekannte Herbert-Swarm-Option: {token}")
             elif project is None and (
-                Path(token).expanduser().exists()
-                or "/" in token
-                or token.startswith((".", "~"))
+                Path(token).expanduser().exists() or "/" in token or token.startswith((".", "~"))
             ):
                 project = token
             elif spec is None and token.lower().endswith((".md", ".txt")):
@@ -184,7 +182,9 @@ class SkillRunner:
             project = str(natural_project)
 
         project_path = (
-            Path(project).expanduser().resolve() if project else SkillRunner._default_workspace(agent)
+            Path(project).expanduser().resolve()
+            if project
+            else SkillRunner._default_workspace(agent)
         )
         spec_path = Path(spec).expanduser().resolve() if spec else project_path / "SPEC.md"
         if parallel < 1:
@@ -212,6 +212,9 @@ class SkillRunner:
             help_text = (
                 "📖 **Herbert Swarm Hilfe**\n\n"
                 "Der Swarm baut ganze Projekte für dich, indem er mehrere Agenten parallel einsetzt.\n\n"
+                "**Einfachster Start:**\n"
+                "- `/herbert-swarm . --dry-run` : KI-Plan erstellen und Ablauf prüfen, ohne Dateien zu ändern\n"
+                "- `/herbert-swarm . --parallel 3` : Planen, ausführen und Bericht anzeigen\n\n"
                 "**Befehle:**\n"
                 "- `/herbert-swarm <pfad>` : Startet den vollen Zyklus (Init -> Plan -> Run -> Report)\n"
                 "- `/herbert-swarm status`  : Zeigt den aktuellen Fortschritt\n"
@@ -221,6 +224,9 @@ class SkillRunner:
                 "- `--parallel N`  : Anzahl der Agenten (Standard: 3)\n"
                 "- `--dry-run`     : Simuliert den Swarm ohne Dateien zu schreiben\n"
                 "- `--spec <pfad>` : Pfad zu einer eigenen SPEC.md\n"
+                "- `--retry-failed`: Nur fehlgeschlagene Tasks erneut versuchen\n\n"
+                "**Nachvollziehbarkeit:**\n"
+                "Nutze im Chat `/doctor`, `/what-now` und `/docs swarm`, wenn du den Zustand prüfen willst.\n"
             )
             session.add_assistant_message(help_text)
             return help_text

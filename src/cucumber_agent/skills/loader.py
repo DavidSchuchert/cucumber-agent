@@ -23,13 +23,17 @@ class Skill:
     name: str
     command: str  # e.g. "/wetter"
     description: str
-    steps: list[str] = field(default_factory=list)  # Ordered list of steps; optional for user skills
+    steps: list[str] = field(
+        default_factory=list
+    )  # Ordered list of steps; optional for user skills
     prompt: str = ""  # May contain {args} placeholder
     args_hint: str = ""  # e.g. "[Stadt]" shown in /skills list
     timeout: float = 30.0  # Per-step timeout in seconds
     handler: str = ""  # Optional native runner hook for bundled skills
     aliases: list[str] | None = None  # Alternative slash commands, e.g. "/herbert swarm"
-    triggers: list[str] = field(default_factory=list)  # Keywords/patterns that auto-trigger this skill
+    triggers: list[str] = field(
+        default_factory=list
+    )  # Keywords/patterns that auto-trigger this skill
 
     @property
     def command_key(self) -> str:

@@ -30,20 +30,26 @@ class CapabilitiesTool(BaseTool):
         try:
             # We don't have direct access to skill_loader here easily without passing it through,
             # but we can at least return all registered tools and a reminder about skills.
-            
+
             tools = ToolRegistry.get_capabilities_summary()
-            
+
             lines = ["### Verfügbare Werkzeuge (Tools):"]
             for t in tools:
-                if query and query.lower() not in t["name"].lower() and query.lower() not in t["description"].lower():
+                if (
+                    query
+                    and query.lower() not in t["name"].lower()
+                    and query.lower() not in t["description"].lower()
+                ):
                     continue
                 lines.append(f"- **{t['name']}**: {t['description']}")
-                
+
             lines.append("\n### Spezial-Befehle (Skills):")
-            lines.append("Diese Befehle beginnen mit einem '/' und können vom Benutzer direkt eingegeben werden.")
+            lines.append(
+                "Diese Befehle beginnen mit einem '/' und können vom Benutzer direkt eingegeben werden."
+            )
             lines.append("Du kannst dem Benutzer vorschlagen, einen dieser Befehle zu nutzen.")
-            
-            # Since we can't easily get the skills here without changing too much infra, 
+
+            # Since we can't easily get the skills here without changing too much infra,
             # we rely on the system prompt injection we just added.
             lines.append("(Siehe deinen System-Prompt für die vollständige Liste der Skills)")
 

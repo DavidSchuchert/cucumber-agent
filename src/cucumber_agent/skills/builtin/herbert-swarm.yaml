@@ -5,8 +5,9 @@ aliases:
   - /herbert swarm
   - /swarm
 description: >
-  Native multi-agent project builder. Analyzes a SPEC.md, creates a phased task plan,
-  and executes tasks in parallel using real sub-agents. Built into CucumberAgent — no external tools.
+  Native multi-agent project builder. Uses the configured AI provider to analyze a SPEC.md,
+  create a phased task plan, and execute tasks in parallel using real sub-agents.
+  Built into CucumberAgent — no external tools.
   Use this for: building full-stack apps, Docker setup, larger refactoring projects.
 args_hint: "[Projekt] [--dry-run] [--parallel N] [--timeout SEKUNDEN]"
 timeout: 1800
@@ -35,8 +36,9 @@ prompt: |
 
   Step 2 — plan:
     swarm(command="plan", project="<abs_path>", spec="<path_to_spec.md>")
-    Note: If project has no SPEC.md or wrong stack (Vanilla JS, PHP, etc.),
-    manually write tasks into brain JSON instead of relying on plan.
+    Note: Planning is AI-first. Do not create keyword-based fallback tasks yourself.
+    If the provider is unavailable, report that plan will use the neutral minimal fallback
+    and recommend fixing the provider/config before running real implementation.
 
   Step 3 — run:
     swarm(command="run", project="<abs_path>", parallel=3, timeout=300, dry_run=false, retry_failed=false)

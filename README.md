@@ -1,6 +1,8 @@
 # 🥒 CucumberAgent
 
-> A clean, modular AI agent framework. Built from scratch.
+Ein schlauer, modularer KI-Agent für Terminal, Projekte und Multi-Agent-Workflows.
+Er ist bewusst einfach zu bedienen, bleibt aber nachvollziehbar: Du siehst, was er
+plant, welche Tools er nutzen will und welche Erinnerungen dauerhaft aktiv sind.
 
 ```bash
 curl -LsSf https://raw.githubusercontent.com/DavidSchuchert/cucumber-agent/main/installer/install.sh | sh
@@ -8,172 +10,169 @@ cucumber init
 cucumber run
 ```
 
-## Why
+## Warum
 
-OpenClaw and Hermes are great but have grown into complex, brittle systems. CucumberAgent is:
+CucumberAgent soll sich wie ein persönlicher Arbeits-Agent anfühlen, nicht wie ein
+loses Prompt-Experiment.
 
-- **Minimal** — Core only, features added as needed
-- **Clean** — Simple ABCs, no magic
-- **User-friendly** — `curl | sh` install, interactive setup wizard
-- **Extensible** — Provider, Skill, and Tool systems
+- **Schlau geplant** — Herbert Swarm lässt die KI echte Projektphasen und Tasks planen, statt Keywords zu raten.
+- **Vergisst sich nicht** — `personality.md`, gespeicherte Fakten, Pins und Session-Summaries werden als Memory-Contract in jeden Prompt eingebaut.
+- **Einfach bedienbar** — `/doctor`, `/what-now`, `/tips`, `/examples`, `/docs` und `/explain-last` führen durch typische Situationen.
+- **Sicher nachvollziehbar** — Tool-Aufrufe werden erklärt und brauchen Zustimmung, Auto-Approve ist bewusst aktivierbar.
+- **Erweiterbar** — Provider, Tools und YAML-Skills lassen sich sauber ergänzen.
 
-## Quick Start
+## Schnellstart
 
-### One-Line Install
+### Installieren
 
 ```bash
 curl -LsSf https://raw.githubusercontent.com/DavidSchuchert/cucumber-agent/main/installer/install.sh | sh
 ```
 
-### Setup Wizard
-
-```bash
-cucumber init
-```
-
-The wizard asks for:
-- Agent name (e.g., "Cucumber", "Herbert")
-- Language (English, German, or custom)
-- Communication tone (casual, friendly, professional, formal)
-- Greeting, strengths, interests
-- Provider selection (MiniMax, OpenRouter, Ollama, etc.)
-- API key and model
-
-### Update
-
-Stay up to date with the latest features and fixes:
+Der Installer richtet `~/.cucumber/` ein, installiert die lokale CLI und kann ohne
+interaktive Eingaben Standardwerte anlegen. Das Update-Script arbeitet bewusst
+vorsichtig: Es verweigert lokale Änderungen im Installations-Checkout und nutzt
+nur Fast-Forward-Merges.
 
 ```bash
 curl -LsSf https://raw.githubusercontent.com/DavidSchuchert/cucumber-agent/main/installer/update.sh | sh
 ```
 
-### Run
+### Einrichten
+
+```bash
+cucumber init
+```
+
+Der Wizard fragt nach Agent-Name, Sprache, Ton, Begrüßung, Stärken, Nutzerinfos,
+Provider, API-Key, Modell und Workspace. Unterstützte Provider: MiniMax,
+OpenRouter, DeepSeek und Ollama.
+
+### Starten
 
 ```bash
 cucumber run
 ```
 
-## Directory Structure
+Gute erste Befehle im Chat:
 
+```text
+/doctor
+/what-now
+/tips
+/examples
+/docs memory
+/docs swarm
 ```
+
+## Memory-Garantie
+
+CucumberAgent behandelt Persönlichkeit und Erinnerung als dauerhafte Grundlagen.
+
+- `~/.cucumber/personality/personality.md` ist die unveränderliche Identität des Agenten.
+- `~/.cucumber/memory/facts.json` oder `facts.db` enthält dauerhafte Fakten aus `/remember`.
+- `/pin <text>` landet als höchstpriorisierter Kontext in jedem Prompt.
+- Session-Summaries werden angehängt, nicht überschrieben.
+- Kompression darf Chat-Historie verkürzen, aber niemals Persönlichkeit, Pins, Fakten oder dauerhafte Zusammenfassungen löschen.
+
+Kurz gesagt: Der Agent darf klüger werden, ohne seinen Charakter oder wichtige
+Erinnerungen unterwegs zu verlieren.
+
+## Herbert Swarm
+
+Herbert Swarm ist der native Multi-Agent-Projektbauer.
+
+```text
+/herbert-swarm /path/to/project --parallel 3
+/herbert-swarm /path/to/project --dry-run
+```
+
+Der Swarm liest `SPEC.md`, scannt das Projektinventar und fragt den konfigurierten
+KI-Provider nach einem JSON-Plan mit Phasen, Tasks, Rollen, Dateien und
+Abhängigkeiten. CucumberAgent validiert diesen Plan, normalisiert IDs und blockt
+unsichere Dateipfade. Es gibt kein Keyword-Raten für die Planung.
+
+## Wichtige Befehle
+
+| Befehl | Zweck |
+|--------|-------|
+| `cucumber doctor` | Setup, Provider, Wiki, Skills, Tools und Workspace prüfen |
+| `cucumber quickstart` | Sicherer Einstieg außerhalb des Chats |
+| `cucumber what-now` | Nächsten sinnvollen Schritt vorschlagen |
+| `cucumber spec-template` | `SPEC.md` Vorlage für Herbert Swarm ausgeben |
+| `/remember key: value` | Fakt dauerhaft speichern |
+| `/forget key` | Fakt bewusst löschen |
+| `/pin <text>` | Kontext dauerhaft in dieser Session priorisieren |
+| `/compact` | Verlauf manuell zusammenfassen |
+| `/explain-last` | Letzte Aktion verständlich erklären |
+
+## Projektstruktur
+
+```text
 ~/.cucumber/
-├── config.yaml              # Provider, API key, preferences
+├── config.yaml              # Provider, Modell, Präferenzen
 ├── personality/
-│   └── personality.md       # Agent name, tone, language, greeting
+│   └── personality.md       # Name, Ton, Sprache, Charakter
 ├── user/
-│   └── user.md              # Your info (name, bio, github)
-├── memory/                  # Session logs + persistent facts
-├── autopilot/               # Project Autopilot state, keyed by workspace
-├── custom_tools/            # Hot-reload custom Python tools
-└── skills/                  # YAML skill manifests
+│   └── user.md              # Nutzerinfos
+├── memory/                  # Logs, Fakten, Session-Summary
+├── autopilot/               # Projekt-Autopilot-State
+├── custom_tools/            # Hot-reload Python-Tools
+└── skills/                  # YAML-Skill-Manifeste
 ```
 
-## Architecture
-
-```
+```text
 cucumber-agent/
 ├── src/cucumber_agent/
-│   ├── __main__.py          # Entry point
-│   ├── provider.py          # BaseProvider ABC + Registry
-│   ├── session.py           # Session + Message types
-│   ├── agent.py             # Agent orchestration
-│   ├── config.py            # YAML + Markdown config
-│   ├── cli.py               # REPL interface
-│   ├── memory.py            # SessionLogger + FactsStore
-│   ├── workspace.py          # Project type detection
-│   ├── smart_retry.py       # Auto-retry logic
-│   ├── providers/            # LLM backend implementations
-│   ├── tools/               # Built-in + custom tools
-│   └── skills/              # YAML skill system
-├── installer/
-│   ├── install.sh           # One-line installer
-│   └── init.py              # Setup wizard
-├── wiki/                    # Full documentation
-└── pyproject.toml
+│   ├── agent.py             # Promptbau, Memory-Contract, Provider-Orchestrierung
+│   ├── cli.py               # REPL, UX-Helfer, Tool-Freigabe
+│   ├── memory.py            # FactsStore, SessionLogger, SummaryStore
+│   ├── provider.py          # BaseProvider + Registry
+│   ├── tools/               # Shell, Search, Agent, Swarm, Remember, ...
+│   └── skills/              # YAML-Skill-System
+├── installer/               # install/update/uninstall/init
+├── wiki/                    # Ausführliche Doku
+└── tests/                   # Regressionstests
 ```
 
 ## Features
 
-- [x] Streaming responses
-- [x] Token budget management (context trimming)
-- [x] **3-tier memory architecture** — immutable personality anchor, operational context, compressed history
-- [x] Personality system (name, tone, language) — survives context compression
-- [x] Multi-provider support (MiniMax, OpenRouter, Ollama, DeepSeek)
-- [x] Clean structured config (YAML + Markdown)
-- [x] **Tool system** — shell, search, web search, web reader, agent, calculator
-- [x] **Custom tools** — hot-reload from `~/.cucumber/custom_tools/`
-- [x] **Skill system** — YAML manifests with `{args}` expansion
-- [x] **Memory system** — session logging (markdown + SQLite) + persistent facts store
-- [x] **Smart retry** — auto-retry READ commands on path errors
-- [x] **Thinking blocks** — display agent internal thoughts
-- [x] **Workspace detection** — auto-detect Python, Node, Rust, etc.
-- [x] **Sub-agent tool** — recursive delegation, 15-step loop, auto-approve propagation
-- [x] **Agent Autopilot** — `/autopilot plan/run/status/report` for safe project execution
-- [x] **Context management** — `/compact`, `/context`, `/pin`, `/unpin`
-- [x] **Token cost tracking** — `/cost` shows per-session usage and estimated USD
-- [x] **Multi-line input** — end any line with `\` to continue on the next line
-- [x] **Auto-approve** — `[4]` or `/autoapprove` silences all tool prompts (incl. sub-agents)
+- Streaming-Antworten und Thinking-Block-Darstellung
+- Multi-Provider: MiniMax, OpenRouter, DeepSeek, Ollama
+- Tool-System mit Approval-Flow, Auto-Approve und Smart Retry
+- Custom Tools aus `~/.cucumber/custom_tools/*.py`
+- YAML-Skills mit Hot-Reload
+- Persistente Fakten, Session-Logs, SQLite-Unterstützung
+- Persönlichkeit, Fakten, Pins und Zusammenfassungen mit Memory-Contract
+- Workspace-Erkennung für Python, Node, Rust und weitere Projekttypen
+- Sub-Agent-Tool für rekursive Delegation
+- Herbert Swarm für KI-geplante Parallel-Arbeit
+- Autopilot für sequenzielle Projektpläne
+- UX-Helfer für Diagnose, Beispiele, Tipps, Wiki-Auszüge und nächste Schritte
 
-## Tools
+## Dokumentation
 
-CucumberAgent comes with built-in tools:
+- [Wiki-Start](wiki/README.md)
+- [CLI](wiki/CLI.md)
+- [Memory & Personality](wiki/Memory.md)
+- [Herbert Swarm](wiki/Swarm.md)
+- [Configuration](wiki/Configuration.md)
+- [Providers](wiki/Providers.md)
+- [Architecture](wiki/Architecture.md)
+- [AgentGuide](wiki/AgentGuide.md)
+- [Skills](wiki/Skills.md)
 
-| Tool | Description |
-|------|-------------|
-| `shell` | Execute commands with user approval, auto-retry on path errors |
-| `search` | Find files/directories by name |
-| `web_search` | DuckDuckGo instant answers (no API key) |
-| `web_reader` | Extract content from URLs |
-| `agent` | Recursive sub-agent (max 15 steps) |
-| `capabilities` | List all available tools and skills |
-| `create_tool` | Self-generating custom tools |
-
-Add custom tools to `~/.cucumber/custom_tools/*.py`
-
-## Skills
-
-Skills are YAML manifests in `~/.cucumber/skills/`:
-
-```yaml
-name: code_review
-description: Review code for bugs
-prompt: "Review this code: {args}\n\nFocus on: security, bugs, performance"
-```
-
-Use with `/code_review <file>`
-
-## Documentation
-
-Full docs in [wiki/](wiki/):
-- [Architecture](wiki/Architecture.md) — How the system works
-- [Configuration](wiki/Configuration.md) — Config files explained
-- [Providers](wiki/Providers.md) — Adding new providers
-- [CLI](wiki/CLI.md) — Command reference
-- [AgentGuide](wiki/AgentGuide.md) — Agent system guide
-- [Skills](wiki/Skills.md) — Built-in and custom skills
-
-## Development
+## Entwicklung
 
 ```bash
 git clone https://github.com/DavidSchuchert/cucumber-agent.git
 cd cucumber-agent
 uv sync
 
-# Format + type check
 uv run ruff format
 uv run ruff check
-
-# Test
+uv run pyright
 uv run pytest
 
-# Run locally
 uv run cucumber run
 ```
-
-## Providers
-
-- [x] MiniMax (fast, cheap)
-- [x] OpenRouter (many models)
-- [x] Ollama (local models)
-- [ ] DeepSeek
-- [ ] NVIDIA NIM

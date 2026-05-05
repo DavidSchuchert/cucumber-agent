@@ -104,17 +104,23 @@ class MiniMaxProvider(BaseProvider):
                 # Determine if we should retry (only for transient errors)
                 is_transient = isinstance(e, httpx.TimeoutException)
                 if isinstance(e, httpx.HTTPStatusError):
-                    is_transient = e.response.status_code in (429, 529) or e.response.status_code >= 500
+                    is_transient = (
+                        e.response.status_code in (429, 529) or e.response.status_code >= 500
+                    )
 
                 if is_transient and attempt < max_retries - 1:
                     wait_time = 2**attempt
                     if isinstance(e, httpx.TimeoutException):
-                        console.print(f"[yellow]MiniMax Timeout (Versuch {attempt+1}/{max_retries}): {e}[/yellow]")
+                        console.print(
+                            f"[yellow]MiniMax Timeout (Versuch {attempt + 1}/{max_retries}): {e}[/yellow]"
+                        )
                     else:
-                        console.print(f"[yellow]MiniMax API Fehler {e.response.status_code} (Versuch {attempt+1}/{max_retries})[/yellow]")
+                        console.print(
+                            f"[yellow]MiniMax API Fehler {e.response.status_code} (Versuch {attempt + 1}/{max_retries})[/yellow]"
+                        )
                     await asyncio.sleep(wait_time)
                     continue
-                
+
                 if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 400:
                     console.print(f"[red]MiniMax API Error (400):[/red] {e.response.text}")
                 raise
@@ -162,16 +168,22 @@ class MiniMaxProvider(BaseProvider):
                 # Determine if we should retry (only for transient errors)
                 is_transient = isinstance(e, httpx.TimeoutException)
                 if isinstance(e, httpx.HTTPStatusError):
-                    is_transient = e.response.status_code in (429, 529) or e.response.status_code >= 500
+                    is_transient = (
+                        e.response.status_code in (429, 529) or e.response.status_code >= 500
+                    )
 
                 if not is_transient or attempt >= max_retries - 1:
                     raise
 
                 wait_time = 2**attempt
                 if isinstance(e, httpx.TimeoutException):
-                    console.print(f"[yellow]MiniMax Stream Timeout (Versuch {attempt+1}/{max_retries})[/yellow]")
+                    console.print(
+                        f"[yellow]MiniMax Stream Timeout (Versuch {attempt + 1}/{max_retries})[/yellow]"
+                    )
                 else:
-                    console.print(f"[yellow]MiniMax Stream API Fehler {e.response.status_code} (Versuch {attempt+1}/{max_retries})[/yellow]")
+                    console.print(
+                        f"[yellow]MiniMax Stream API Fehler {e.response.status_code} (Versuch {attempt + 1}/{max_retries})[/yellow]"
+                    )
                 await asyncio.sleep(wait_time)
 
     def _build_request(

@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
-
 import pytest
+from conftest import make_config, make_mock_provider, make_session
 
+from cucumber_agent.agent import Agent
 from cucumber_agent.memory import FactsStore, SessionSummary, detect_learnable_facts
 from cucumber_agent.session import Message, Role
-
-from conftest import make_config, make_mock_provider, make_session
 
 
 def test_facts_store_persist_and_reload(tmp_path):
@@ -48,6 +45,56 @@ def test_session_summary_save_and_load(tmp_path):
     content = reloaded.load()
     assert content is not None
     assert "weather" in content
+
+
+def test_agent_loads_persistent_facts_without_session_metadata(tmp_path):
+    """Persistent facts are injected even when live session metadata is empty."""
+    cfg = make_config(tmp_path)
+    FactsStore(cfg.memory.facts_file).set("projekt", "CucumberAgent")
+    agent = Agent(provider=make_mock_provider(), config=cfg)
+    session = make_session(cfg)
+
+    messages = agent._build_messages(session)
+    system_msg = next(m for m in messages if m.role == Role.SYSTEM)
+
+    assert "Gemerkte Fakten:" in system_msg.content
+    assert "projekt: CucumberAgent" in system_msg.content
+
+
+def test_agent_preserves_active_memory_contexts(tmp_path):
+    """Facts, pins, and historical summary all remain present in built messages."""
+    cfg = make_config(tmp_path)
+    agent = Agent(provider=make_mock_provider(), config=cfg)
+    session = make_session(cfg)
+    session.metadata["facts_context"] = "Gemerkte Fakten:\n  - name: David"
+    session.metadata["pinned"] = "- Herbert Swarm muss perfekt laufen"
+    session.metadata["summary"] = "Frühere Entscheidung: README neu strukturieren."
+
+    messages = agent._build_messages(session)
+
+    assert agent._validate_memory_context_preserved(session, messages) is True
+
+
+@pytest.mark.asyncio
+async def test_tui_compress_appends_summary(tmp_path):
+    """TUI compression appends to existing summaries instead of replacing them."""
+    from cucumber_agent.tui import CucumberTUI
+
+    cfg = make_config(tmp_path)
+    provider = make_mock_provider("New compact summary.")
+    agent = Agent(provider=provider, config=cfg)
+    tui = CucumberTUI(agent=agent, config=cfg)
+    tui._session = make_session(cfg)
+    tui._session.metadata["summary"] = "Existing TUI summary."
+
+    for i in range(cfg.memory.max_session_messages):
+        tui._session.messages.append(Message(role=Role.USER, content=f"message {i}"))
+
+    await tui._maybe_compress()
+
+    combined = tui._session.metadata.get("summary", "")
+    assert "Existing TUI summary." in combined
+    assert "New compact summary." in combined
 
 
 @pytest.mark.asyncio

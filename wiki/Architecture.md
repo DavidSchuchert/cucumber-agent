@@ -21,9 +21,9 @@ CucumberAgent is built with a simple, modular architecture:
 │                                                              │
 │  - Orchestrates providers and sessions                     │
 │  - Trims messages to fit token budget                      │
-│  - Builds system prompt from personality                   │
+│  - Builds system prompt from personality + memory contract │
 │  - synthesize() for tool result responses                  │
-│  - 3-tier memory: pinned → summary → recent               │
+│  - Memory layers: identity → facts/pins → summary → recent │
 └─────────────────────┬─────────────────────────────────────┘
                       │
                       ▼
@@ -81,14 +81,14 @@ CucumberAgent is built with a simple, modular architecture:
 ```
 1. User input → cli.py
 2. cli.py → agent.run_with_tools()
-3. agent.py → builds messages with system prompt from personality.md
-4. agent.py → trims messages if > max_tokens
-5. agent.py → provider.complete() with tools spec
-6. provider → HTTP request to AI API
-7. Response → tool calls shown for approval
-8. User approves → tool executed → synthesize() → display
-9. Session → stores conversation history
-10. memory.py → logs sessions to daily markdown files
+3. agent.py → builds CORE IDENTITY from personality.md
+4. agent.py → injects MEMORY & IDENTITY CONTRACT, facts, pins and summaries
+5. agent.py → trims only recent conversation messages if needed
+6. agent.py → provider.complete() with tools spec
+7. provider → HTTP request to AI API
+8. Response → tool calls shown for approval
+9. User approves → tool executed → synthesize() → display
+10. Session and memory.py → store conversation history, facts and summaries
 ```
 
 ## Tool System
@@ -134,27 +134,45 @@ Max 2 retries, then explain to user
 ## Memory Architecture
 
 ```
-3-Tier Memory:
+Memory prompt layers:
 ┌──────────────────────────────────────┐
-│ Tier 1: Pinned (System)              │
-│ - personality.md                      │
-│ - ~/.cucumber/memory/facts.md         │
+│ Layer 0: Core Identity (System)       │
+│ - personality/personality.md          │
+│ - immutable prompt anchor             │
 └──────────────────────────────────────┘
          │
          ▼
 ┌──────────────────────────────────────┐
-│ Tier 2: Summary (Session)            │
-│ - ~/.cucumber/memory/2026-04-28.md   │
-│ - Daily session logs                 │
+│ Layer 1: Memory Contract + Facts      │
+│ - facts.json or facts.db              │
+│ - user facts loaded every request     │
 └──────────────────────────────────────┘
          │
          ▼
 ┌──────────────────────────────────────┐
-│ Tier 3: Recent (Context)             │
+│ Layer 2: Pinned Context              │
+│ - /pin items                          │
+│ - highest session priority            │
+└──────────────────────────────────────┘
+         │
+         ▼
+┌──────────────────────────────────────┐
+│ Layer 3: Append-only Summary          │
+│ - last_summary.txt                    │
+│ - compressed older chat history       │
+└──────────────────────────────────────┘
+         │
+         ▼
+┌──────────────────────────────────────┐
+│ Layer 4: Recent Messages             │
 │ - Last N messages in session         │
 │ - Trimmed to fit token budget         │
 └──────────────────────────────────────┘
 ```
+
+The identity block and memory contract live in the system prompt and are rebuilt
+on every provider call. Compression only touches old conversation messages and
+appends a new summary to any existing summary.
 
 ## Token Budget
 

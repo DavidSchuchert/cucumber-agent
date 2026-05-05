@@ -315,7 +315,9 @@ class TestSkillRunner:
 
     async def test_herbert_swarm_handler_runs_dry_run_without_model(self, tmp_path):
         skill = SkillLoader(skills_dir=tmp_path, include_builtin=True).load_all()[0]
-        (tmp_path / "SPEC.md").write_text("Build a FastAPI backend with pytest tests.", encoding="utf-8")
+        (tmp_path / "SPEC.md").write_text(
+            "Build a FastAPI backend with pytest tests.", encoding="utf-8"
+        )
         session = Session(id="test")
         agent = SimpleNamespace(_config=SimpleNamespace(workspace=tmp_path))
 

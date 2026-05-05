@@ -86,7 +86,7 @@ class AutopilotStore:
             return None
         try:
             return AutopilotState.from_dict(json.loads(self.path.read_text(encoding="utf-8")))
-        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        except OSError, json.JSONDecodeError, TypeError, ValueError:
             return None
 
     def save(self, state: AutopilotState) -> None:

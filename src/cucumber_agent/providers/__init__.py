@@ -7,6 +7,7 @@ from cucumber_agent.provider import BaseProvider, ModelResponse, ProviderRegistr
 from cucumber_agent.providers import (
     deepseek,  # noqa: F401
     minimax,  # noqa: F401
+    ollama,  # noqa: F401
     openrouter,  # noqa: F401
 )
 
@@ -16,5 +17,6 @@ __all__ = [
     "ModelResponse",
     "deepseek",
     "minimax",
+    "ollama",
     "openrouter",
 ]

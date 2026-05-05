@@ -1,81 +1,124 @@
-#!/bin/bash
+#!/bin/sh
 # CucumberAgent Updater
 # Usage: curl -LsSf https://raw.githubusercontent.com/DavidSchuchert/cucumber-agent/main/installer/update.sh | sh
 
-set -e
+set -eu
 
-# Detect installation directory:
-# 1. Use the directory where this script is located (go up one level from installer/)
-# 2. Fallback to default ~/.cucumber-agent
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-if [ -d "$SCRIPT_DIR/../.git" ]; then
-    INSTALL_DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
-else
-    INSTALL_DIR="${HOME}/.cucumber-agent"
-fi
+INSTALL_DIR="${CUCUMBER_INSTALL_DIR:-$HOME/.cucumber-agent}"
+CONFIG_DIR="${CUCUMBER_CONFIG_DIR:-$HOME/.cucumber}"
+SKILLS_DIR="$CONFIG_DIR/skills"
 
-echo ""
-echo -e "\033[1;32m           _____\033[0m"
-echo -e "\033[1;32m         /       \\\033[0m"
-echo -e "\033[1;32m        |  \033[1;37m(O)(O)\033[1;32m |\033[0m"
-echo -e "\033[1;32m        |    \033[1;37m<\033[1;32m    |\033[0m"
-echo -e "\033[1;32m        |  \033[1;37m'---'\033[1;32m  |\033[0m"
-echo -e "\033[1;32m        |         |\033[0m"
-echo -e "\033[1;32m        |         |\033[0m"
-echo -e "\033[1;32m        |         |\033[0m"
-echo -e "\033[1;32m         \_______/\033[0m"
-echo ""
-echo -e "\033[1;32m🥒 CucumberAgent Updater\033[0m"
-echo -e "\033[1;32m==========================\033[0m"
-echo ""
+say() {
+    printf '%s\n' "$1"
+}
+
+warn() {
+    printf '⚠️  %s\n' "$1"
+}
+
+die() {
+    printf '❌ %s\n' "$1" >&2
+    exit 1
+}
+
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+short_hash() {
+    printf '%s' "$1" | cut -c 1-7
+}
+
+print_banner() {
+    printf '\n'
+    printf '\033[1;32m           _____\033[0m\n'
+    printf '\033[1;32m         /       \\\033[0m\n'
+    printf '\033[1;32m        |  \033[1;37m(O)(O)\033[1;32m |\033[0m\n'
+    printf '\033[1;32m        |    \033[1;37m<\033[1;32m    |\033[0m\n'
+    printf '\033[1;32m        |  \033[1;37m'\''---'\''  |\033[0m\n'
+    printf '\033[1;32m        |         |\033[0m\n'
+    printf '\033[1;32m        |         |\033[0m\n'
+    printf '\033[1;32m        |         |\033[0m\n'
+    printf '\033[1;32m         \\_______/\033[0m\n'
+    printf '\n'
+    printf '\033[1;32m🥒 CucumberAgent Updater\033[0m\n'
+    printf '\033[1;32m=========================\033[0m\n\n'
+}
+
+ensure_uv() {
+    if ! command_exists uv; then
+        say "→ Installing uv (Python package manager)..."
+        command_exists curl || die "curl is required to install uv."
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+    fi
+    export PATH="$HOME/.local/bin:$PATH"
+    command_exists uv || die "uv is not available on PATH after installation."
+}
+
+sync_default_skills() {
+    if [ ! -d "$INSTALL_DIR/default-skills" ]; then
+        return
+    fi
+
+    say "→ Syncing default skills..."
+    mkdir -p "$SKILLS_DIR"
+
+    found=false
+    for skill in "$INSTALL_DIR"/default-skills/*.yaml; do
+        [ -f "$skill" ] || continue
+        found=true
+        cp "$skill" "$SKILLS_DIR/"
+    done
+
+    if [ "$found" = true ]; then
+        say "✓ Skills synced to $SKILLS_DIR"
+    else
+        warn "No default skill YAML files found."
+    fi
+}
+
+print_banner
+
+command_exists git || die "git is required for updates."
 
 if [ ! -d "$INSTALL_DIR" ]; then
-    echo "❌ Error: CucumberAgent is not installed at $INSTALL_DIR"
-    echo "   Please run the installer first."
-    exit 1
+    die "CucumberAgent is not installed at $INSTALL_DIR. Run the installer first."
+fi
+
+if [ ! -d "$INSTALL_DIR/.git" ]; then
+    die "$INSTALL_DIR is not a git checkout. Reinstall or set CUCUMBER_INSTALL_DIR."
 fi
 
 cd "$INSTALL_DIR"
 
-echo "→ Checking for updates..."
+if ! git diff --quiet || ! git diff --cached --quiet; then
+    git status --short
+    die "Local changes detected. Commit or stash them before updating. No files were changed."
+fi
+
+say "→ Checking for updates..."
 git fetch origin main
 
-LOCAL_HASH=$(git rev-parse HEAD)
-REMOTE_HASH=$(git rev-parse origin/main)
+local_hash="$(git rev-parse HEAD)"
+remote_hash="$(git rev-parse origin/main)"
 
-if [ "$LOCAL_HASH" = "$REMOTE_HASH" ]; then
-    echo "✅ CucumberAgent is already up to date (Version: ${LOCAL_HASH:0:7})."
-    echo ""
-    exit 0
-fi
-
-echo "→ New version found! Updating from ${LOCAL_HASH:0:7} to ${REMOTE_HASH:0:7}..."
-git reset --hard origin/main
-
-echo "→ Syncing dependencies and tools..."
-if command -v uv &> /dev/null; then
-    uv sync
-    uv tool install -e . --force
+if [ "$local_hash" = "$remote_hash" ]; then
+    say "✅ CucumberAgent is already up to date (Version: $(short_hash "$local_hash"))."
 else
-    echo "⚠️  uv not found. Trying to install it first..."
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    export PATH="${HOME}/.local/bin:${PATH}"
-    uv sync
-    uv tool install -e . --force
+    say "→ Updating from $(short_hash "$local_hash") to $(short_hash "$remote_hash")..."
+    git merge --ff-only origin/main
 fi
 
-# Sync new default skills
-SKILLS_DIR="${HOME}/.cucumber/skills"
-if [ -d "${INSTALL_DIR}/default-skills" ]; then
-    echo "→ Syncing default skills..."
-    mkdir -p "$SKILLS_DIR"
-    cp "${INSTALL_DIR}/default-skills/"*.yaml "$SKILLS_DIR/"
-    echo "✓ Skills synced to ${SKILLS_DIR}/"
-fi
+ensure_uv
 
-echo ""
-echo "✅ CucumberAgent successfully updated to the latest version!"
-echo ""
-echo "   Run 'cucumber run' to start chatting!"
-echo "=========================================="
-echo ""
+say "→ Syncing dependencies and command-line tool..."
+uv sync
+uv tool install -e . --force
+
+sync_default_skills
+
+printf '\n'
+say "✅ CucumberAgent update complete!"
+say "   Run 'cucumber run' to start chatting."
+say "=========================================="
+printf '\n'

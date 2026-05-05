@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import os
 import warnings
 from pathlib import Path
 
-import pytest
 import yaml
 
 from cucumber_agent.config import Config, ProviderConfig
-
 
 # ------------------------------------------------------------------ #
 # Helpers
@@ -94,6 +91,20 @@ def test_env_cucumber_provider_overrides(tmp_path, monkeypatch):
     cfg_dir = _make_minimal_config_dir(tmp_path)
     cfg = Config.load(config_dir=cfg_dir)
     assert cfg.agent.provider == "deepseek"
+
+
+def test_system_prompt_uses_cucumber_install_dir_for_wiki(tmp_path, monkeypatch):
+    """Project self-awareness should follow the configured installation directory."""
+    install_dir = tmp_path / "install"
+    wiki_dir = install_dir / "wiki"
+    wiki_dir.mkdir(parents=True)
+    (wiki_dir / "README.md").write_text("# Wiki\n", encoding="utf-8")
+    monkeypatch.setenv("CUCUMBER_INSTALL_DIR", str(install_dir))
+
+    prompt = Config().personality.to_system_prompt()
+
+    assert f"PROJECT WIKI LOCATION: {install_dir}/wiki/" in prompt
+    assert f"- README: {wiki_dir / 'README.md'}" in prompt
 
 
 # ------------------------------------------------------------------ #
@@ -185,8 +196,14 @@ def test_from_env_no_yaml_needed(monkeypatch):
 def test_from_env_empty_gives_defaults(monkeypatch):
     """from_env() with no relevant env vars gives a default Config."""
     # Ensure none of our env vars are set
-    for var in ("MINIMAX_API_KEY", "OPENROUTER_API_KEY", "DEEPSEEK_API_KEY",
-                "OLLAMA_BASE_URL", "CUCUMBER_MODEL", "CUCUMBER_PROVIDER"):
+    for var in (
+        "MINIMAX_API_KEY",
+        "OPENROUTER_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "OLLAMA_BASE_URL",
+        "CUCUMBER_MODEL",
+        "CUCUMBER_PROVIDER",
+    ):
         monkeypatch.delenv(var, raising=False)
     cfg = Config.from_env()
     assert cfg.agent.provider == "openrouter"

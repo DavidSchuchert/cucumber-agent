@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -60,6 +59,11 @@ async def _save_brain(brain: dict, brain_file: Path) -> None:
 # Project analysis + planning
 # ---------------------------------------------------------------------------
 
+_ALLOWED_AGENT_ROLES = {"planner", "coder", "reviewer", "tester", "devops", "designer"}
+_MAX_PLANNER_FILES = 160
+_MAX_PLAN_TASKS = 40
+
+
 def _scan_project_files(project_path: Path) -> set[str]:
     """Scan project root and return a set of lowercase filenames/dirnames."""
     files: set[str] = set()
@@ -74,243 +78,285 @@ def _scan_project_files(project_path: Path) -> set[str]:
     return files
 
 
-async def _llm_detect_phases(spec_content: str, project_path: Path) -> dict[str, bool]:
-    """Ask the LLM which phases this project needs based on the SPEC.md content."""
-    import json
+def _planner_file_inventory(project_path: Path) -> list[str]:
+    """Return a compact project inventory for the LLM planner."""
+    ignored_dirs = {
+        ".git",
+        ".hg",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".swarm",
+        ".venv",
+        "__pycache__",
+        "dist",
+        "build",
+        "node_modules",
+        "vendor",
+    }
+    ignored_suffixes = {".db", ".sqlite", ".sqlite3", ".pyc", ".png", ".jpg", ".jpeg", ".gif"}
+    inventory: list[str] = []
+
+    if not project_path.exists():
+        return inventory
+
+    for path in sorted(project_path.rglob("*")):
+        if len(inventory) >= _MAX_PLANNER_FILES:
+            break
+        rel = path.relative_to(project_path)
+        if any(part in ignored_dirs for part in rel.parts):
+            continue
+        if path.is_file() and path.suffix.lower() in ignored_suffixes:
+            continue
+        suffix = "/" if path.is_dir() else ""
+        inventory.append(f"{rel.as_posix()}{suffix}")
+
+    return inventory
+
+
+def _extract_json_object(text: str) -> dict:
+    """Extract a JSON object from a model response."""
+    content = (text or "").strip()
+    if "```json" in content:
+        content = content.split("```json", 1)[1].split("```", 1)[0]
+    elif "```" in content:
+        content = content.split("```", 1)[1].split("```", 1)[0]
+
+    try:
+        parsed = json.loads(content.strip())
+    except json.JSONDecodeError:
+        start = content.find("{")
+        end = content.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            raise
+        parsed = json.loads(content[start : end + 1])
+
+    if not isinstance(parsed, dict):
+        raise ValueError("Planner response must be a JSON object")
+    return parsed
+
+
+def _clean_phase_name(value: object) -> str:
+    phase = str(value or "").strip().upper().replace(" ", "_").replace("-", "_")
+    return phase[:40]
+
+
+def _clean_task_files(raw_files: object) -> list[str]:
+    if not isinstance(raw_files, list):
+        return []
+
+    files: list[str] = []
+    for raw in raw_files[:12]:
+        file_path = str(raw or "").strip().replace("\\", "/")
+        if not file_path or file_path.startswith("/") or ".." in Path(file_path).parts:
+            continue
+        files.append(file_path[:180])
+    return files
+
+
+def _generic_ai_unavailable_plan() -> tuple[dict, list[str]]:
+    """Create a neutral fallback when the LLM planner is technically unavailable."""
+    return {
+        "task-001": {
+            "id": "task-001",
+            "description": "Implement the project requirements described in SPEC.md",
+            "agent_role": "coder",
+            "files": ["README.md"],
+            "dependencies": [],
+            "status": "pending",
+            "priority": 1,
+            "phase": 1,
+            "created_by": "planner-fallback",
+        }
+    }, ["IMPLEMENTATION"]
+
+
+def _normalize_llm_plan(plan: dict) -> tuple[dict, list[str]]:
+    """Validate and normalize an LLM-created swarm plan."""
+    raw_phases = plan.get("phases", [])
+    if not isinstance(raw_phases, list):
+        raw_phases = []
+
+    phases: list[str] = []
+    for raw_phase in raw_phases:
+        phase = _clean_phase_name(raw_phase)
+        if phase and phase not in phases:
+            phases.append(phase)
+
+    raw_tasks = plan.get("tasks", [])
+    if not isinstance(raw_tasks, list):
+        raw_tasks = []
+
+    tasks: dict = {}
+    llm_id_to_task_id: dict[str, str] = {}
+    pending_dependencies: dict[str, list[str]] = {}
+
+    for raw_task in raw_tasks[:_MAX_PLAN_TASKS]:
+        if not isinstance(raw_task, dict):
+            continue
+
+        description = str(raw_task.get("description") or "").strip()
+        if not description:
+            continue
+
+        role = str(raw_task.get("agent_role") or "coder").strip().lower()
+        if role not in _ALLOWED_AGENT_ROLES:
+            role = "coder"
+
+        raw_phase = raw_task.get("phase", 1)
+        phase_num: int
+        if isinstance(raw_phase, int):
+            phase_num = raw_phase
+        else:
+            phase_name = _clean_phase_name(raw_phase)
+            if phase_name and phase_name not in phases:
+                phases.append(phase_name)
+            phase_num = phases.index(phase_name) + 1 if phase_name in phases else 1
+
+        if not phases:
+            phases.append("IMPLEMENTATION")
+        phase_num = min(max(phase_num, 1), len(phases))
+
+        task_id = f"task-{len(tasks) + 1:03d}"
+        llm_task_id = str(raw_task.get("id") or task_id).strip()
+        llm_id_to_task_id[llm_task_id] = task_id
+
+        priority_raw = raw_task.get("priority", len(tasks) + 1)
+        try:
+            priority = int(priority_raw)
+        except TypeError, ValueError:
+            priority = len(tasks) + 1
+
+        dependencies = raw_task.get("dependencies", raw_task.get("depends_on", []))
+        if not isinstance(dependencies, list):
+            dependencies = []
+
+        tasks[task_id] = {
+            "id": task_id,
+            "description": description[:400],
+            "agent_role": role,
+            "files": _clean_task_files(raw_task.get("files", [])),
+            "dependencies": [],
+            "status": "pending",
+            "priority": priority,
+            "phase": phase_num,
+            "created_by": "ai-planner",
+        }
+        pending_dependencies[task_id] = [
+            str(dep).strip() for dep in dependencies if str(dep).strip()
+        ]
+
+    if not tasks:
+        return _generic_ai_unavailable_plan()
+
+    for task_id, deps in pending_dependencies.items():
+        normalized_deps = []
+        for dep in deps:
+            mapped = llm_id_to_task_id.get(dep, dep if dep in tasks else None)
+            if mapped and mapped != task_id and mapped not in normalized_deps:
+                normalized_deps.append(mapped)
+        tasks[task_id]["dependencies"] = normalized_deps
+
+    used_phase_numbers = {task["phase"] for task in tasks.values()}
+    compact_phases = [phase for i, phase in enumerate(phases, 1) if i in used_phase_numbers]
+    phase_number_map = {
+        old_num: new_num for new_num, old_num in enumerate(sorted(used_phase_numbers), 1)
+    }
+    for task in tasks.values():
+        task["phase"] = phase_number_map[task["phase"]]
+
+    return tasks, compact_phases or ["IMPLEMENTATION"]
+
+
+async def _llm_create_task_plan(spec_content: str, project_path: Path) -> dict:
+    """Ask the configured LLM to create the complete swarm task plan."""
     from cucumber_agent.agent import Agent
     from cucumber_agent.config import Config
-    from cucumber_agent.session import Session
+    from cucumber_agent.session import Message, Role
 
     config = Config.load()
     agent = Agent.from_config(config)
-    session = Session(id="swarm-plan", model=config.agent.model)
 
-    # Truncate spec to avoid huge prompts (first 4000 chars usually enough)
-    spec_preview = spec_content[:4000] if spec_content else ""
+    spec_preview = spec_content[:8000] if spec_content else "(Keine SPEC.md gefunden.)"
+    inventory = _planner_file_inventory(project_path)
 
-    prompt = f"""Du bist ein erfahrener Software-Architect. Analysiere die folgende SPEC.md und entscheide welche Phasen das Projekt braucht.
+    prompt = f"""Du bist der KI-Planner fuer Herbert Swarm.
+Erstelle einen konkreten, automatisch aus der Projektbeschreibung abgeleiteten Multi-Agent-Plan.
 
-Antworte AUSSCHLIESSLICH mit einem JSON-Objekt (kein Markdown, kein Text drumherum):
+Antworte AUSSCHLIESSLICH mit einem JSON-Objekt:
 {{
-  "has_infra": true/false,
-  "has_database": true/false,
-  "has_backend": true/false,
-  "has_frontend": true/false,
-  "has_testing": true/false,
-  "phase_order": ["INFRA", "DATABASE", "BACKEND", "FRONTEND", "TESTING"],
-  "plain_html_js": true/false,
-  "reasoning": "kurze Begründung"
+  "phases": ["PHASE_NAME"],
+  "tasks": [
+    {{
+      "id": "kurze-stabile-id",
+      "description": "konkrete Aufgabe",
+      "agent_role": "coder|reviewer|tester|devops|designer|planner",
+      "phase": "PHASE_NAME",
+      "priority": 1,
+      "files": ["relative/path.ext"],
+      "dependencies": ["andere-kurze-stabile-id"]
+    }}
+  ],
+  "reasoning": "kurze Begruendung"
 }}
 
 Regeln:
-- has_infra: Docker/Kubernetes/Containerization gewünscht?
-- has_database: Echte Datenbank (Postgres, MySQL, MongoDB, etc.) — NICHT localStorage!
-- has_backend: API-Server, Backend-Framework (Express, FastAPI, Django, etc.)
-- has_frontend: Frontend-Framework ODER Plain HTML/CSS/JS
-- has_testing: Unittests, Integrationstests, CI/CD?
-- plain_html_js: Reines HTML/CSS/JS ohne Framework?
-- phase_order: Nur die Phasen die wirklich gebraucht werden, in der richtigen Reihenfolge
+- Plane NUR, was aus SPEC.md und Projektdateien wirklich folgt.
+- Erfinde keine Frontend-, Backend-, Datenbank-, Docker- oder Testphase, wenn sie nicht verlangt ist.
+- Nutze sinnvolle Phasen in Ausfuehrungsreihenfolge. Phasen koennen frei benannt werden.
+- Tasks muessen klein genug fuer parallele Sub-Agenten sein und klare Dateien besitzen.
+- Dateien muessen relative Pfade im Projekt sein. Keine absoluten Pfade, kein '..'.
+- Dependencies duerfen nur auf task ids aus deiner Antwort zeigen.
+- Wenn die Anforderungen sehr klein sind, plane eine einzelne IMPLEMENTATION-Phase mit einer Aufgabe.
 
-Wenn das Projekt nur Plain HTML/CSS/JS ist (kein Backend, keine DB):
-  - phase_order: ["FRONTEND"]
-  - plain_html_js: true
+Projekt: {project_path.name}
+Projektpfad: {project_path}
 
 SPEC.md:
 {spec_preview}
 
-[{project_path.name}] Projekt-Dateien: {sorted(_scan_project_files(project_path))}"""
+Projektinventar:
+{json.dumps(inventory, ensure_ascii=False, indent=2)}"""
 
-    try:
-        response = await agent.run_with_tools(session, prompt)
-        # Extract JSON from response
-        content = response.content.strip() if response.content else "{}"
-        # Try to find JSON block
-        if "```json" in content:
-            content = content.split("```json")[1].split("```")[0]
-        elif "```" in content:
-            content = content.split("```")[1].split("```")[0]
-        result = json.loads(content.strip())
+    response = await agent._provider.complete(
+        messages=[Message(role=Role.USER, content=prompt)],
+        model=config.agent.model,
+        temperature=0.2,
+        max_tokens=4000,
+        tools=None,
+    )
+    return _extract_json_object(response.content)
 
-        console.print(f"  [dim]🤖 LLM: {result.get('reasoning', '')[:120]}[/dim]")
-
-        return {
-            "has_infra": bool(result.get("has_infra", False)),
-            "has_database": bool(result.get("has_database", False)),
-            "has_backend": bool(result.get("has_backend", False)),
-            "has_frontend": bool(result.get("has_frontend", True)),
-            "has_testing": bool(result.get("has_testing", False)),
-            "phase_order": result.get("phase_order", ["FRONTEND"]),
-            "plain_html_js": bool(result.get("plain_html_js", False)),
-        }
-    except Exception as e:
-        console.print(f"  [yellow]⚠ LLM phase detection failed: {e} — falling back to file scan[/yellow]")
-        # Fallback: scan files
-        files = _scan_project_files(project_path)
-        return {
-            "has_infra": bool(files & {"dockerfile", "docker-compose.yml", "docker-compose.yaml", "kubernetes"}),
-            "has_database": bool(files & {"requirements.txt", "pyproject.toml", "package.json"}),
-            "has_backend": bool(files & {"requirements.txt", "pyproject.toml", "package.json"}),
-            "has_frontend": True,
-            "has_testing": bool(files & {"pytest.ini", "conftest.py", "jest.config.js", "vitest.config.ts"}),
-            "phase_order": ["FRONTEND"],
-            "plain_html_js": True,
-        }
 
 async def _analyze_and_plan(spec_content: str, project_path: Path) -> tuple[dict, list[str]]:
-    """Analyze SPEC.md and create a task plan. Uses LLM for intelligent phase detection."""
-    # Step 1: LLM-powered phase detection
-    phase_info = await _llm_detect_phases(spec_content, project_path)
-    has_infra = phase_info["has_infra"]
-    has_database = phase_info["has_database"]
-    has_backend = phase_info["has_backend"]
-    has_frontend = phase_info["has_frontend"]
-    has_testing = phase_info["has_testing"]
-    plain_html_js = phase_info["plain_html_js"]
-
-    # Step 2: Build phase list from LLM response
-    phase_names: list[str] = phase_info["phase_order"]
-    phase_map: dict[str, int] = {name: i + 1 for i, name in enumerate(phase_names)}
-
-    # Step 3: Create tasks based on detected phases
-    tasks: dict = {}
-    task_id = 1
-
-    def make_task(
-        desc: str,
-        role: str,
-        files: list[str],
-        deps: Sequence[str | None],
-        phase: int,
-        priority: int,
-    ) -> dict:
-        nonlocal task_id
-        tid = f"task-{task_id:03d}"
-        task_id += 1
-        return {
-            "id": tid,
-            "description": desc,
-            "agent_role": role,
-            "files": files,
-            "dependencies": [d for d in deps if d],
-            "status": "pending",
-            "priority": priority,
-            "phase": phase,
-            "created_by": "planner",
-        }
-
-    # INFRA phase
-    infra_id: str | None = None
-    if has_infra and "INFRA" in phase_map:
-        t = make_task(
-            "Create infrastructure and configuration files",
-            "coder",
-            ["docker/docker-compose.yml", "docker/.env.example"],
-            [],
-            phase_map["INFRA"],
-            1,
+    """Analyze SPEC.md and create a task plan using the configured LLM."""
+    try:
+        plan = await _llm_create_task_plan(spec_content, project_path)
+        if reasoning := str(plan.get("reasoning") or "").strip():
+            console.print(f"  [dim]🤖 Planner: {reasoning[:160]}[/dim]")
+        return _normalize_llm_plan(plan)
+    except Exception as e:
+        console.print(
+            f"  [yellow]⚠ KI-Planung fehlgeschlagen: {e} — nutze neutralen Minimalplan[/yellow]"
         )
-        infra_id = t["id"]
-        tasks[infra_id] = t
-
-    # DATABASE phase
-    db_model_id: str | None = None
-    if has_database and "DATABASE" in phase_map:
-        t = make_task(
-            "Create database models and migration scripts",
-            "coder",
-            ["backend/core/database.py", "backend/models/__init__.py", "alembic/env.py"],
-            [infra_id] if infra_id else [],
-            phase_map["DATABASE"],
-            2,
-        )
-        db_model_id = t["id"]
-        tasks[db_model_id] = t
-
-    # BACKEND phases (BACKEND_CORE + BACKEND_API as single BACKEND)
-    backend_id: str | None = None
-    if has_backend and "BACKEND" in phase_map:
-        t = make_task(
-            "Create backend API server and business logic",
-            "coder",
-            ["backend/server.py", "backend/routes/api.py", "backend/core/service.py"],
-            [infra_id, db_model_id] if infra_id or db_model_id else [],
-            phase_map["BACKEND"],
-            3,
-        )
-        backend_id = t["id"]
-        tasks[backend_id] = t
-
-    # FRONTEND phase
-    if has_frontend and "FRONTEND" in phase_map:
-        fe_deps = [d for d in [infra_id, backend_id] if d]
-        if plain_html_js:
-            # Plain HTML/CSS/JS project
-            fe_files = ["index.html", "css/style.css", "js/app.js"]
-        else:
-            # Framework project
-            fe_files = [
-                "frontend/src/pages/index.tsx", "frontend/src/App.tsx",
-                "frontend/src/components/Layout.tsx", "frontend/src/components/Card.tsx",
-            ]
-        t = make_task(
-            "Create main pages and UI components",
-            "coder",
-            fe_files[:2],
-            fe_deps,
-            phase_map["FRONTEND"],
-            4,
-        )
-        tasks[t["id"]] = t
-        if len(fe_files) > 2:
-            t2 = make_task(
-                "Create additional UI components",
-                "coder",
-                fe_files[2:],
-                fe_deps,
-                phase_map["FRONTEND"],
-                4,
-            )
-            tasks[t2["id"]] = t2
-
-    # TESTING phase
-    if has_testing and "TESTING" in phase_map and tasks:
-        t = make_task(
-            "Create tests and CI/CD pipeline",
-            "reviewer",
-            ["tests/test_api.py", "tests/conftest.py", ".github/workflows/ci.yml"],
-            list(tasks.keys()),
-            phase_map["TESTING"],
-            5,
-        )
-        tasks[t["id"]] = t
-
-    # Fallback: if no tasks created, create a generic implementation task
-    if not tasks:
-        t = make_task(
-            "Implement the project requirements described in SPEC.md",
-            "coder",
-            ["README.md"],
-            [],
-            1,
-            1,
-        )
-        tasks[t["id"]] = t
-        phase_names = ["IMPLEMENTATION"]
-        phase_map = {"IMPLEMENTATION": 1}
-
-    return tasks, phase_names
+        return _generic_ai_unavailable_plan()
 
 
 # ---------------------------------------------------------------------------
 # Agent prompt builder
 # ---------------------------------------------------------------------------
 
+
 def _build_agent_prompt(task: dict, brain: dict, brain_file: Path) -> str:
     project_path = str(Path(brain.get("project_path", ".")).resolve())
     spec_summary = brain.get("spec_summary", "")
-    tid          = task["id"]
-    files        = "\n".join(f"  - {f}" for f in task["files"])
-    spec_ctx     = f"\n### PROJEKT-SPEZIFIKATION (Zusammenfassung):\n{spec_summary[:1000]}\n" if spec_summary else ""
+    tid = task["id"]
+    files = "\n".join(f"  - {f}" for f in task["files"])
+    spec_ctx = (
+        f"\n### PROJEKT-SPEZIFIKATION (Zusammenfassung):\n{spec_summary[:1000]}\n"
+        if spec_summary
+        else ""
+    )
 
     coding_standards = (
         "### CODING STANDARDS:\n"
@@ -324,8 +370,8 @@ def _build_agent_prompt(task: dict, brain: dict, brain_file: Path) -> str:
         f"\n### GEHIRN-UPDATE REGEL:\n"
         f"Nachdem du ALLE Dateien erstellt/bearbeitet hast, MUSST du das Projekt-Gehirn aktualisieren:\n"
         f"1. Lese die Datei: {brain_file}\n"
-        f"2. Füge dein Ergebnis zu brain[\"facts\"][\"task_{tid}_result\"] hinzu.\n"
-        f"3. Das Format MUSS ein JSON-Objekt sein: {{\"files_created\": [...], \"summary\": \"<dein bericht>\"}}\n"
+        f'2. Füge dein Ergebnis zu brain["facts"]["task_{tid}_result"] hinzu.\n'
+        f'3. Das Format MUSS ein JSON-Objekt sein: {{"files_created": [...], "summary": "<dein bericht>"}}\n'
     )
 
     return (
@@ -345,6 +391,7 @@ def _build_agent_prompt(task: dict, brain: dict, brain_file: Path) -> str:
 # ---------------------------------------------------------------------------
 # Sub-agent execution
 # ---------------------------------------------------------------------------
+
 
 def _format_failure(
     message: str,
@@ -408,12 +455,28 @@ def _summarize_tool_args(tool_name: str, args: dict) -> str:
     # "multiple values for" collisions when ToolRegistry.execute(name, **kwargs)
     # forwards to tool.execute(pos_arg=value, **kwargs)
     skip_keys = {
-        "name", "code", "task", "prompt", "image_url",
-        "path", "url", "command", "pattern", "goal",
-        "session", "target", "query", "working_dir",
+        "name",
+        "code",
+        "task",
+        "prompt",
+        "image_url",
+        "path",
+        "url",
+        "command",
+        "pattern",
+        "goal",
+        "session",
+        "target",
+        "query",
+        "working_dir",
         # SwarmTool positional params
-        "project", "spec", "parallel", "timeout",
-        "dry_run", "retry_failed", "yes",
+        "project",
+        "spec",
+        "parallel",
+        "timeout",
+        "dry_run",
+        "retry_failed",
+        "yes",
     }
     for k, v in args.items():
         if k in skip_keys:
@@ -461,7 +524,7 @@ async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -
     from cucumber_agent.session import Session
 
     config = Config.load()
-    agent  = Agent.from_config(config)
+    agent = Agent.from_config(config)
     session = Session(id=f"swarm-{tid}", model=config.agent.model)
     project_path = Path(brain.get("project_path", ".")).resolve()
 
@@ -486,13 +549,17 @@ async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -
             bar_len = 12
             filled = int((step / max_steps) * bar_len)
             bar = "█" * filled + "░" * (bar_len - filled)
-            console.print(f"  [dim cyan][{tid}][/dim cyan] [{step+1}/{max_steps}] [dim]{bar}[/dim] Denke... ")
+            console.print(
+                f"  [dim cyan][{tid}][/dim cyan] [{step + 1}/{max_steps}] [dim]{bar}[/dim] Denke... "
+            )
 
             response = await agent.run_with_tools(session, current_input)
             step_duration = _time.monotonic() - step_start
 
             if step_duration > 60:
-                console.print(f"  [dim cyan][{tid}][/dim cyan]   [yellow]⚠ LLM: {step_duration:.0f}s[/yellow]")
+                console.print(
+                    f"  [dim cyan][{tid}][/dim cyan]   [yellow]⚠ LLM: {step_duration:.0f}s[/yellow]"
+                )
 
             # Show agent thought / reasoning before tools
             if response.content and not response.tool_calls:
@@ -501,14 +568,18 @@ async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -
 
             if not response.tool_calls:
                 output_preview = (response.content or "")[:200].replace("\n", " ").strip()
-                console.print(f"  [dim cyan][{tid}][/dim cyan]   [green]✓ Abgeschlossen[/green] [dim]{output_preview}[/dim]")
+                console.print(
+                    f"  [dim cyan][{tid}][/dim cyan]   [green]✓ Abgeschlossen[/green] [dim]{output_preview}[/dim]"
+                )
                 return {"success": True, "output": (response.content or "")[:600]}
 
             # Execute each tool call
             for tc in response.tool_calls:
                 # Show tool call with key args
                 args_preview = _summarize_tool_args(tc.name, tc.arguments)
-                console.print(f"  [dim cyan][{tid}][/dim cyan]   [cyan]→ {tc.name}[/cyan] [dim]{args_preview}[/dim]")
+                console.print(
+                    f"  [dim cyan][{tid}][/dim cyan]   [cyan]→ {tc.name}[/cyan] [dim]{args_preview}[/dim]"
+                )
 
                 tool_args, blocked = _normalize_swarm_tool_args(
                     tc.name,
@@ -527,7 +598,9 @@ async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -
                     result.output if result.success else "ERROR: " + (result.error or result.output)
                 )
                 if len(output_text) > 4000:
-                    output_text = output_text[:2000] + "\n... [TRUNCATED] ...\n" + output_text[-2000:]
+                    output_text = (
+                        output_text[:2000] + "\n... [TRUNCATED] ...\n" + output_text[-2000:]
+                    )
 
                 if not result.success and not output_text.strip():
                     output_text = "ERROR: Tool failed without stderr/output"
@@ -547,9 +620,13 @@ async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -
                 )
 
             # If the agent used tools, inject a neutral continuation prompt.
-            current_input = "[ Weiter mit dem nächsten Schritt — die vorherigen Tools wurden ausgeführt. ]"
+            current_input = (
+                "[ Weiter mit dem nächsten Schritt — die vorherigen Tools wurden ausgeführt. ]"
+            )
 
-        console.print(f"  [dim cyan][{tid}][/dim cyan]   [yellow]⚠ Step-Limit ({max_steps}) erreicht[/yellow]")
+        console.print(
+            f"  [dim cyan][{tid}][/dim cyan]   [yellow]⚠ Step-Limit ({max_steps}) erreicht[/yellow]"
+        )
         return {"success": False, "output": "Step limit reached before task completion"}
     except Exception as e:
         logger.exception(f"Exception in swarm task {tid}")
@@ -577,10 +654,11 @@ def _task_error_summary(result: dict) -> str:
 # Command implementations
 # ---------------------------------------------------------------------------
 
+
 async def _cmd_init(project: str, name: str | None = None) -> str:
     project_path = Path(project).resolve()
     project_name = name or project_path.name
-    brain_file   = _brain_file_for(project_path)
+    brain_file = _brain_file_for(project_path)
 
     project_path.mkdir(parents=True, exist_ok=True)
     brain: dict = {
@@ -596,22 +674,24 @@ async def _cmd_init(project: str, name: str | None = None) -> str:
     }
     await _save_brain(brain, brain_file)
 
-    console.print(Panel(
-        f"[bold green]✓ Swarm initialized[/bold green]\n"
-        f"[bold]Project:[/bold] {project_name}\n"
-        f"[bold]Path:[/bold]    {project_path}\n"
-        f"[bold]Brain:[/bold]   {brain_file}\n\n"
-        f"[bold cyan]→ Nächster Schritt:[/bold cyan] /herbert-swarm plan {project_path}",
-        title="[bold cyan]🐝 CucumberSwarm[/bold cyan]",
-        border_style="cyan",
-    ))
+    console.print(
+        Panel(
+            f"[bold green]✓ Swarm initialized[/bold green]\n"
+            f"[bold]Project:[/bold] {project_name}\n"
+            f"[bold]Path:[/bold]    {project_path}\n"
+            f"[bold]Brain:[/bold]   {brain_file}\n\n"
+            f"[bold cyan]→ Nächster Schritt:[/bold cyan] /herbert-swarm plan {project_path}",
+            title="[bold cyan]🐝 CucumberSwarm[/bold cyan]",
+            border_style="cyan",
+        )
+    )
     return f"Swarm initialized for '{project_name}' at {project_path}. Brain: {brain_file}"
 
 
 async def _cmd_plan(project: str, spec: str | None = None) -> str:
     project_path = Path(project).resolve()
-    brain_file   = _brain_file_for(project_path)
-    brain        = await _load_brain(brain_file)
+    brain_file = _brain_file_for(project_path)
+    brain = await _load_brain(brain_file)
     if brain is None:
         return f"ERROR: No swarm brain at {brain_file}. Run 'init' first."
 
@@ -624,7 +704,7 @@ async def _cmd_plan(project: str, spec: str | None = None) -> str:
         console.print(f"[yellow]No spec file at {spec_path} — scanning project files[/yellow]")
 
     tasks, phases = await _analyze_and_plan(spec_content, project_path)
-    brain["tasks"]  = tasks
+    brain["tasks"] = tasks
     brain["phases"] = phases
     await _save_brain(brain, brain_file)
 
@@ -635,14 +715,17 @@ async def _cmd_plan(project: str, spec: str | None = None) -> str:
 
     next_hint = (
         f"\n[bold cyan]→ Nächster Schritt:[/bold cyan] /herbert-swarm run {project_path}"
-        if tasks else ""
+        if tasks
+        else ""
     )
 
-    console.print(Panel(
-        "\n".join(lines) + next_hint,
-        title="[bold cyan]🐝 CucumberSwarm — Plan[/bold cyan]",
-        border_style="cyan",
-    ))
+    console.print(
+        Panel(
+            "\n".join(lines) + next_hint,
+            title="[bold cyan]🐝 CucumberSwarm — Plan[/bold cyan]",
+            border_style="cyan",
+        )
+    )
     return f"Plan: {len(tasks)} tasks across {len(phases)} phases ({', '.join(phases)})"
 
 
@@ -659,8 +742,8 @@ async def _cmd_run(
         return "ERROR: timeout must be at least 1 second."
 
     project_path = Path(project).resolve()
-    brain_file   = _brain_file_for(project_path)
-    brain        = await _load_brain(brain_file)
+    brain_file = _brain_file_for(project_path)
+    brain = await _load_brain(brain_file)
     if brain is None:
         return f"ERROR: No swarm brain at {brain_file}. Run 'init' and 'plan' first."
     if not brain.get("tasks"):
@@ -680,28 +763,33 @@ async def _cmd_run(
         await _save_brain(brain, brain_file)
 
     run_start = datetime.now()
-    console.print(Panel(
-        f"[bold]Project:[/bold]  {brain['project_name']}\n"
-        f"[bold]Tasks:[/bold]    {len(brain['tasks'])}\n"
-        f"[bold]Phases:[/bold]   {', '.join(brain.get('phases', []))}\n"
-        f"[bold]Parallel:[/bold] {parallel}  [bold]Timeout:[/bold] {timeout}s/agent"
-        + ("\n[yellow]DRY RUN — no agents called[/yellow]" if dry_run else ""),
-        title="[bold cyan]🐝 CucumberSwarm — Execution[/bold cyan]",
-        border_style="cyan",
-    ))
+    console.print(
+        Panel(
+            f"[bold]Project:[/bold]  {brain['project_name']}\n"
+            f"[bold]Tasks:[/bold]    {len(brain['tasks'])}\n"
+            f"[bold]Phases:[/bold]   {', '.join(brain.get('phases', []))}\n"
+            f"[bold]Parallel:[/bold] {parallel}  [bold]Timeout:[/bold] {timeout}s/agent"
+            + ("\n[yellow]DRY RUN — no agents called[/yellow]" if dry_run else ""),
+            title="[bold cyan]🐝 CucumberSwarm — Execution[/bold cyan]",
+            border_style="cyan",
+        )
+    )
 
     semaphore = asyncio.Semaphore(parallel)
 
     for phase_num, phase_name in enumerate(brain.get("phases", []), 1):
         phase_tasks = [
-            (tid, t) for tid, t in brain["tasks"].items()
+            (tid, t)
+            for tid, t in brain["tasks"].items()
             if t["phase"] == phase_num and t["status"] == "pending"
         ]
         if not phase_tasks:
             continue
 
-        console.print(f"\n[bold cyan]═══ Phase {phase_num}: {phase_name} ═══[/bold cyan] "
-                      f"[dim]({len(phase_tasks)} tasks, max {parallel} parallel)[/dim]")
+        console.print(
+            f"\n[bold cyan]═══ Phase {phase_num}: {phase_name} ═══[/bold cyan] "
+            f"[dim]({len(phase_tasks)} tasks, max {parallel} parallel)[/dim]"
+        )
 
         for tid, task in phase_tasks:
             task["status"] = "running"
@@ -712,8 +800,11 @@ async def _cmd_run(
             for tid, task in phase_tasks:
                 task["status"] = "done"
                 task["completed_at"] = datetime.now().isoformat()
-                console.print(f"  [yellow][DRY][/yellow] [cyan]{tid}[/cyan]: {task['description'][:55]}")
+                console.print(
+                    f"  [yellow][DRY][/yellow] [cyan]{tid}[/cyan]: {task['description'][:55]}"
+                )
         else:
+
             async def run_one(tid: str, task: dict) -> tuple[str, dict]:
                 async with semaphore:
                     try:
@@ -731,18 +822,12 @@ async def _cmd_run(
 
                     ok = result.get("success", False)
                     status_icon = "[green]✓[/green]" if ok else "[red]✗[/red]"
-                    console.print(
-                        f"  {status_icon} [cyan]{tid}[/cyan]: {task['description'][:55]}"
-                    )
+                    console.print(f"  {status_icon} [cyan]{tid}[/cyan]: {task['description'][:55]}")
                     if not ok:
-                        console.print(
-                            f"    [red]Error:[/red] {_task_error_summary(result)[:240]}"
-                        )
+                        console.print(f"    [red]Error:[/red] {_task_error_summary(result)[:240]}")
                     return tid, result
 
-            result_pairs = await asyncio.gather(
-                *(run_one(tid, task) for tid, task in phase_tasks)
-            )
+            result_pairs = await asyncio.gather(*(run_one(tid, task) for tid, task in phase_tasks))
             results = dict(result_pairs)
 
             for tid, task in phase_tasks:
@@ -761,34 +846,40 @@ async def _cmd_run(
                     }
                 else:
                     task["status"] = "failed"
-                    task["error"]  = _task_error_summary(r)[:500]
+                    task["error"] = _task_error_summary(r)[:500]
                     task["error_details"] = {
-                        key: value
-                        for key, value in r.items()
-                        if key not in {"success"}
+                        key: value for key, value in r.items() if key not in {"success"}
                     }
                 task["completed_at"] = datetime.now().isoformat()
 
         # Phase summary after all tasks in this phase finish
-        phase_done   = sum(1 for t in phase_tasks if brain["tasks"][t[0]]["status"] == "done")
+        phase_done = sum(1 for t in phase_tasks if brain["tasks"][t[0]]["status"] == "done")
         phase_failed = sum(1 for t in phase_tasks if brain["tasks"][t[0]]["status"] == "failed")
         icon = "[green]✓[/green]" if not phase_failed else f"[red]⚠ {phase_failed} failed[/red]"
-        console.print(f"  [dim]Phase {phase_num} abgeschlossen:[/dim] {icon} {phase_done}/{len(phase_tasks)} done\n")
+        console.print(
+            f"  [dim]Phase {phase_num} abgeschlossen:[/dim] {icon} {phase_done}/{len(phase_tasks)} done\n"
+        )
 
         await _save_brain(brain, brain_file)
         brain["current_phase"] = phase_num
         await _save_brain(brain, brain_file)
 
-    done    = sum(1 for t in brain["tasks"].values() if t["status"] == "done")
-    failed  = sum(1 for t in brain["tasks"].values() if t["status"] == "failed")
-    total   = len(brain["tasks"])
+    done = sum(1 for t in brain["tasks"].values() if t["status"] == "done")
+    failed = sum(1 for t in brain["tasks"].values() if t["status"] == "failed")
+    total = len(brain["tasks"])
     elapsed = int((datetime.now() - run_start).total_seconds())
 
     summary_table = Table.grid(padding=(0, 2))
-    summary_table.add_row("[bold]Done:[/bold]",    f"[green]{done}/{total}[/green]")
-    summary_table.add_row("[bold]Failed:[/bold]",  f"[red]{failed}[/red]" if failed else "0")
+    summary_table.add_row("[bold]Done:[/bold]", f"[green]{done}/{total}[/green]")
+    summary_table.add_row("[bold]Failed:[/bold]", f"[red]{failed}[/red]" if failed else "0")
     summary_table.add_row("[bold]Elapsed:[/bold]", f"{elapsed}s")
-    console.print(Panel(summary_table, title="[bold cyan]🐝 CucumberSwarm — Complete[/bold cyan]", border_style="cyan"))
+    console.print(
+        Panel(
+            summary_table,
+            title="[bold cyan]🐝 CucumberSwarm — Complete[/bold cyan]",
+            border_style="cyan",
+        )
+    )
 
     suffix = f" ({failed} failed — run 'swarm run --retry-failed' to retry)" if failed else ""
     return f"Swarm complete: {done}/{total} tasks done{suffix}"
@@ -796,7 +887,7 @@ async def _cmd_run(
 
 async def _cmd_status(project: str | None) -> str:
     brain_file = _brain_file_for(project)
-    brain      = await _load_brain(brain_file)
+    brain = await _load_brain(brain_file)
     if brain is None:
         return f"No brain found at {brain_file}. Run 'init' first."
 
@@ -808,8 +899,10 @@ async def _cmd_status(project: str | None) -> str:
     for t in tasks.values():
         by_status[t["status"]] = by_status.get(t["status"], 0) + 1
 
-    lines = [f"[bold]Project:[/bold] {brain.get('project_name','?')}  "
-             f"[bold]Tasks:[/bold] {len(tasks)}\n"]
+    lines = [
+        f"[bold]Project:[/bold] {brain.get('project_name', '?')}  "
+        f"[bold]Tasks:[/bold] {len(tasks)}\n"
+    ]
     icons = {"pending": "○", "running": "◐", "done": "●", "failed": "✗"}
     for status, count in sorted(by_status.items()):
         icon = icons.get(status, "?")
@@ -818,31 +911,39 @@ async def _cmd_status(project: str | None) -> str:
 
     for phase_num, phase_name in enumerate(brain.get("phases", []), 1):
         phase_tasks = [t for t in tasks.values() if t["phase"] == phase_num]
-        done   = sum(1 for t in phase_tasks if t["status"] == "done")
+        done = sum(1 for t in phase_tasks if t["status"] == "done")
         failed = sum(1 for t in phase_tasks if t["status"] == "failed")
         bar = "●" * done + "✗" * failed + "○" * (len(phase_tasks) - done - failed)
-        lines.append(f"\n  Phase {phase_num} [cyan]{phase_name}[/cyan]: [{bar}] {done}/{len(phase_tasks)}")
+        lines.append(
+            f"\n  Phase {phase_num} [cyan]{phase_name}[/cyan]: [{bar}] {done}/{len(phase_tasks)}"
+        )
 
-    console.print(Panel("\n".join(lines), title="[bold cyan]🐝 CucumberSwarm — Status[/bold cyan]", border_style="cyan"))
+    console.print(
+        Panel(
+            "\n".join(lines),
+            title="[bold cyan]🐝 CucumberSwarm — Status[/bold cyan]",
+            border_style="cyan",
+        )
+    )
 
     parts = [f"{s}: {c}" for s, c in sorted(by_status.items())]
-    return f"Status for '{brain.get('project_name','?')}': " + ", ".join(parts)
+    return f"Status for '{brain.get('project_name', '?')}': " + ", ".join(parts)
 
 
 async def _cmd_report(project: str | None) -> str:
     brain_file = _brain_file_for(project)
-    brain      = await _load_brain(brain_file)
+    brain = await _load_brain(brain_file)
     if brain is None:
         return f"No brain at {brain_file}. Run 'init' first."
 
     tasks = brain.get("tasks", {})
     facts = brain.get("facts", {})
 
-    total   = len(tasks)
-    done    = sum(1 for t in tasks.values() if t["status"] == "done")
-    failed  = sum(1 for t in tasks.values() if t["status"] == "failed")
+    total = len(tasks)
+    done = sum(1 for t in tasks.values() if t["status"] == "done")
+    failed = sum(1 for t in tasks.values() if t["status"] == "failed")
     pending = sum(1 for t in tasks.values() if t["status"] == "pending")
-    pct     = f"{done/total*100:.0f}%" if total else "0%"
+    pct = f"{done / total * 100:.0f}%" if total else "0%"
 
     all_files: list[str] = []
     for tid, task in tasks.items():
@@ -853,8 +954,8 @@ async def _cmd_report(project: str | None) -> str:
                     all_files.append(f)
 
     report_table = Table.grid(padding=(0, 2))
-    report_table.add_row("[bold]Project:[/bold]",  brain.get("project_name", "?"))
-    report_table.add_row("[bold]Done:[/bold]",     f"[green]{done}/{total}[/green] ({pct})")
+    report_table.add_row("[bold]Project:[/bold]", brain.get("project_name", "?"))
+    report_table.add_row("[bold]Done:[/bold]", f"[green]{done}/{total}[/green] ({pct})")
     if failed:
         report_table.add_row("[bold]Failed:[/bold]", f"[red]{failed}[/red]")
     if pending:
@@ -862,7 +963,13 @@ async def _cmd_report(project: str | None) -> str:
     if all_files:
         report_table.add_row("[bold]Files:[/bold]", str(len(all_files)))
 
-    console.print(Panel(report_table, title="[bold cyan]🐝 CucumberSwarm — Report[/bold cyan]", border_style="cyan"))
+    console.print(
+        Panel(
+            report_table,
+            title="[bold cyan]🐝 CucumberSwarm — Report[/bold cyan]",
+            border_style="cyan",
+        )
+    )
 
     if all_files:
         for f in all_files[:20]:
@@ -891,7 +998,7 @@ async def _cmd_report(project: str | None) -> str:
 
 async def _cmd_brain(project: str | None) -> str:
     brain_file = _brain_file_for(project)
-    brain      = await _load_brain(brain_file)
+    brain = await _load_brain(brain_file)
     if brain is None:
         return f"No brain at {brain_file}. Run 'init' first."
 
@@ -899,22 +1006,32 @@ async def _cmd_brain(project: str | None) -> str:
     facts = brain.get("facts", {})
 
     lines = [
-        f"[bold]Project:[/bold]  {brain.get('project_name','?')}",
-        f"[bold]Path:[/bold]     {brain.get('project_path','?')}",
-        f"[bold]Created:[/bold]  {brain.get('created_at','?')}",
-        f"[bold]Phase:[/bold]    {brain.get('current_phase',0)} / {len(brain.get('phases',[]))}",
+        f"[bold]Project:[/bold]  {brain.get('project_name', '?')}",
+        f"[bold]Path:[/bold]     {brain.get('project_path', '?')}",
+        f"[bold]Created:[/bold]  {brain.get('created_at', '?')}",
+        f"[bold]Phase:[/bold]    {brain.get('current_phase', 0)} / {len(brain.get('phases', []))}",
         f"[bold]Tasks:[/bold]    {len(tasks)}  [bold]Facts:[/bold] {len(facts)}",
     ]
-    console.print(Panel("\n".join(lines), title="[bold cyan]🐝 CucumberSwarm — Brain[/bold cyan]", border_style="cyan"))
+    console.print(
+        Panel(
+            "\n".join(lines),
+            title="[bold cyan]🐝 CucumberSwarm — Brain[/bold cyan]",
+            border_style="cyan",
+        )
+    )
 
     icons = {"pending": "○", "running": "◐", "done": "●", "failed": "✗"}
     for tid, task in tasks.items():
-        icon  = icons.get(task["status"], "?")
+        icon = icons.get(task["status"], "?")
         color = {"done": "green", "failed": "red"}.get(task["status"], "dim")
-        console.print(f"  [{color}]{icon}[/{color}] {tid} [dim]Phase {task['phase']}[/dim] {task['description'][:55]}")
+        console.print(
+            f"  [{color}]{icon}[/{color}] {tid} [dim]Phase {task['phase']}[/dim] {task['description'][:55]}"
+        )
 
-    return (f"Brain for '{brain.get('project_name','?')}': {len(tasks)} tasks, "
-            f"{len(facts)} facts, phase {brain.get('current_phase',0)}")
+    return (
+        f"Brain for '{brain.get('project_name', '?')}': {len(tasks)} tasks, "
+        f"{len(facts)} facts, phase {brain.get('current_phase', 0)}"
+    )
 
 
 async def _cmd_welcome() -> str:
@@ -979,13 +1096,15 @@ Du hast ein Projekt und willst es bauen? Der Swarm hilft dir in 3 Schritten:
 
 async def _cmd_reset(project: str | None, yes: bool = False) -> str:
     brain_file = _brain_file_for(project)
-    brain      = await _load_brain(brain_file)
+    brain = await _load_brain(brain_file)
     if brain is None:
         return f"No brain at {brain_file} — nothing to reset."
 
     project_name = brain.get("project_name", "?")
     if not yes:
-        console.print(f"[yellow]Reset brain for '{project_name}'? (call with yes=true to confirm)[/yellow]")
+        console.print(
+            f"[yellow]Reset brain for '{project_name}'? (call with yes=true to confirm)[/yellow]"
+        )
         return f"Reset cancelled. Pass yes=true to confirm reset of '{project_name}'."
 
     brain_file.unlink(missing_ok=True)
@@ -996,6 +1115,7 @@ async def _cmd_reset(project: str | None, yes: bool = False) -> str:
 # ---------------------------------------------------------------------------
 # The Tool
 # ---------------------------------------------------------------------------
+
 
 class SwarmTool(BaseTool):
     """Herbert Swarm — native multi-agent project builder."""
@@ -1072,17 +1192,28 @@ class SwarmTool(BaseTool):
                 out = await _cmd_welcome()
             elif command == "init":
                 if not project:
-                    return ToolResult(success=False, output="", error="'project' path is required for init")
+                    return ToolResult(
+                        success=False, output="", error="'project' path is required for init"
+                    )
                 out = await _cmd_init(project, name)
             elif command == "plan":
                 if not project:
-                    return ToolResult(success=False, output="", error="'project' path is required for plan")
+                    return ToolResult(
+                        success=False, output="", error="'project' path is required for plan"
+                    )
                 out = await _cmd_plan(project, spec)
             elif command == "run":
                 if not project:
-                    return ToolResult(success=False, output="", error="'project' path is required for run")
-                out = await _cmd_run(project, parallel=parallel, timeout=timeout,
-                                     dry_run=dry_run, retry_failed=retry_failed)
+                    return ToolResult(
+                        success=False, output="", error="'project' path is required for run"
+                    )
+                out = await _cmd_run(
+                    project,
+                    parallel=parallel,
+                    timeout=timeout,
+                    dry_run=dry_run,
+                    retry_failed=retry_failed,
+                )
             elif command == "status":
                 out = await _cmd_status(project)
             elif command == "report":

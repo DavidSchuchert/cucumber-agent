@@ -13,18 +13,56 @@ console = Console()
 CONFIG_DIR = Path.home() / ".cucumber"
 CONFIG_FILE = CONFIG_DIR / "config.yaml"
 
+PROVIDERS = {
+    "1": ("minimax", "MiniMax", "https://api.minimax.io/v1"),
+    "2": ("openrouter", "OpenRouter", "https://openrouter.ai/api/v1"),
+    "3": ("deepseek", "DeepSeek", "https://api.deepseek.com"),
+    "4": ("ollama", "Ollama", "http://localhost:11434/v1"),
+}
+
+API_KEY_ENV = {
+    "minimax": "MINIMAX_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+}
+
+NO_API_KEY_PROVIDERS = {"ollama"}
+
+MODEL_OPTIONS = {
+    "minimax": [
+        ("MiniMax-M2.7", "MiniMax M2.7 (fast, 204k context)"),
+    ],
+    "openrouter": [
+        ("openai/gpt-4o-mini", "GPT-4o Mini (fast, cheap)"),
+        ("openai/gpt-4o", "GPT-4o (powerful)"),
+        ("anthropic/claude-3.5-haiku", "Claude 3.5 Haiku (fast)"),
+        ("anthropic/claude-3.5-sonnet", "Claude 3.5 Sonnet (balanced)"),
+        ("google/gemini-2.0-flash", "Gemini 2.0 Flash (fast)"),
+        ("deepseek/deepseek-chat-v3-0324", "DeepSeek V3 (powerful)"),
+    ],
+    "deepseek": [
+        ("deepseek-chat", "DeepSeek Chat"),
+        ("deepseek-reasoner", "DeepSeek Reasoner"),
+    ],
+    "ollama": [
+        ("llama3.2", "Llama 3.2 (local default)"),
+        ("qwen2.5-coder", "Qwen 2.5 Coder (local coding)"),
+        ("mistral", "Mistral (local general purpose)"),
+    ],
+}
+
 
 def print_banner() -> None:
     cucumber_ascii = r"""
-           _____ 
-         /       \ 
-        |  (O)(O) | 
-        |    <    | 
-        |  '---'  | 
-        |         | 
-        |         | 
-        |         | 
-         \_______/ 
+           _____
+         /       \
+        |  (O)(O) |
+        |    <    |
+        |  '---'  |
+        |         |
+        |         |
+        |         |
+         \_______/
     """
     console.print(f"[bold green]{cucumber_ascii}[/bold green]")
     console.print(
@@ -193,42 +231,26 @@ def select_provider() -> tuple:
     console.print("[dim]1.[/dim] MiniMax (fast, cheap)")
     console.print("[dim]2.[/dim] OpenRouter (many models)")
     console.print("[dim]3.[/dim] DeepSeek (direct API)")
-    console.print("[dim]4.[/dim] NVIDIA NIM (40 req/min free)")
-    console.print("[dim]5.[/dim] LM Studio (local)")
+    console.print("[dim]4.[/dim] Ollama (local)")
     console.print()
 
     choice = Prompt.ask(
         "Which provider?",
-        choices=["1", "2", "3", "4", "5"],
+        choices=list(PROVIDERS),
         default="1",
     )
 
-    providers = {
-        "1": ("minimax", "MiniMax", "https://api.minimax.io/v1"),
-        "2": ("openrouter", "OpenRouter", "https://openrouter.ai/api/v1"),
-        "3": ("deepseek", "DeepSeek", "https://api.deepseek.com"),
-        "4": ("nvidia_nim", "NVIDIA NIM", "https://integrate.api.nvidia.com/v1"),
-        "5": ("lmstudio", "LM Studio", "http://localhost:1234/v1"),
-    }
-
-    return providers.get(choice, ("minimax", "MiniMax", "https://api.minimax.io/v1"))
+    return PROVIDERS.get(choice, PROVIDERS["1"])
 
 
 def get_api_key(provider_name: str, display_name: str) -> str | None:
     """Get API key from user or environment."""
-    env_map = {
-        "minimax": "MINIMAX_API_KEY",
-        "openrouter": "OPENROUTER_API_KEY",
-        "deepseek": "DEEPSEEK_API_KEY",
-        "nvidia_nim": "NVIDIA_NIM_API_KEY",
-    }
-
-    env_var = env_map.get(provider_name)
+    env_var = API_KEY_ENV.get(provider_name)
     if env_var and env_var in os.environ:
         console.print(f"[dim]Using {env_var} from environment[/dim]")
         return os.environ[env_var]
 
-    if provider_name == "lmstudio":
+    if provider_name in NO_API_KEY_PROVIDERS:
         return None
 
     api_key = Prompt.ask(
@@ -240,32 +262,7 @@ def get_api_key(provider_name: str, display_name: str) -> str | None:
 
 def select_model(provider_name: str, display_name: str) -> str:
     """Select a model."""
-    models = {
-        "minimax": [
-            ("MiniMax-M2.7", "MiniMax M2.7 (fast, 204k context)"),
-        ],
-        "openrouter": [
-            ("openai/gpt-4o-mini", "GPT-4o Mini (fast, cheap)"),
-            ("openai/gpt-4o", "GPT-4o (powerful)"),
-            ("anthropic/claude-3.5-haiku", "Claude 3.5 Haiku (fast)"),
-            ("anthropic/claude-3.5-sonnet", "Claude 3.5 Sonnet (balanced)"),
-            ("google/gemini-2.0-flash", "Gemini 2.0 Flash (fast)"),
-            ("deepseek/deepseek-chat-v3-0324", "DeepSeek V3 (powerful)"),
-        ],
-        "nvidia_nim": [
-            ("nvidia_nim/meta/llama-4-mega-8b-instruct", "Llama 4 Mega (fast)"),
-            ("nvidia_nim/meta/llama-4-maverick-17b-128e-instruct", "Llama 4 Maverick"),
-        ],
-        "deepseek": [
-            ("deepseek-chat", "DeepSeek Chat"),
-            ("deepseek-reasoner", "DeepSeek Reasoner"),
-        ],
-        "lmstudio": [
-            ("local-model", "Local Model (any loaded in LM Studio)"),
-        ],
-    }
-
-    options = models.get(provider_name, models["openrouter"])
+    options = MODEL_OPTIONS.get(provider_name, MODEL_OPTIONS["openrouter"])
 
     console.print(f"\n[bold]Available {display_name} models:[/bold]")
     for i, (model_id, desc) in enumerate(options, 1):
@@ -284,8 +281,6 @@ def create_personality_file(
     personality: dict,
 ) -> None:
     """Create personality.md file."""
-    from pathlib import Path
-
     personality_dir = Path.home() / ".cucumber" / "personality"
     personality_dir.mkdir(parents=True, exist_ok=True)
 
@@ -302,7 +297,7 @@ def create_personality_file(
     ]
 
     personality_file = personality_dir / "personality.md"
-    personality_file.write_text("\n".join(lines))
+    personality_file.write_text("\n".join(lines), encoding="utf-8")
 
 
 def build_system_prompt(
@@ -315,7 +310,9 @@ def build_system_prompt(
     lang = personality.get("language", "en")
     lang_map = {"en": "English", "de": "German"}
     language_name = lang_map.get(lang, lang)
-    parts.append(f"I ALWAYS communicate in {language_name}. ALL my responses must be in {language_name}.")
+    parts.append(
+        f"I ALWAYS communicate in {language_name}. ALL my responses must be in {language_name}."
+    )
 
     # Core identity
     parts.append(f"My name is {agent_name}.")
@@ -373,8 +370,6 @@ def build_system_prompt(
 
 def create_user_file(user_info: dict) -> None:
     """Create user.md file."""
-    from pathlib import Path
-
     user_dir = Path.home() / ".cucumber" / "user"
     user_dir.mkdir(parents=True, exist_ok=True)
 
@@ -388,7 +383,7 @@ def create_user_file(user_info: dict) -> None:
     ]
 
     user_file = user_dir / "user.md"
-    user_file.write_text("\n".join(lines))
+    user_file.write_text("\n".join(lines), encoding="utf-8")
 
 
 def create_config(
@@ -471,7 +466,7 @@ def run() -> None:
 
     # Step 6: API key
     api_key = get_api_key(provider_name, display_name)
-    if api_key is None and provider_name != "lmstudio":
+    if api_key is None and provider_name not in NO_API_KEY_PROVIDERS:
         console.print("[yellow]No API key provided. You can set it in config later.[/yellow]")
 
     # Step 7: Model
@@ -483,8 +478,9 @@ def run() -> None:
     )
 
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    with open(CONFIG_FILE, "w") as f:
-        yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    CONFIG_FILE.chmod(0o600)
 
     # Step 9: Create personality.md and user.md
     create_personality_file(agent_name, personality)

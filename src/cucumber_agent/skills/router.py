@@ -120,7 +120,9 @@ class MatchEngine:
                     score = 0.4 + overlap * 0.1
                     if score > best_score:
                         best_score = score
-                        best_reason = f"partial overlap ({overlap}/{len(trigger_words)}): {trigger!r}"
+                        best_reason = (
+                            f"partial overlap ({overlap}/{len(trigger_words)}): {trigger!r}"
+                        )
 
         return best_score, best_reason
 
@@ -159,14 +161,12 @@ class MatchEngine:
         (r"\bsqlite\b|\bpostgres\b|\bmysql\b", 0.6, "database mentioned"),
     ]
 
-    def _match_url_patterns(
-        self, skill: Skill, input_lower: str
-    ) -> tuple[float, str]:
+    def _match_url_patterns(self, skill: Skill, input_lower: str) -> tuple[float, str]:
         """Match URL patterns and domain indicators.
-        
+
         Domain-specific patterns are checked first. If matched, skill trigger
         relevance is evaluated and a meaningful score is returned.
-        
+
         Generic URL patterns (https://, www.) are checked second — they only
         boost skills that already matched via keyword triggers (small additive
         bonus), they never score a skill on their own.
@@ -197,7 +197,7 @@ class MatchEngine:
 
     def _domain_relevance(self, skill: Skill, pattern: str, trigger_text: str) -> float:
         """Check if a domain pattern is relevant to this skill's triggers.
-        
+
         Returns 1.0 if the matched domain is relevant to the skill's trigger keywords,
         0.0 otherwise. This prevents generic URL patterns from falsely boosting
         unrelated skills.
@@ -205,12 +205,38 @@ class MatchEngine:
         # domain → trigger keywords that indicate relevance to this domain.
         # NOTE: keep keywords specific (not generic words like "http", "web")
         # that would match any URL pattern including unrelated domains.
-        _DOMAIN_RELEVANCE: dict[str, list[str]] = {
-            "github": ["github", "git", "pr", "pull request", "repo", "branch", "commit", "actions"],
+        domain_relevance: dict[str, list[str]] = {
+            "github": [
+                "github",
+                "git",
+                "pr",
+                "pull request",
+                "repo",
+                "branch",
+                "commit",
+                "actions",
+            ],
             "gitlab": ["gitlab", "git", "repo", "ci", "pipeline", "merge request"],
             "arxiv": ["arxiv", "paper", "research", "academic", " preprint", " preprint"],
-            "pubmed": ["pubmed", "medline", "biomedical", "medical", "doi", "clinical", "pmc", "ncbi"],
-            "docker": ["docker", "container", "dockerfile", "image", "docker-compose", "registry", "pod"],
+            "pubmed": [
+                "pubmed",
+                "medline",
+                "biomedical",
+                "medical",
+                "doi",
+                "clinical",
+                "pmc",
+                "ncbi",
+            ],
+            "docker": [
+                "docker",
+                "container",
+                "dockerfile",
+                "image",
+                "docker-compose",
+                "registry",
+                "pod",
+            ],
             "kubernetes": ["kubernetes", "k8s", "pod", "deployment", "helm", "cluster", "kubectl"],
             "nginx": ["nginx", "reverse proxy", "load balancer"],
             "apache": ["apache", "httpd", "htaccess", "web server"],
@@ -221,10 +247,19 @@ class MatchEngine:
             "homebrew": ["homebrew", "brew", "macos", "cask"],
             "mdfind": ["spotlight", "mdfind", "macos", "metadata"],
             "plutil": ["plist", "preferences", "defaults", "macos"],
-            "database": ["database", "db", "sql", "sqlite", "postgres", "mysql", "mongodb", "redis"],
+            "database": [
+                "database",
+                "db",
+                "sql",
+                "sqlite",
+                "postgres",
+                "mysql",
+                "mongodb",
+                "redis",
+            ],
         }
 
-        for domain, keywords in _DOMAIN_RELEVANCE.items():
+        for domain, keywords in domain_relevance.items():
             if domain in pattern.lower():
                 # Exact domain in pattern → check if any domain keyword in triggers
                 if any(kw in trigger_text for kw in keywords):

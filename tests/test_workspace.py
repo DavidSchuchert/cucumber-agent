@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
 
 from cucumber_agent.smart_retry import (
     CommandCategory,
@@ -50,9 +47,7 @@ def test_detect_go_project(tmp_path: Path) -> None:
 
 def test_detect_java_maven_project(tmp_path: Path) -> None:
     """pom.xml triggers Java/Maven detection."""
-    (tmp_path / "pom.xml").write_text(
-        "<project><groupId>com.example</groupId></project>\n"
-    )
+    (tmp_path / "pom.xml").write_text("<project><groupId>com.example</groupId></project>\n")
     info = WorkspaceDetector.detect(tmp_path)
     assert info.project_type == "Java/Maven"
     assert info.package_manager == "maven"
@@ -76,9 +71,7 @@ def test_detect_php_project(tmp_path: Path) -> None:
 
 def test_detect_dotnet_project(tmp_path: Path) -> None:
     """.csproj file triggers .NET detection."""
-    (tmp_path / "MyApp.csproj").write_text(
-        "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>\n"
-    )
+    (tmp_path / "MyApp.csproj").write_text('<Project Sdk="Microsoft.NET.Sdk"></Project>\n')
     info = WorkspaceDetector.detect(tmp_path)
     assert info.project_type == ".NET"
     assert info.package_manager == "dotnet"

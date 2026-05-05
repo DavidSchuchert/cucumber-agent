@@ -2,6 +2,15 @@
 
 CucumberAgent supports multiple AI providers via a pluggable provider system.
 
+Built-in providers:
+
+| Provider | Config name | Notes |
+|----------|-------------|-------|
+| MiniMax | `minimax` | Default hosted provider |
+| OpenRouter | `openrouter` | OpenAI-compatible multi-model routing |
+| DeepSeek | `deepseek` | Direct DeepSeek API |
+| Ollama | `ollama` | Local OpenAI-compatible Ollama endpoint |
+
 ## Architecture
 
 ```
@@ -20,6 +29,7 @@ ProviderRegistry
 2. Implement `BaseProvider` subclass
 3. Decorate with `@ProviderRegistry.register("<name>")`
 4. Import in `providers/__init__.py`
+5. If it should appear in `cucumber init`, add it to `installer/init.py`
 
 ## Example
 

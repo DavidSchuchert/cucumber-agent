@@ -576,10 +576,16 @@ class CucumberTUI:
         to_sum = self._session.messages[:-keep]
         remaining = self._session.messages[-keep:]
         new_summary = await self.agent.summarize_messages(to_sum)
-        self._session.metadata["summary"] = new_summary
+        existing = self._session.metadata.get("summary", "")
+        combined = (
+            existing.strip() + "\n\n[Neuere Zusammenfassung:]\n" + new_summary.strip()
+            if existing
+            else new_summary.strip()
+        )
+        self._session.metadata["summary"] = combined
         self._session.messages = remaining
         from cucumber_agent.memory import SessionSummary
 
-        SessionSummary(self.config.memory.summary_file).save(new_summary)
+        SessionSummary(self.config.memory.summary_file).save(combined)
         self.history.add_system("[dim italic]✓ Kontext komprimiert.[/dim italic]")
         self._refresh_output()

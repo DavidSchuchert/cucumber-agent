@@ -33,7 +33,7 @@ cucumber init
 6. **Interests** — What topics does it care about?
 7. **User info** — Your name, bio, GitHub, portfolio
 8. **Preferences** — Web search, coding, memory
-9. **Provider** — MiniMax, OpenRouter, DeepSeek, etc.
+9. **Provider** — MiniMax, OpenRouter, DeepSeek, or Ollama
 10. **API key** — Provider API key
 11. **Model** — Which model to use
 12. **Workspace** — Default working directory
@@ -55,6 +55,42 @@ Show current configuration.
 cucumber config
 ```
 
+## `cucumber doctor`
+
+Run a setup diagnosis before or outside a chat session.
+
+```bash
+cucumber doctor
+```
+
+It checks provider config, API key presence, docs/wiki location, loaded skills,
+registered tools, workspace, optional `SPEC.md`, `uv`, and config validation.
+
+## Quick UX Helpers
+
+```bash
+cucumber quickstart
+cucumber what-now
+cucumber shortcuts
+cucumber spec-template
+cucumber tips
+cucumber examples
+cucumber docs swarm
+```
+
+`spec-template` prints a copy-paste `SPEC.md` scaffold for Herbert Swarm.
+
+## `cucumber update`
+
+Update an existing `~/.cucumber-agent` installation.
+
+```bash
+cucumber update
+```
+
+The updater fetches `origin/main`, refuses to run if local changes are present,
+then applies a fast-forward merge and reinstalls the local `uv` tool.
+
 ## `cucumber --help`
 
 Show help.
@@ -74,6 +110,15 @@ All commands start with `/`. Tab-completion is available for all of them.
 | Command | Description |
 |---------|-------------|
 | `/help` | Show all available commands |
+| `/what-now` | Suggest the next useful step |
+| `/quickstart` | Show the safest first steps |
+| `/shortcuts` | Show short aliases such as `/?`, `/next`, `/why` |
+| `/spec-template` | Show a `SPEC.md` scaffold for Herbert Swarm |
+| `/tips` | Show contextual tips and tricks |
+| `/examples` | Show copy-paste examples |
+| `/docs [topic]` | Show a short wiki excerpt, e.g. `/docs swarm` |
+| `/doctor` | Diagnose setup from inside the chat |
+| `/explain-last` | Explain the last action, response, or error |
 | `/exit` | Save session summary and exit |
 | `/clear` | Clear conversation (workspace/facts metadata preserved) |
 | `/history [N]` | Show last N messages (default 10) |
@@ -105,7 +150,16 @@ The prompt switches to `  ...` while accumulating. Send a line without `\` to su
 | `/pin` | List all pinned items |
 | `/unpin <nr>` | Remove a pinned item by number |
 
+**How memory works:** `personality.md` is loaded as immutable core identity on
+every request. Stored facts from `/remember` are loaded from the persistent
+FactsStore, pins are injected as highest-priority session context, and old chat
+history is compressed into append-only summaries.
+
 **How `/pin` works:** Pinned text is injected as high-priority context into every system prompt, above the operational instructions. It is never compressed or lost.
+
+**Tip:** Use `/remember` for long-term preferences and `/pin` for current task
+rules. Example: `/remember preferred_provider: minimax` and `/pin Do not modify
+installer scripts without tests`.
 
 ### Agent & Tools
 

@@ -27,6 +27,7 @@ _PROVIDER_ENV_KEYS: dict[str, tuple[str, str]] = {
 
 # Known-valid model prefixes / providers (used for validation heuristics)
 _KNOWN_MODEL_PREFIXES = (
+    "MiniMax-",
     "openai/",
     "anthropic/",
     "google/",
@@ -166,8 +167,14 @@ class PersonalityConfig:
             pass
 
         # Self-awareness
-        project_path = Path.home() / "cucumber-agent"
-        if project_path.exists():
+        install_dir = os.environ.get("CUCUMBER_INSTALL_DIR")
+        candidate_paths = [
+            Path(install_dir).expanduser() if install_dir else None,
+            Path.home() / ".cucumber-agent",
+            Path.home() / "cucumber-agent",
+        ]
+        project_path = next((path for path in candidate_paths if path and path.exists()), None)
+        if project_path and project_path.exists():
             parts.append(f"PROJECT WIKI LOCATION: {project_path}/wiki/")
             wiki_files = (
                 list((project_path / "wiki").glob("*.md"))
@@ -606,9 +613,9 @@ def get_default_provider() -> tuple[str, ProviderConfig]:
     # but kept here for callers that bypassed load()).
     if provider_config and provider_config.api_key is None:
         env_key_map = {
+            "minimax": "MINIMAX_API_KEY",
             "openrouter": "OPENROUTER_API_KEY",
             "deepseek": "DEEPSEEK_API_KEY",
-            "nvidia_nim": "NVIDIA_NIM_API_KEY",
         }
         env_var = env_key_map.get(provider_name)
         if env_var:

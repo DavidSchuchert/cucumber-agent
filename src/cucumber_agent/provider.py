@@ -90,6 +90,7 @@ class ProviderRegistry:
 
     _providers: dict[str, type[BaseProvider]] = {}
     _instances: dict[str, BaseProvider] = {}
+    _instance_keys: dict[str, tuple[tuple[str, str], ...]] = {}
 
     @classmethod
     def register(cls, name: str):
@@ -107,8 +108,10 @@ class ProviderRegistry:
         if name not in cls._providers:
             available = ", ".join(cls._providers.keys()) or "none"
             raise ValueError(f"Unknown provider '{name}'. Available: {available}")
-        if name not in cls._instances:
+        instance_key = tuple(sorted((key, repr(value)) for key, value in kwargs.items()))
+        if name not in cls._instances or cls._instance_keys.get(name) != instance_key:
             cls._instances[name] = cls._providers[name](**kwargs)
+            cls._instance_keys[name] = instance_key
         return cls._instances[name]
 
     @classmethod
@@ -123,4 +126,7 @@ class ProviderRegistry:
             available = ", ".join(cls._providers.keys()) or "none"
             raise ValueError(f"Unknown provider '{name}'. Available: {available}")
         cls._instances[name] = cls._providers[name](**kwargs)
+        cls._instance_keys[name] = tuple(
+            sorted((key, repr(value)) for key, value in kwargs.items())
+        )
         return cls._instances[name]

@@ -1,5 +1,7 @@
 """CLI - Read-Eval-Print loop for CucumberAgent."""
+
 from __future__ import annotations
+
 import asyncio
 import os
 import re
@@ -39,7 +41,7 @@ from cucumber_agent.memory import FactsStore, SessionLogger
 from cucumber_agent.session import Message as SessionMessage
 from cucumber_agent.session import Role as SessionRole
 from cucumber_agent.session import Session
-from cucumber_agent.skills import Skill, SkillLoader, SkillRunner, SkillRouter
+from cucumber_agent.skills import Skill, SkillLoader, SkillRouter, SkillRunner
 from cucumber_agent.tools.registry import ToolRegistry
 from cucumber_agent.workspace import WorkspaceDetector
 
@@ -48,6 +50,9 @@ logger = get_logger("cli")
 _COMMAND_PUNCTUATION = ".,;:!?"
 STATIC_SLASH_COMMANDS = [
     "/help",
+    "/quickstart",
+    "/shortcuts",
+    "/spec-template",
     "/exit",
     "/quit",
     "/clear",
@@ -68,14 +73,36 @@ STATIC_SLASH_COMMANDS = [
     "/forget",
     "/skills",
     "/tools",
+    "/doctor",
+    "/tips",
+    "/examples",
+    "/what-now",
+    "/docs",
+    "/explain-last",
     "/history",
     "/undo",
     "/export",
 ]
 
+SLASH_COMMAND_ALIASES = {
+    "/?": "/help",
+    "/start": "/quickstart",
+    "/next": "/what-now",
+    "/why": "/explain-last",
+    "/doc": "/docs",
+    "/cheatsheet": "/examples",
+    "/short": "/shortcuts",
+    "/spec": "/spec-template",
+}
+
 
 def _normalize_command_word(word: str) -> str:
     return word.strip().rstrip(_COMMAND_PUNCTUATION).lower()
+
+
+def _canonical_slash_command(command: str) -> str:
+    """Resolve short aliases to their canonical slash command."""
+    return SLASH_COMMAND_ALIASES.get(command, command)
 
 
 def _skill_command_candidates(skill: Skill) -> list[str]:
@@ -92,7 +119,9 @@ def _completion_commands(skill_loader: SkillLoader) -> list[str]:
     return sorted(set(STATIC_SLASH_COMMANDS + [skill.command for skill in skill_loader.skills]))
 
 
-def _resolve_skill_invocation(user_input: str, skill_loader: SkillLoader) -> tuple[Skill, str] | None:
+def _resolve_skill_invocation(
+    user_input: str, skill_loader: SkillLoader
+) -> tuple[Skill, str] | None:
     """Resolve exact skill command or alias, tolerating punctuation on command words."""
     words = user_input.strip().split()
     if not words:
@@ -121,7 +150,7 @@ def _command_suggestion(
 ) -> str | None:
     first_word = user_input.strip().split(None, 1)[0] if user_input.strip() else ""
     normalized = _normalize_command_word(first_word)
-    commands = list(static_commands)
+    commands = list(static_commands) + list(SLASH_COMMAND_ALIASES)
     for skill in skill_loader.skills:
         commands.extend(_skill_command_candidates(skill))
 
@@ -131,6 +160,7 @@ def _command_suggestion(
     }
     matches = get_close_matches(normalized, normalized_to_display.keys(), n=1, cutoff=0.55)
     return normalized_to_display[matches[0]] if matches else None
+
 
 console = Console()
 
@@ -178,11 +208,38 @@ async def stream_print(stream: AsyncIterator[str]) -> str:
     return full
 
 
-def get_git_behind_count(repo_path: str = "~/.cucumber-agent") -> int | None:
+def _get_install_dir() -> str:
+    """Return the absolute path to the cucumber-agent installation directory."""
+    if install_dir := os.environ.get("CUCUMBER_INSTALL_DIR"):
+        return str(Path(install_dir).expanduser().resolve())
+    # Current file is in src/cucumber_agent/cli.py, so go up 2 levels to get the repo root
+    # if it's a git repo. Fallback to ~/.cucumber-agent.
+    try:
+        import subprocess
+
+        res = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=os.path.dirname(__file__),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if res.returncode == 0:
+            return res.stdout.strip()
+    except Exception:
+        pass
+    return os.path.expanduser("~/.cucumber-agent")
+
+
+def get_git_behind_count(repo_path: str | None = None) -> int | None:
     """Return number of commits behind origin/main, or None if unavailable."""
     import subprocess
+
     try:
-        expanded = os.path.expanduser(repo_path)
+        expanded = repo_path or _get_install_dir()
+        if not os.path.exists(os.path.join(expanded, ".git")):
+            return None
+
         # fetch first (quiet)
         subprocess.run(
             ["git", "fetch", "origin"],
@@ -283,52 +340,482 @@ def print_welcome(config: Config) -> None:
             f"[bold]/update[/bold] zum Aktualisieren[/yellow]"
         )
     elif behind is not None and behind == 0:
-        console.print(f"\n  [dim]✔  Auf Stand mit origin/main[/dim]")
+        console.print("\n  [dim]✔  Auf Stand mit origin/main[/dim]")
     # if None: git not available or not a repo — stay silent
 
-    console.print("\n[dim]Tippe [bold]/help[/bold] für Befehle oder einfach loslegen![/dim]")
+    console.print(
+        "\n[dim]Tippe [bold]/what-now[/bold] für den nächsten Schritt, "
+        "[bold]/doctor[/bold] für Diagnose oder [bold]/help[/bold] für Befehle.[/dim]"
+    )
     console.print()
 
 
 def print_help() -> None:
     """Print help message."""
-    table = Table(show_header=True, header_style="bold green", box=None, padding=(0, 2))
-    table.add_column("Befehl", style="bold cyan", no_wrap=True)
-    table.add_column("Beschreibung", style="white")
-
-    commands = [
-        ("/help", "Diese Hilfe anzeigen"),
-        ("/exit", "CucumberAgent beenden"),
-        ("/clear", "Gesprächsverlauf löschen (Kontext bleibt erhalten)"),
-        ("/config", "Aktuelle Konfiguration anzeigen"),
-        ("/model", "Aktuelles Modell anzeigen"),
-        ("/update", "Git pull origin/main — Updates einspielen"),
-        ("/optimize", "Persönlichkeit basierend auf Namen optimieren"),
-        ("/debug", "Debug-Modus ein/ausschalten"),
-        ("/memory", "Alle gemerkten Fakten anzeigen"),
-        ("/context", "Aktuelle Context-Auslastung anzeigen"),
-        ("/autopilot <plan|run|status|report|reset>", "Projekt-Autopilot planen und ausführen"),
-        ("/history [N]", "Letzte N Nachrichten anzeigen (Standard: 10)"),
-        ("/undo", "Letzte Benutzer+Assistenten-Nachricht entfernen"),
-        ("/export", "Session als Markdown-Datei exportieren"),
-        ("/remember ...", "Fakt merken, z.B. /remember name: David"),
-        ("/forget ...", "Fakt vergessen, z.B. /forget name"),
-        ("/skills", "Installierte Skills auflisten"),
-        ("/autoapprove", "Tool-Auto-Approve für diese Session ein/ausschalten"),
-        ("/compact", "Gesprächsverlauf jetzt manuell komprimieren"),
-        ("/pin <text>", "Text dauerhaft in System-Prompt pinnen (überlebt Komprimierung)"),
-        ("/unpin <nr>", "Gepinnten Eintrag entfernen (/pin ohne Arg zeigt Liste)"),
-        ("/cost", "Token-Verbrauch und geschätzte Kosten dieser Session anzeigen"),
-        ("Mehrzeilig", "Zeile mit \\ beenden → nächste Zeile eingeben (beliebig viele)"),
+    groups = [
+        (
+            "Loslegen",
+            [
+                ("/quickstart", "3-Minuten-Einstieg anzeigen"),
+                ("/shortcuts", "Kurze Aliase anzeigen"),
+                ("/spec-template", "SPEC.md-Vorlage für Herbert Swarm anzeigen"),
+                ("/what-now", "Nächsten sinnvollen Schritt vorschlagen"),
+                ("/tips", "Kontext-Tipps anzeigen"),
+                ("/examples", "Copy-paste-Beispiele anzeigen"),
+                ("/docs [thema]", "Kurz-Doku anzeigen, z.B. /docs swarm"),
+            ],
+        ),
+        (
+            "Arbeiten",
+            [
+                ("/herbert-swarm . --dry-run", "Projekt per KI planen, ohne Dateien zu ändern"),
+                ("/autopilot plan <ziel>", "Sequentiellen Projektplan anlegen"),
+                ("/skills", "Installierte Skills auflisten"),
+                ("/tools", "Registrierte Tools anzeigen"),
+            ],
+        ),
+        (
+            "Nachvollziehen",
+            [
+                ("/doctor", "Setup, Provider, Skills und Projektzustand prüfen"),
+                ("/explain-last", "Letzte Aktion, Antwort oder Fehlermeldung erklären"),
+                ("/history [N]", "Letzte N Nachrichten anzeigen"),
+                ("/context", "Context-Auslastung anzeigen"),
+                ("/debug", "Debug-Modus ein/ausschalten"),
+            ],
+        ),
+        (
+            "Gedächtnis",
+            [
+                ("/remember key: wert", "Fakt merken"),
+                ("/forget key", "Fakt vergessen"),
+                ("/memory", "Gemerkte Fakten anzeigen"),
+                ("/pin <text>", "Wichtigen Kontext pinnen"),
+                ("/compact", "Verlauf zusammenfassen"),
+            ],
+        ),
+        (
+            "System",
+            [
+                ("/config", "Aktuelle Konfiguration anzeigen"),
+                ("/model", "Provider und Modell anzeigen"),
+                ("/update", "Sicher aktualisieren"),
+                ("/autoapprove", "Tool-Bestätigungen für diese Session umschalten"),
+                ("/undo", "Letzte Benutzer+Assistenten-Nachricht entfernen"),
+                ("/export", "Session als Markdown exportieren"),
+                ("/clear", "Gesprächsverlauf löschen"),
+                ("/exit", "Beenden"),
+            ],
+        ),
     ]
-    for cmd, desc in commands:
-        table.add_row(cmd, desc)
 
     console.print()
+    panels = []
+    for title, commands in groups:
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column("Befehl", style="bold cyan", no_wrap=True)
+        table.add_column("Beschreibung", style="white")
+        for cmd, desc in commands:
+            table.add_row(cmd, desc)
+        panels.append(Panel(table, title=f"[bold green]{title}[/bold green]", border_style="green"))
+
+    console.print(Columns(panels, equal=True, expand=True))
     console.print(
-        Panel(table, title="[bold green]Befehle[/bold green]", border_style="green", padding=(1, 2))
+        Panel(
+            "[bold]Merksatz:[/bold] /doctor prüft die Basis, /what-now sagt dir den nächsten Schritt, "
+            "/quickstart zeigt den leichtesten Einstieg.",
+            border_style="dim",
+            padding=(0, 1),
+        )
     )
     console.print()
+
+
+def print_quickstart(config: Config) -> None:
+    """Print a short guided onboarding path."""
+    provider = config.agent.provider
+    model = config.agent.model
+    workspace = Path(config.workspace or Path.cwd()).expanduser()
+    has_spec = (workspace / "SPEC.md").exists()
+
+    steps = [
+        ("1", "Setup prüfen", "cucumber doctor"),
+        ("2", "Beispiele ansehen", "/examples"),
+        ("3", "Nächsten Schritt wählen", "/what-now"),
+        (
+            "4",
+            "Projekt sicher planen",
+            "/herbert-swarm . --dry-run"
+            if has_spec
+            else "/spec-template nutzen, dann /herbert-swarm . --dry-run",
+        ),
+        ("5", "Bei Fragen erklären lassen", "/explain-last oder /docs swarm"),
+    ]
+
+    table = Table(show_header=True, header_style="bold green", box=None, padding=(0, 2))
+    table.add_column("#", style="bold cyan", no_wrap=True)
+    table.add_column("Ziel", style="bold")
+    table.add_column("Aktion", style="cyan")
+    for number, goal, action in steps:
+        table.add_row(number, goal, action)
+
+    body = (
+        f"[dim]Provider:[/dim] [cyan]{provider}[/cyan]  "
+        f"[dim]Modell:[/dim] [cyan]{model}[/cyan]  "
+        f"[dim]Workspace:[/dim] [cyan]{workspace}[/cyan]\n\n"
+    )
+    console.print(
+        Panel(
+            body,
+            title="[bold green]Quickstart[/bold green]",
+            subtitle="[dim]Kurz, sicher, nachvollziehbar[/dim]",
+            border_style="green",
+        )
+    )
+    console.print(table)
+    console.print(
+        "\n[dim]Shortcuts: [bold]/?[/bold] Hilfe · [bold]/next[/bold] nächster Schritt · "
+        "[bold]/why[/bold] letzte Aktion erklären · [bold]/cheatsheet[/bold] Beispiele[/dim]\n"
+    )
+
+
+def print_shortcuts() -> None:
+    """Print slash command aliases."""
+    table = Table(show_header=True, header_style="bold cyan", box=None, padding=(0, 2))
+    table.add_column("Kurz", style="bold cyan", no_wrap=True)
+    table.add_column("Lang", style="bold")
+    table.add_column("Bedeutung")
+    descriptions = {
+        "/help": "Hilfe anzeigen",
+        "/quickstart": "Schnelleinstieg",
+        "/what-now": "Nächster Schritt",
+        "/explain-last": "Letzte Aktion erklären",
+        "/docs": "Doku anzeigen",
+        "/examples": "Beispiele anzeigen",
+        "/shortcuts": "Shortcuts anzeigen",
+        "/spec-template": "SPEC.md-Vorlage anzeigen",
+    }
+    for alias, canonical in sorted(SLASH_COMMAND_ALIASES.items()):
+        table.add_row(alias, canonical, descriptions.get(canonical, ""))
+    console.print(Panel(table, title="[bold cyan]Shortcuts[/bold cyan]", border_style="cyan"))
+    console.print()
+
+
+def _spec_template_text() -> str:
+    """Return a copy-paste SPEC.md template."""
+    return """# SPEC
+
+## Ziel
+Beschreibe in 2-5 Saetzen, was gebaut oder geaendert werden soll.
+
+## Nutzer und Haupt-Workflow
+- Wer nutzt es?
+- Was ist der wichtigste Ablauf?
+- Was soll auf keinen Fall kompliziert sein?
+
+## Funktionen
+- [ ] Funktion 1
+- [ ] Funktion 2
+- [ ] Funktion 3
+
+## Technische Vorgaben
+- Stack/Framework:
+- Datenhaltung:
+- APIs/Integrationen:
+- Plattform/Zielumgebung:
+
+## Akzeptanzkriterien
+- [ ] Kriterium 1 ist messbar erfuellt
+- [ ] Kriterium 2 ist messbar erfuellt
+- [ ] Tests oder manuelle Checks sind beschrieben
+
+## Nicht-Ziele
+- Was soll explizit nicht gebaut werden?
+
+## Hinweise fuer Herbert Swarm
+- Erst planen und im Zweifel klein anfangen.
+- Bestehende Funktionen muessen erhalten bleiben.
+- Keine Platzhalter oder TODO-only Implementierungen.
+"""
+
+
+def print_spec_template() -> None:
+    """Print a SPEC.md template."""
+    console.print(
+        Panel(
+            _spec_template_text(),
+            title="[bold green]SPEC.md Vorlage[/bold green]",
+            subtitle="[dim]In SPEC.md legen, dann /herbert-swarm . --dry-run[/dim]",
+            border_style="green",
+        )
+    )
+    console.print()
+
+
+def _docs_dir(config: Config | None = None) -> Path:
+    """Return the best available documentation directory."""
+    candidates = []
+    install_dir = os.environ.get("CUCUMBER_INSTALL_DIR")
+    if install_dir:
+        candidates.append(Path(install_dir).expanduser() / "wiki")
+    candidates.extend(
+        [
+            Path(_get_install_dir()) / "wiki",
+            Path.home() / ".cucumber-agent" / "wiki",
+            Path.cwd() / "wiki",
+        ]
+    )
+    if config:
+        candidates.append(config.config_dir / "wiki")
+    return next((path for path in candidates if path.exists()), candidates[0])
+
+
+def _doc_topic_map() -> dict[str, str]:
+    return {
+        "readme": "README.md",
+        "spec": "Swarm.md",
+        "spec.md": "Swarm.md",
+        "start": "README.md",
+        "swarm": "Swarm.md",
+        "herbert": "Swarm.md",
+        "autopilot": "Autopilot.md",
+        "memory": "Memory.md",
+        "memories": "Memory.md",
+        "personality": "Memory.md",
+        "remember": "Memory.md",
+        "config": "Configuration.md",
+        "configuration": "Configuration.md",
+        "providers": "Providers.md",
+        "provider": "Providers.md",
+        "skills": "Skills.md",
+        "skill": "Skills.md",
+        "cli": "CLI.md",
+        "commands": "CLI.md",
+        "agent": "AgentGuide.md",
+        "architecture": "Architecture.md",
+    }
+
+
+def _read_doc_excerpt(config: Config, topic: str) -> tuple[str, str, Path] | None:
+    docs_dir = _docs_dir(config)
+    topic_key = topic.strip().lower() or "readme"
+    filename = _doc_topic_map().get(topic_key, topic_key)
+    if not filename.endswith(".md"):
+        filename += ".md"
+    path = docs_dir / filename
+    if not path.exists():
+        return None
+
+    lines = path.read_text(encoding="utf-8").splitlines()
+    excerpt_lines = []
+    for line in lines:
+        if len(excerpt_lines) >= 18:
+            break
+        if line.strip() or excerpt_lines:
+            excerpt_lines.append(line)
+    title = lines[0].lstrip("# ").strip() if lines else filename
+    return title, "\n".join(excerpt_lines).strip(), path
+
+
+def print_tips(config: Config, session: Session | None = None) -> None:
+    """Print context-aware usage tips."""
+    tips = [
+        (
+            "Orientierung",
+            "Nutze /what-now, wenn du nicht sicher bist, was als Nächstes sinnvoll ist.",
+        ),
+        ("Sicher planen", "Nutze /herbert-swarm . --dry-run, bevor der Swarm Dateien verändert."),
+        ("Diagnose", "Nutze /doctor nach Provider-, Installations- oder Skill-Problemen."),
+        ("Memory", "Nutze /remember für dauerhafte Fakten und /pin für aktuelle Regeln."),
+    ]
+    if session and len(session.messages) > max(6, config.context.remember_last):
+        tips.append(("Langer Chat", "Nutze /compact, um alte Nachrichten zusammenzufassen."))
+    if not config.get_provider_config(config.agent.provider):
+        tips.append(
+            ("Provider", "Dein aktiver Provider hat keinen Config-Eintrag. /doctor zeigt Details.")
+        )
+    if (Path.cwd() / "SPEC.md").exists():
+        tips.append(("Projekt", "SPEC.md gefunden: Herbert Swarm kann daraus automatisch planen."))
+    else:
+        tips.append(
+            ("Projekt", "Eine SPEC.md macht Herbert-Swarm-Pläne deutlich besser nachvollziehbar.")
+        )
+
+    table = Table(show_header=True, header_style="bold cyan", box=None, padding=(0, 2))
+    table.add_column("Bereich", style="bold")
+    table.add_column("Tipp")
+    for area, tip in tips:
+        table.add_row(area, tip)
+    console.print(Panel(table, title="[bold cyan]Tipps & Tricks[/bold cyan]", border_style="cyan"))
+    console.print()
+
+
+def print_examples() -> None:
+    """Print copy-paste examples."""
+    examples = [
+        ("Setup prüfen", "cucumber config validate\n# im Chat:\n/doctor"),
+        ("SPEC vorbereiten", "/spec-template\n# dann Inhalt als SPEC.md nutzen"),
+        ("Projekt planen", "/herbert-swarm . --dry-run"),
+        ("Projekt bauen", "/herbert-swarm . --parallel 3"),
+        ("Autopilot", "/autopilot plan Refactor installer safely\n/autopilot run"),
+        ("Wissen merken", "/remember lieblings_provider: minimax\n/docs memory"),
+        ("Aktuelle Regel pinnen", "/pin Erst planen, dann ausführen, danach Tests laufen lassen."),
+        ("Docs lesen", "/docs swarm\n/docs memory\n/docs config"),
+    ]
+    table = Table(show_header=True, header_style="bold magenta", box=None, padding=(0, 2))
+    table.add_column("Ziel", style="bold")
+    table.add_column("Beispiel", style="cyan")
+    for goal, example in examples:
+        table.add_row(goal, example)
+    console.print(
+        Panel(table, title="[bold magenta]Beispiele[/bold magenta]", border_style="magenta")
+    )
+    console.print()
+
+
+def print_docs(config: Config, topic: str) -> None:
+    """Print a short documentation excerpt."""
+    if not topic:
+        topics = ", ".join(sorted(_doc_topic_map().keys()))
+        console.print(
+            Panel(
+                f"Verwendung: [bold cyan]/docs <thema>[/bold cyan]\n\nThemen: {topics}",
+                title="[bold blue]Docs[/bold blue]",
+                border_style="blue",
+            )
+        )
+        console.print()
+        return
+
+    doc = _read_doc_excerpt(config, topic)
+    if doc is None:
+        console.print(
+            f"  [yellow]Keine Doku für '{topic}' gefunden.[/yellow] "
+            "[dim]Versuche /docs swarm, /docs config oder /docs cli.[/dim]\n"
+        )
+        return
+
+    title, excerpt, path = doc
+    console.print(
+        Panel(
+            excerpt or "[dim]Keine Vorschau verfügbar.[/dim]",
+            title=f"[bold blue]{title}[/bold blue]",
+            subtitle=f"[dim]{path}[/dim]",
+            border_style="blue",
+        )
+    )
+    console.print()
+
+
+def _build_doctor_rows(
+    config: Config,
+    *,
+    skill_count: int = 0,
+    tool_count: int = 0,
+    workspace: Path | None = None,
+) -> list[tuple[str, str, str]]:
+    """Build doctor check rows: area, status markup, detail."""
+    rows: list[tuple[str, str, str]] = []
+
+    provider_name = config.agent.provider
+    provider_cfg = config.get_provider_config(provider_name)
+    if provider_cfg is None:
+        rows.append(
+            ("Provider", "[red]BLOCKIERT[/red]", f"Kein Config-Eintrag für {provider_name}")
+        )
+    elif provider_name == "ollama":
+        rows.append(
+            (
+                "Provider",
+                "[green]OK[/green]",
+                f"{provider_name} lokal über {provider_cfg.base_url or 'http://localhost:11434/v1'}",
+            )
+        )
+    elif provider_cfg.api_key:
+        rows.append(("Provider", "[green]OK[/green]", f"{provider_name} API-Key vorhanden"))
+    else:
+        rows.append(("Provider", "[yellow]HINWEIS[/yellow]", f"{provider_name} API-Key fehlt"))
+
+    docs_dir = _docs_dir(config)
+    rows.append(
+        (
+            "Docs",
+            "[green]OK[/green]" if docs_dir.exists() else "[yellow]HINWEIS[/yellow]",
+            str(docs_dir) if docs_dir.exists() else "Wiki-Verzeichnis nicht gefunden",
+        )
+    )
+
+    rows.append(
+        (
+            "Skills",
+            "[green]OK[/green]" if skill_count else "[yellow]HINWEIS[/yellow]",
+            f"{skill_count} Skill(s) geladen",
+        )
+    )
+
+    rows.append(
+        (
+            "Tools",
+            "[green]OK[/green]" if tool_count else "[yellow]HINWEIS[/yellow]",
+            f"{tool_count} Tool(s) registriert",
+        )
+    )
+
+    workspace = workspace or Path(config.workspace or Path.cwd()).expanduser()
+    rows.append(
+        (
+            "Workspace",
+            "[green]OK[/green]" if workspace.exists() else "[yellow]HINWEIS[/yellow]",
+            str(workspace),
+        )
+    )
+
+    spec = workspace / "SPEC.md"
+    rows.append(
+        (
+            "SPEC.md",
+            "[green]OK[/green]" if spec.exists() else "[dim]OPTIONAL[/dim]",
+            "Gefunden" if spec.exists() else "Für Herbert Swarm empfohlen",
+        )
+    )
+
+    try:
+        import subprocess
+
+        uv = subprocess.run(["uv", "--version"], capture_output=True, text=True, timeout=5)
+        rows.append(
+            (
+                "uv",
+                "[green]OK[/green]" if uv.returncode == 0 else "[yellow]HINWEIS[/yellow]",
+                uv.stdout.strip() if uv.returncode == 0 else "uv nicht ausführbar",
+            )
+        )
+    except Exception as exc:
+        rows.append(("uv", "[yellow]HINWEIS[/yellow]", str(exc)))
+
+    config_issues = config.validate()
+    rows.append(
+        (
+            "Config",
+            "[green]OK[/green]" if not config_issues else "[yellow]HINWEIS[/yellow]",
+            "Keine Probleme" if not config_issues else "; ".join(config_issues[:2]),
+        )
+    )
+
+    return rows
+
+
+def print_doctor_report(rows: list[tuple[str, str, str]]) -> None:
+    """Print a doctor report from precomputed rows."""
+    table = Table(show_header=True, header_style="bold cyan", box=None, padding=(0, 2))
+    table.add_column("Check", style="bold")
+    table.add_column("Status", no_wrap=True)
+    table.add_column("Details")
+    for area, status, detail in rows:
+        table.add_row(area, status, detail)
+
+    console.print(Panel(table, title="[bold cyan]Doctor[/bold cyan]", border_style="cyan"))
+    console.print("[dim]Nächster Schritt: Im Chat /what-now nutzen.[/dim]\n")
 
 
 def print_config(config: Config) -> None:
@@ -471,6 +958,8 @@ class CliSession:
         self._smart_retry = config.preferences.smart_retry
         self._retry_count: dict[str, int] = {}
         self._session_tokens: dict[str, int] = {"input": 0, "output": 0, "calls": 0}
+        self._last_error: str | None = None
+        self._last_action: str = "Session gestartet"
 
         # Memory & persistence
         self._facts = FactsStore(config.memory.facts_file)
@@ -504,7 +993,7 @@ class CliSession:
             f"Agent Home: {config_dir} | "
             f"Personality File: {config_dir}/personality/personality.md | "
             f"Custom Tools: {config_dir}/custom_tools | "
-            f"Project Wiki: {config_dir}/wiki"
+            f"Project Wiki: {_docs_dir(self._config)}"
         )
 
         # Build capabilities context for the agent
@@ -520,7 +1009,7 @@ class CliSession:
 
         # ── Load key wiki files into context so the agent always knows them ──
         # Wiki lives in the agent home, NOT in the workspace
-        wiki_dir = self._config.config_dir / "wiki"
+        wiki_dir = _docs_dir(self._config)
         wiki_content = _load_wiki_key_files(wiki_dir)
         if wiki_content:
             self._session.metadata["wiki_knowledge"] = wiki_content
@@ -573,9 +1062,7 @@ class CliSession:
                 # Multi-line continuation: trailing \ means "more to come"
                 while user_input.endswith("\\"):
                     user_input = user_input[:-1] + "\n"
-                    cont = await pt_session.prompt_async(
-                        HTML("<b><ansicyan>  ...</ansicyan></b> ")
-                    )
+                    cont = await pt_session.prompt_async(HTML("<b><ansicyan>  ...</ansicyan></b> "))
                     user_input += cont
 
                 await self._handle_input(user_input)
@@ -663,6 +1150,8 @@ class CliSession:
 
         except Exception as e:
             logger.error(f"CLI error: {e}", exc_info=True)
+            self._last_error = str(e)
+            self._last_action = "Fehler beim Verarbeiten der letzten Eingabe"
             console.print(_format_http_error(e))
             if self._debug_mode:
                 import traceback
@@ -977,13 +1466,40 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
             return
 
         parts = user_input.strip().split(None, 1)
-        cmd = _normalize_command_word(parts[0]) if parts else ""
+        cmd = _canonical_slash_command(_normalize_command_word(parts[0])) if parts else ""
         # Extract argument for parametric commands
         arg = user_input.strip()[len(parts[0]) :].strip()
 
         match cmd:
             case "/help":
                 print_help()
+            case "/quickstart":
+                print_quickstart(self._config)
+                self._last_action = "Quickstart angezeigt"
+            case "/shortcuts":
+                print_shortcuts()
+                self._last_action = "Shortcuts angezeigt"
+            case "/spec-template":
+                print_spec_template()
+                self._last_action = "SPEC.md-Vorlage angezeigt"
+            case "/tips":
+                print_tips(self._config, self._session)
+                self._last_action = "Tipps angezeigt"
+            case "/examples":
+                print_examples()
+                self._last_action = "Beispiele angezeigt"
+            case "/docs":
+                print_docs(self._config, arg)
+                self._last_action = f"Doku angezeigt: {arg or 'index'}"
+            case "/doctor":
+                self._print_doctor()
+                self._last_action = "Doctor-Check ausgeführt"
+            case "/what-now":
+                self._print_what_now()
+                self._last_action = "Nächsten Schritt vorgeschlagen"
+            case "/explain-last":
+                self._print_explain_last()
+                self._last_action = "Letzte Aktion erklärt"
             case "/exit" | "/quit":
                 pers = self._config.personality
                 if self._config.memory.enabled and self._session.messages:
@@ -1014,26 +1530,60 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                 cfg = self._config.agent
                 console.print(f"  [dim]{cfg.provider}[/dim] / [bold cyan]{cfg.model}[/bold cyan]\n")
             case "/update":
-                behind = get_git_behind_count()
+                install_dir = _get_install_dir()
+                behind = get_git_behind_count(install_dir)
                 if behind is None:
                     console.print("  [red]Git nicht verfügbar oder kein Repo.[/red]\n")
                 elif behind == 0:
                     console.print("  [dim]✔  Bereits auf neuestem Stand (origin/main).[/dim]\n")
                 else:
-                    console.print(f"  [yellow]⬇ {behind} Commit(s) werden eingepielt...[/yellow]")
+                    console.print(f"  [yellow]⬇ {behind} Commit(s) werden eingespielt...[/yellow]")
                     import subprocess as _subprocess
+
                     try:
+                        status = _subprocess.run(
+                            ["git", "status", "--porcelain"],
+                            cwd=install_dir,
+                            capture_output=True,
+                            text=True,
+                            timeout=10,
+                        )
+                        if status.returncode != 0:
+                            console.print(f"  [red]✘ Git-Status-Fehler: {status.stderr}[/red]\n")
+                            return
+                        if status.stdout.strip():
+                            console.print(
+                                "  [red]✘ Lokale Änderungen erkannt.[/red] "
+                                "[dim]Committe oder stash sie vor /update.[/dim]\n"
+                            )
+                            return
+                        fetch = _subprocess.run(
+                            ["git", "fetch", "origin", "main"],
+                            cwd=install_dir,
+                            capture_output=True,
+                            text=True,
+                            timeout=60,
+                        )
+                        if fetch.returncode != 0:
+                            console.print(
+                                f"  [red]✘ Git-Fetch-Fehler: {fetch.stderr or fetch.stdout}[/red]\n"
+                            )
+                            return
                         res = _subprocess.run(
-                            ["git", "pull", "origin", "main"],
-                            cwd=os.path.expanduser("~/.cucumber-agent"),
+                            ["git", "merge", "--ff-only", "origin/main"],
+                            cwd=install_dir,
                             capture_output=True,
                             text=True,
                             timeout=60,
                         )
                         if res.returncode == 0:
-                            console.print(f"  [green]✔ Aktualisiert! Starte Cucumber neu für die Änderungen.[/green]\n")
+                            console.print(
+                                "  [green]✔ Aktualisiert! Starte Cucumber neu für die Änderungen.[/green]\n"
+                            )
                         else:
-                            console.print(f"  [red]✘ Git-Fehler: {res.stderr or res.stdout}[/red]\n")
+                            console.print(
+                                f"  [red]✘ Git-Fehler: {res.stderr or res.stdout}[/red]\n"
+                            )
                     except Exception as exc:
                         console.print(f"  [red]✘ Fehler: {exc}[/red]\n")
             case "/debug":
@@ -1051,7 +1601,9 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                         "  [bold green]✓ Auto-Approve AN[/bold green] — alle Tool-Aufrufe (inkl. Sub-Agenten) werden automatisch ausgeführt.\n"
                     )
                 else:
-                    console.print("  [dim]Auto-Approve AUS — Tool-Aufrufe wieder manuell bestätigen.[/dim]\n")
+                    console.print(
+                        "  [dim]Auto-Approve AUS — Tool-Aufrufe wieder manuell bestätigen.[/dim]\n"
+                    )
             case "/compact":
                 keep_recent = self._config.memory.summarize_keep_recent
                 msgs = self._session.messages
@@ -1082,7 +1634,9 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                 if not arg:
                     pins = self._session.metadata.get("pinned_items", [])
                     if not pins:
-                        console.print("  [dim]Kein gepinnter Kontext. Verwendung: /pin <text>[/dim]\n")
+                        console.print(
+                            "  [dim]Kein gepinnter Kontext. Verwendung: /pin <text>[/dim]\n"
+                        )
                     else:
                         console.print()
                         for i, p in enumerate(pins, 1):
@@ -1099,7 +1653,9 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                 if not pins:
                     console.print("  [dim]Kein gepinnter Kontext vorhanden.[/dim]\n")
                 elif not arg:
-                    console.print("  [dim]Verwendung: /unpin <nr>  (Nummern mit /pin anzeigen)[/dim]\n")
+                    console.print(
+                        "  [dim]Verwendung: /unpin <nr>  (Nummern mit /pin anzeigen)[/dim]\n"
+                    )
                 else:
                     try:
                         idx = int(arg) - 1
@@ -1111,7 +1667,9 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                             )
                             console.print(f'  [green]✓ Entfernt:[/green] „{removed}"\n')
                         else:
-                            console.print(f"  [dim]Index {arg} ungültig. Zeige Pins mit /pin[/dim]\n")
+                            console.print(
+                                f"  [dim]Index {arg} ungültig. Zeige Pins mit /pin[/dim]\n"
+                            )
                     except ValueError:
                         console.print("  [dim]Bitte eine Zahl eingeben, z.B. /unpin 1[/dim]\n")
             case "/cost":
@@ -1119,28 +1677,33 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                 provider = self._config.agent.provider
                 # Approximate price per 1M tokens (input, output) in USD
                 price_table: dict[str, tuple[float, float]] = {
-                    "minimax":    (0.80,  2.40),
-                    "openrouter": (1.00,  3.00),
-                    "ollama":     (0.00,  0.00),
-                    "deepseek":   (0.14,  0.28),
+                    "minimax": (0.80, 2.40),
+                    "openrouter": (1.00, 3.00),
+                    "ollama": (0.00, 0.00),
+                    "deepseek": (0.14, 0.28),
                 }
                 in_p, out_p = price_table.get(provider, (1.00, 3.00))
                 cost_usd = (tok["input"] / 1_000_000 * in_p) + (tok["output"] / 1_000_000 * out_p)
 
                 t = Table(show_header=False, box=None, padding=(0, 2))
-                t.add_column("Key",   style="dim")
+                t.add_column("Key", style="dim")
                 t.add_column("Value", style="white")
-                t.add_row("Provider",      f"[cyan]{provider}[/cyan]")
-                t.add_row("API-Aufrufe",   str(tok["calls"]))
-                t.add_row("Input Tokens",  f"[yellow]{tok['input']:,}[/yellow]")
+                t.add_row("Provider", f"[cyan]{provider}[/cyan]")
+                t.add_row("API-Aufrufe", str(tok["calls"]))
+                t.add_row("Input Tokens", f"[yellow]{tok['input']:,}[/yellow]")
                 t.add_row("Output Tokens", f"[yellow]{tok['output']:,}[/yellow]")
-                t.add_row("Gesamt",        f"[bold]{tok['input'] + tok['output']:,}[/bold]")
-                t.add_row("~Kosten",       f"[green]${cost_usd:.5f} USD[/green]")
+                t.add_row("Gesamt", f"[bold]{tok['input'] + tok['output']:,}[/bold]")
+                t.add_row("~Kosten", f"[green]${cost_usd:.5f} USD[/green]")
                 if in_p == 0:
-                    t.add_row("",  "[dim]Lokal — kostenlos[/dim]")
+                    t.add_row("", "[dim]Lokal — kostenlos[/dim]")
                 console.print()
                 console.print(
-                    Panel(t, title="[bold cyan]💰 Token-Kosten[/bold cyan]", border_style="cyan", padding=(0, 1))
+                    Panel(
+                        t,
+                        title="[bold cyan]💰 Token-Kosten[/bold cyan]",
+                        border_style="cyan",
+                        padding=(0, 1),
+                    )
                 )
                 console.print()
             case "/memory":
@@ -1389,7 +1952,9 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                         f"  [green]✓ Session exportiert:[/green] [bold]{export_path}[/bold]\n"
                     )
             case _:
-                suggestion = _command_suggestion(user_input, self._skill_loader, STATIC_SLASH_COMMANDS)
+                suggestion = _command_suggestion(
+                    user_input, self._skill_loader, STATIC_SLASH_COMMANDS
+                )
                 if suggestion:
                     console.print(
                         "  [dim]Unbekannter Befehl: "
@@ -1399,6 +1964,87 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                     console.print(
                         f"  [dim]Unbekannter Befehl: [bold]{cmd}[/bold]. Tippe /help für Hilfe.[/dim]\n"
                     )
+
+    def _doctor_rows(self) -> list[tuple[str, str, str]]:
+        """Build doctor check rows: area, status markup, detail."""
+        return _build_doctor_rows(
+            self._config,
+            skill_count=len(self._skill_loader.skills),
+            tool_count=len(ToolRegistry.list_tools()),
+            workspace=Path(self._config.workspace or Path.cwd()).expanduser(),
+        )
+
+    def _print_doctor(self) -> None:
+        print_doctor_report(self._doctor_rows())
+
+    def _print_what_now(self) -> None:
+        provider_cfg = self._config.get_provider_config(self._config.agent.provider)
+        workspace = Path(self._config.workspace or Path.cwd()).expanduser()
+        suggestions = []
+
+        if provider_cfg is None or (
+            self._config.agent.provider != "ollama" and not provider_cfg.api_key
+        ):
+            suggestions.append(
+                ("Provider reparieren", "cucumber init oder passenden API-Key setzen")
+            )
+        if not (workspace / "SPEC.md").exists():
+            suggestions.append(
+                ("SPEC.md anlegen", "Beschreibe Ziel, Stack, Features und Akzeptanzkriterien")
+            )
+        if not self._session.messages:
+            suggestions.append(
+                ("Sicher starten", "/examples ansehen oder direkt eine Aufgabe formulieren")
+            )
+        if (workspace / "SPEC.md").exists():
+            suggestions.append(("Swarm planen", "/herbert-swarm . --dry-run"))
+        suggestions.append(("Diagnose", "/doctor ausführen, wenn etwas unklar ist"))
+
+        table = Table(show_header=True, header_style="bold green", box=None, padding=(0, 2))
+        table.add_column("Empfehlung", style="bold")
+        table.add_column("Aktion", style="cyan")
+        for title, action in suggestions[:5]:
+            table.add_row(title, action)
+        console.print(
+            Panel(table, title="[bold green]Was jetzt?[/bold green]", border_style="green")
+        )
+        console.print()
+
+    def _print_explain_last(self) -> None:
+        if self._last_error:
+            body = (
+                f"[bold red]Letzter Fehler:[/bold red]\n{self._last_error}\n\n"
+                "[bold]Was tun?[/bold]\n"
+                "1. /doctor ausführen\n"
+                "2. Bei Providerfehlern API-Key und Modell prüfen\n"
+                "3. Bei Toolfehlern /debug aktivieren und erneut ausführen"
+            )
+        elif self._pending_tool_calls:
+            names = ", ".join(tc.get("name", "?") for tc in self._pending_tool_calls)
+            body = (
+                f"Es warten Tool-Aufrufe auf Bestätigung: [cyan]{names}[/cyan]\n"
+                "Antworte mit 1 zum Ausführen, 2 zum Abbrechen oder 3 zum Bearbeiten."
+            )
+        elif self._session.messages:
+            msg = self._session.messages[-1]
+            role = msg.role.value if hasattr(msg.role, "value") else str(msg.role)
+            content = msg.content if isinstance(msg.content, str) else str(msg.content)
+            if len(content) > 700:
+                content = content[:700] + " ..."
+            body = (
+                f"Letzte gespeicherte Nachricht kam von [bold]{role}[/bold].\n\n"
+                f"{content}\n\n"
+                "Tipp: /history zeigt mehr Kontext, /undo nimmt das letzte Paar zurück."
+            )
+        else:
+            body = (
+                f"Letzte Aktion: {self._last_action}\n\n"
+                "Noch keine Unterhaltung in dieser Session. Starte mit /examples oder /what-now."
+            )
+        console.print(
+            Panel(body, title="[bold yellow]Explain Last[/bold yellow]", border_style="yellow")
+        )
+        console.print()
 
     async def _handle_autopilot_command(self, args: str) -> None:
         """Handle the native /autopilot command family."""
@@ -1453,7 +2099,9 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
         if parsed.action == "reset":
             state = store.load()
             if state is None:
-                console.print("  [dim]Autopilot: kein State fuer diesen Workspace vorhanden.[/dim]\n")
+                console.print(
+                    "  [dim]Autopilot: kein State fuer diesen Workspace vorhanden.[/dim]\n"
+                )
                 return
             if not parsed.yes:
                 console.print(
@@ -1495,8 +2143,10 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
             )
             return
 
-        console.print(f"  [dim]Zum Starten: [bold]/autopilot run[/bold] — "
-                      f"Oder neuer Plan: /autopilot plan <ziel>[/dim]\n")
+        console.print(
+            "  [dim]Zum Starten: [bold]/autopilot run[/bold] — "
+            "Oder neuer Plan: /autopilot plan <ziel>[/dim]\n"
+        )
 
     def _print_autopilot_tasks(self, state: AutopilotState, *, title: str) -> None:
         table = Table(show_header=True, header_style="bold cyan", box=None, padding=(0, 2))
@@ -1696,12 +2346,16 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
             # Enable session-wide auto-approve (incl. sub-agents), then execute current
             self._auto_approve_session = True
             self._sync_subagent_approve()
-            console.print("  [dim green]✓ Auto-Approve AN für diese Session — alle weiteren Tools (inkl. Sub-Agenten) werden automatisch ausgeführt.[/dim green]\n")
+            console.print(
+                "  [dim green]✓ Auto-Approve AN für diese Session — alle weiteren Tools (inkl. Sub-Agenten) werden automatisch ausgeführt.[/dim green]\n"
+            )
             await self._handle_tool_approval("1")
 
         else:
             self._pending_tool_calls.clear()
-            console.print("[dim]Ungültige Eingabe. Alle ausstehenden Tool-Aufrufe abgebrochen.[/dim]\n")
+            console.print(
+                "[dim]Ungültige Eingabe. Alle ausstehenden Tool-Aufrufe abgebrochen.[/dim]\n"
+            )
 
     def _print_tool_call(self, tool_call: dict) -> None:
         """Display a tool call with approval options."""
@@ -1817,6 +2471,7 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
         """Propagate _auto_approve_session to the sub-agent tool's module flag."""
         try:
             from cucumber_agent.tools.agent import set_subagent_auto_approve
+
             set_subagent_auto_approve(self._auto_approve_session)
         except Exception:
             pass
@@ -1911,11 +2566,11 @@ def run_update() -> None:
 
     console.print("[bold]🔄 Updating CucumberAgent...[/bold]\n")
 
-    install_dir = Path.home() / ".cucumber-agent"
+    install_dir = Path(os.environ.get("CUCUMBER_INSTALL_DIR", Path.home() / ".cucumber-agent"))
     update_script = install_dir / "installer" / "update.sh"
 
     if not install_dir.exists():
-        console.print("[red]ERROR:[/red] Installation not found at ~/.cucumber-agent")
+        console.print(f"[red]ERROR:[/red] Installation not found at {install_dir}")
         console.print("Run the installer first: curl ... | sh")
         sys.exit(1)
 
@@ -1927,27 +2582,136 @@ def run_update() -> None:
 
     # Fallback legacy logic if script not found
     try:
-        console.print("→ Pulling latest from GitHub...")
+        if not (install_dir / ".git").exists():
+            console.print(f"[red]ERROR:[/red] {install_dir} is not a git checkout")
+            sys.exit(1)
+
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=install_dir,
+            capture_output=True,
+            text=True,
+        )
+        if dirty.returncode != 0:
+            console.print(f"[red]Git status failed:[/red] {dirty.stderr}")
+            sys.exit(1)
+        if dirty.stdout.strip():
+            console.print(
+                "[red]Local changes detected.[/red] Commit or stash them before updating."
+            )
+            sys.exit(1)
+
+        console.print("→ Fetching latest from GitHub...")
+        fetch = subprocess.run(
+            ["git", "fetch", "origin", "main"],
+            cwd=install_dir,
+            capture_output=True,
+            text=True,
+        )
+        if fetch.returncode != 0:
+            console.print(f"[red]Git fetch failed:[/red] {fetch.stderr}")
+            sys.exit(1)
+
+        console.print("→ Applying fast-forward update...")
         result = subprocess.run(
-            ["git", "pull", "origin", "main"],
+            ["git", "merge", "--ff-only", "origin/main"],
             cwd=install_dir,
             capture_output=True,
             text=True,
         )
         if result.returncode == 0:
-            if "Already up to date" in result.stdout:
+            if "Already up to date" in result.stdout or "Already up-to-date" in result.stdout:
                 console.print("[green]✅ Already up to date![/green]\n")
                 return
 
             console.print("→ Reinstalling package...")
-            subprocess.run(["uv", "tool", "install", "-e", "."], cwd=install_dir)
+            install = subprocess.run(
+                ["uv", "tool", "install", "-e", ".", "--force"],
+                cwd=install_dir,
+                capture_output=True,
+                text=True,
+            )
+            if install.returncode != 0:
+                console.print(f"[red]uv tool install failed:[/red] {install.stderr}")
+                sys.exit(1)
             console.print("\n[green]✅ Update complete![/green]\n")
         else:
-            console.print(f"[red]Git pull failed:[/red] {result.stderr}")
+            console.print(f"[red]Git merge failed:[/red] {result.stderr}")
             sys.exit(1)
     except Exception as e:
         console.print(f"[red]Update failed:[/red] {e}")
         sys.exit(1)
+
+
+def run_doctor_cmd() -> None:
+    """Run a non-interactive setup diagnosis."""
+    config = Config.load()
+    loader = SkillLoader()
+    loader.load_all()
+    from cucumber_agent import tools  # noqa: F401
+
+    rows = _build_doctor_rows(
+        config,
+        skill_count=len(loader.skills),
+        tool_count=len(ToolRegistry.list_tools()),
+        workspace=Path(config.workspace or Path.cwd()).expanduser(),
+    )
+    print_doctor_report(rows)
+
+
+def run_quickstart_cmd() -> None:
+    """Show non-interactive onboarding guidance."""
+    print_quickstart(Config.load())
+
+
+def run_shortcuts_cmd() -> None:
+    """Show non-interactive shortcut overview."""
+    print_shortcuts()
+
+
+def run_spec_template_cmd() -> None:
+    """Show a copy-paste SPEC.md template."""
+    print_spec_template()
+
+
+def run_what_now_cmd() -> None:
+    """Show a non-interactive next-step hint."""
+    config = Config.load()
+    provider_cfg = config.get_provider_config(config.agent.provider)
+    workspace = Path(config.workspace or Path.cwd()).expanduser()
+    suggestions = []
+
+    if provider_cfg is None or (config.agent.provider != "ollama" and not provider_cfg.api_key):
+        suggestions.append(("Provider reparieren", "cucumber init oder passenden API-Key setzen"))
+    if not (workspace / "SPEC.md").exists():
+        suggestions.append(("SPEC.md vorbereiten", "cucumber spec-template"))
+    else:
+        suggestions.append(("Swarm planen", "cucumber run, dann /herbert-swarm . --dry-run"))
+    suggestions.append(("Setup prüfen", "cucumber doctor"))
+    suggestions.append(("Beispiele ansehen", "cucumber examples"))
+
+    table = Table(show_header=True, header_style="bold green", box=None, padding=(0, 2))
+    table.add_column("Empfehlung", style="bold")
+    table.add_column("Aktion", style="cyan")
+    for title, action in suggestions[:5]:
+        table.add_row(title, action)
+    console.print(Panel(table, title="[bold green]Was jetzt?[/bold green]", border_style="green"))
+    console.print()
+
+
+def run_tips_cmd() -> None:
+    """Show non-interactive usage tips."""
+    print_tips(Config.load())
+
+
+def run_examples_cmd() -> None:
+    """Show non-interactive examples."""
+    print_examples()
+
+
+def run_docs_cmd(topic: str) -> None:
+    """Show non-interactive documentation excerpt."""
+    print_docs(Config.load(), topic)
 
 
 async def run_config_cmd() -> None:
@@ -1997,11 +2761,36 @@ def main() -> None:
         if cmd == "init":
             run_init()
             return
+        elif cmd == "quickstart":
+            run_quickstart_cmd()
+            return
+        elif cmd in {"shortcuts", "shortcut"}:
+            run_shortcuts_cmd()
+            return
+        elif cmd in {"spec-template", "spec"}:
+            run_spec_template_cmd()
+            return
+        elif cmd in {"what-now", "next"}:
+            run_what_now_cmd()
+            return
+        elif cmd == "tips":
+            run_tips_cmd()
+            return
+        elif cmd == "examples":
+            run_examples_cmd()
+            return
+        elif cmd == "docs":
+            topic = sys.argv[2] if len(sys.argv) > 2 else ""
+            run_docs_cmd(topic)
+            return
         elif cmd == "config":
             asyncio.run(run_config_cmd())
             return
         elif cmd == "update":
             run_update()
+            return
+        elif cmd == "doctor":
+            run_doctor_cmd()
             return
         elif cmd == "tui":
             run_tui()
@@ -2012,6 +2801,17 @@ def main() -> None:
             console.print("  [cyan]cucumber run[/cyan]     Start chat session (legacy REPL)")
             console.print("  [cyan]cucumber tui[/cyan]     Start chat session (new Textual TUI)")
             console.print("  [cyan]cucumber init[/cyan]    Run setup wizard")
+            console.print("  [cyan]cucumber quickstart[/cyan]  Show the easiest first steps")
+            console.print("  [cyan]cucumber what-now[/cyan]    Suggest the next step")
+            console.print("  [cyan]cucumber shortcuts[/cyan]   Show slash-command shortcuts")
+            console.print("  [cyan]cucumber spec-template[/cyan] Show a SPEC.md template")
+            console.print("  [cyan]cucumber tips[/cyan]        Show tips and tricks")
+            console.print("  [cyan]cucumber examples[/cyan]    Show copy-paste examples")
+            console.print("  [cyan]cucumber docs <topic>[/cyan] Show a short wiki excerpt")
+            console.print("  [cyan]cucumber update[/cyan]  Safely update the installation")
+            console.print(
+                "  [cyan]cucumber doctor[/cyan]  Check setup, provider, skills, and tools"
+            )
             console.print("  [cyan]cucumber config[/cyan]           Show configuration")
             console.print("  [cyan]cucumber config validate[/cyan]  Validate configuration")
             console.print("  [cyan]cucumber --help[/cyan]  Show this help")

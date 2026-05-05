@@ -41,7 +41,7 @@ The `swarm` tool is **built-in and native** to CucumberAgent. It is NOT an exter
 ### How it Works
 
 1. **`init`** creates `~/.swarm_brain.json` (or `<project>/.swarm_brain.json`)
-2. **`plan`** reads SPEC.md, keyword-scans it, creates phased tasks
+2. **`plan`** asks the configured KI model to analyze SPEC.md and the project inventory, then creates phased tasks from the model's JSON plan
 3. **`run`** spawns real async sub-agents — one per task — that execute in parallel
 4. Each sub-agent uses `shell`, `write_file`, `read_file`, `search` etc.
 5. Sub-agents auto-approve tools (user explicitly started the swarm)
@@ -68,31 +68,38 @@ The `swarm` tool is **built-in and native** to CucumberAgent. It is NOT an exter
       "summary": "Created FastAPI endpoints"
     }
   },
-  "phases": ["INFRA", "BACKEND_CORE", "BACKEND_API", "FRONTEND", "TESTING"],
+  "phases": ["DATABASE", "BACKEND", "TESTING"],
   "current_phase": 3
 }
 ```
 
-### Phase Detection (Keyword-Based)
+### AI Planning
 
-The planner scans SPEC.md content for these keywords:
+The planner is AI-first. It sends the current `SPEC.md` plus a compact project inventory to the configured provider and expects strict JSON:
 
-| Stack | Keywords detected |
-|-------|------------------|
-| Backend | fastapi, flask, django, express, python, api, rest, graphql |
-| Frontend | react, vue, svelte, next.js, vite, tailwind, typescript |
-| Database | postgresql, mongodb, redis, sqlite, sqlalchemy, prisma |
-| Docker | docker, compose, kubernetes |
-| CI/Testing | pytest, jest, github actions, coverage |
+```json
+{
+  "phases": ["PHASE_NAME"],
+  "tasks": [
+    {
+      "id": "stable-model-id",
+      "description": "Concrete task",
+      "agent_role": "coder",
+      "phase": "PHASE_NAME",
+      "priority": 1,
+      "files": ["relative/path.py"],
+      "dependencies": []
+    }
+  ],
+  "reasoning": "Short reason"
+}
+```
 
-### IMPORTANT: Planner Limitations
+CucumberAgent then validates that JSON, normalizes phase numbers, maps model dependency IDs to internal `task-001` IDs, strips invalid files, and falls back to role `coder` for unknown roles.
 
-**The planner does NOT detect:**
-- Vanilla JavaScript / HTML-only projects
-- PHP projects
-- Static sites without package.json/vite.config
+### IMPORTANT: Planner Fallback
 
-For these projects: **manually write tasks into the brain JSON** instead of relying on `plan`.
+There is no keyword fallback. If the KI provider is unavailable or returns invalid JSON, `plan` creates one neutral `IMPLEMENTATION` task. Fix the provider/config issue and run `plan` again to get a real automatic plan.
 
 ### As a Sub-Agent in Swarm
 

@@ -9,7 +9,7 @@ CucumberAgent uses a structured directory layout under `~/.cucumber/`:
 │   └── personality.md       # Agent personality
 ├── user/
 │   └── user.md              # User information
-└── memory/                  # (future) Conversation memory
+└── memory/                  # Facts, logs, session summaries
 ```
 
 ## config.yaml
@@ -29,7 +29,7 @@ agent:
 providers:
   minimax:
     api_key: your-api-key-here
-    base_url: https://api.minimax.io/anthropic
+    base_url: https://api.minimax.io/v1
     model: MiniMax-M2.7
 
 preferences:
@@ -41,6 +41,14 @@ preferences:
 context:
   max_tokens: 8000        # Max tokens for context window
   remember_last: 10       # Keep last N messages
+
+memory:
+  enabled: true
+  log_dir: ~/.cucumber/memory
+  facts_file: ~/.cucumber/memory/facts.json
+  summary_file: ~/.cucumber/memory/last_summary.txt
+  max_session_messages: 20
+  summarize_keep_recent: 8
 
 logging:
   enabled: true           # Enable file logging
@@ -88,6 +96,10 @@ interests: AI, Python, open source
 | `strengths` | What the agent is good at | "" |
 | `interests` | Topics the agent cares about | "" |
 
+`personality.md` is loaded into the `CORE IDENTITY` block on every model call.
+It is not summarized, compressed, or replaced by conversation history. See
+[Memory & Personality](Memory.md) for the full preservation contract.
+
 ## user/user.md
 
 Stores user information so the agent can personalize interactions.
@@ -118,6 +130,21 @@ API keys can also be set via environment variables:
 | MiniMax | `MINIMAX_API_KEY` |
 | OpenRouter | `OPENROUTER_API_KEY` |
 | DeepSeek | `DEEPSEEK_API_KEY` |
-| NVIDIA NIM | `NVIDIA_NIM_API_KEY` |
+| Ollama | `OLLAMA_BASE_URL` |
+
+The setup wizard currently offers the providers that are registered in code:
+MiniMax, OpenRouter, DeepSeek, and Ollama. Ollama does not require an API key.
 
 If an API key is not in `config.yaml`, the system checks the environment.
+
+## Memory Files
+
+| File | Purpose |
+|------|---------|
+| `memory/facts.json` or `memory/facts.db` | Durable facts from `/remember` |
+| `memory/last_summary.txt` | Append-only summary of older sessions |
+| `memory/YYYY-MM-DD.md` | Human-readable daily conversation logs |
+| `memory/exchanges.db` | Optional structured session log |
+
+Facts are reloaded from disk whenever the prompt is built, so the agent can keep
+long-term preferences even if a live session object is missing metadata.

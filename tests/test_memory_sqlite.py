@@ -6,10 +6,9 @@ from pathlib import Path
 
 from cucumber_agent.memory import (
     FactsStore,
-    SQLiteFactsStore,
     SessionLogger,
+    SQLiteFactsStore,
 )
-
 
 # ---------------------------------------------------------------------------
 # SQLiteFactsStore tests

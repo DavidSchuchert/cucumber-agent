@@ -34,8 +34,7 @@ class ToolRegistry:
     def get_capabilities_summary(cls) -> list[dict[str, str]]:
         """Return a list of tool names and their descriptions."""
         return [
-            {"name": tool.name, "description": tool.description}
-            for tool in cls._tools.values()
+            {"name": tool.name, "description": tool.description} for tool in cls._tools.values()
         ]
 
     @classmethod

@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from conftest import make_config, make_mock_provider, make_session
 
 from cucumber_agent.agent import Agent
-from cucumber_agent.config import Config, PersonalityConfig
-from cucumber_agent.session import Message, Role, Session
-
-from conftest import make_config, make_mock_provider, make_session
+from cucumber_agent.session import Message, Role
 
 
 def make_agent(tmp_path: Path, personality_content: str | None = None) -> Agent:
@@ -32,6 +29,18 @@ def test_build_messages_contains_core_identity(tmp_path):
     assert "=== END CORE IDENTITY ===" in content
 
 
+def test_build_messages_contains_memory_identity_contract(tmp_path):
+    """_build_messages must inject the immutable memory and identity contract."""
+    agent = make_agent(tmp_path)
+    session = make_session(agent._config)
+    messages = agent._build_messages(session)
+
+    system_msg = next(m for m in messages if m.role == Role.SYSTEM)
+    assert "=== MEMORY & IDENTITY CONTRACT ===" in system_msg.content
+    assert "Never replace, summarize away, or ignore it" in system_msg.content
+    assert "=== END MEMORY & IDENTITY CONTRACT ===" in system_msg.content
+
+
 def test_validate_identity_preserved_positive(tmp_path):
     agent = make_agent(tmp_path)
     session = make_session(agent._config)
@@ -48,6 +57,17 @@ def test_validate_identity_preserved_negative(tmp_path):
     assert agent._validate_identity_preserved(plain) is False
 
 
+def test_validate_identity_requires_memory_contract(tmp_path):
+    agent = make_agent(tmp_path)
+    incomplete = [
+        Message(
+            role=Role.SYSTEM,
+            content="=== CORE IDENTITY (IMMUTABLE) ===\nname: Test\n=== END CORE IDENTITY ===",
+        )
+    ]
+    assert agent._validate_identity_preserved(incomplete) is False
+
+
 @pytest.mark.asyncio
 async def test_compress_session_excludes_personality(tmp_path):
     """compress_session prompt must explicitly exclude personality content."""
@@ -57,7 +77,9 @@ async def test_compress_session_excludes_personality(tmp_path):
     session = make_session(cfg)
 
     for i in range(12):
-        session.messages.append(Message(role=Role.USER if i % 2 == 0 else Role.ASSISTANT, content=f"msg {i}"))
+        session.messages.append(
+            Message(role=Role.USER if i % 2 == 0 else Role.ASSISTANT, content=f"msg {i}")
+        )
 
     await agent.compress_session(session)
 
@@ -72,7 +94,9 @@ async def test_compress_session_excludes_personality(tmp_path):
 
 def test_build_messages_reloads_identity_from_disk(tmp_path):
     """_build_messages reloads personality.md on every call — live edits are reflected."""
-    agent = make_agent(tmp_path, "# Personality\nname: Before\nemoji: 🥒\ntone: calm\nlanguage: en\n")
+    agent = make_agent(
+        tmp_path, "# Personality\nname: Before\nemoji: 🥒\ntone: calm\nlanguage: en\n"
+    )
     session = make_session(agent._config)
 
     msgs_before = agent._build_messages(session)
@@ -80,7 +104,9 @@ def test_build_messages_reloads_identity_from_disk(tmp_path):
     assert "Before" in sys_before
 
     pers_file = tmp_path / "personality" / "personality.md"
-    pers_file.write_text("# Personality\nname: After\nemoji: 🚀\ntone: energetic\nlanguage: en\n", encoding="utf-8")
+    pers_file.write_text(
+        "# Personality\nname: After\nemoji: 🚀\ntone: energetic\nlanguage: en\n", encoding="utf-8"
+    )
 
     msgs_after = agent._build_messages(session)
     sys_after = next(m.content for m in msgs_after if m.role == Role.SYSTEM)
@@ -91,7 +117,9 @@ def test_apply_personality_update_creates_backup(tmp_path):
     """apply_personality_update must backup personality.md.bak before overwriting."""
     from cucumber_agent.cli import apply_personality_update
 
-    cfg = make_config(tmp_path, "# Personality\nname: Original\nemoji: 🥒\ntone: calm\nlanguage: en\n")
+    cfg = make_config(
+        tmp_path, "# Personality\nname: Original\nemoji: 🥒\ntone: calm\nlanguage: en\n"
+    )
     backup = tmp_path / "personality" / "personality.md.bak"
     assert not backup.exists()
 

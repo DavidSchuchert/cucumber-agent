@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import pytest
-
-from cucumber_agent.skills.router import SkillRouter, SkillMatch, MatchEngine
 from cucumber_agent.skills.loader import Skill
-
+from cucumber_agent.skills.router import MatchEngine, SkillMatch, SkillRouter
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 def make_skill(name: str, description: str, triggers: list[str]) -> Skill:
     """Build a Skill object from raw fields."""
@@ -30,9 +28,16 @@ GITHUB_SKILL = make_skill(
     "GitHub PR Review",
     "Reviews GitHub pull requests",
     [
-        "github pr", "pull request", "pr review", "github review",
-        "pr comments", "github merge", "code review github",
-        "github", "pr", "merge pull request",
+        "github pr",
+        "pull request",
+        "pr review",
+        "github review",
+        "pr comments",
+        "github merge",
+        "code review github",
+        "github",
+        "pr",
+        "merge pull request",
     ],
 )
 
@@ -40,9 +45,25 @@ LINUX_SKILL = make_skill(
     "Linux Server Ops",
     "Linux server management and troubleshooting",
     [
-        "linux", "server", "nginx", "apache", "systemd", "journalctl",
-        "cron", "logs", "disk", "memory", "cpu", "process", "ssh",
-        "iptables", "firewall", "apt", "yum", "dnf", "systemctl",
+        "linux",
+        "server",
+        "nginx",
+        "apache",
+        "systemd",
+        "journalctl",
+        "cron",
+        "logs",
+        "disk",
+        "memory",
+        "cpu",
+        "process",
+        "ssh",
+        "iptables",
+        "firewall",
+        "apt",
+        "yum",
+        "dnf",
+        "systemctl",
     ],
 )
 
@@ -50,9 +71,21 @@ DOCKER_SKILL = make_skill(
     "Docker & Container",
     "Docker build, run, compose, and troubleshooting",
     [
-        "docker", "container", "dockerfile", "docker-compose", "docker hub",
-        "image", "build", "run", "volume", "network", "registry",
-        "kubernetes", "k8s", "pod", "deployment",
+        "docker",
+        "container",
+        "dockerfile",
+        "docker-compose",
+        "docker hub",
+        "image",
+        "build",
+        "run",
+        "volume",
+        "network",
+        "registry",
+        "kubernetes",
+        "k8s",
+        "pod",
+        "deployment",
     ],
 )
 
@@ -60,9 +93,17 @@ PUBMED_SKILL = make_skill(
     "PubMed Research",
     "Search PubMed and biomedical literature",
     [
-        "pubmed", "medline", "biomedical", "medical research",
-        "clinical trial", "pubmed.gov", "ncbi", "pmc",
-        "journal article", "doi", "medline",
+        "pubmed",
+        "medline",
+        "biomedical",
+        "medical research",
+        "clinical trial",
+        "pubmed.gov",
+        "ncbi",
+        "pmc",
+        "journal article",
+        "doi",
+        "medline",
     ],
 )
 
@@ -70,9 +111,21 @@ CODE_QUALITY_SKILL = make_skill(
     "Code Quality",
     "Testing, linting, and code quality assurance",
     [
-        "test", "pytest", "lint", "pylint", "flake8", "coverage",
-        "unittest", "testing", "code quality", "static analysis",
-        "type check", "mypy", "ruff", "eslint", "prettier",
+        "test",
+        "pytest",
+        "lint",
+        "pylint",
+        "flake8",
+        "coverage",
+        "unittest",
+        "testing",
+        "code quality",
+        "static analysis",
+        "type check",
+        "mypy",
+        "ruff",
+        "eslint",
+        "prettier",
     ],
 )
 
@@ -82,6 +135,7 @@ SKILLS = [GITHUB_SKILL, LINUX_SKILL, DOCKER_SKILL, PUBMED_SKILL, CODE_QUALITY_SK
 # ---------------------------------------------------------------------------
 # SkillRouter: get_matching_skills() — returns list[Skill]
 # ---------------------------------------------------------------------------
+
 
 class TestSkillRouterMatching:
     """Test SkillRouter.get_matching_skills() end-to-end."""
@@ -152,16 +206,16 @@ class TestSkillRouterMatching:
 
     def test_skills_sorted_by_confidence(self):
         """Results sorted descending by confidence."""
-        with_scores = self.router.get_matching_skills_with_scores(
-            "github docker nginx linux"
-        )
+        with_scores = self.router.get_matching_skills_with_scores("github docker nginx linux")
         if len(with_scores) > 1:
             for i in range(len(with_scores) - 1):
                 assert with_scores[i].confidence >= with_scores[i + 1].confidence
 
     def test_german_keywords(self):
         """German trigger keywords → matched correctly."""
-        linux_skill = make_skill("Linux German", "Linux Server", ["server", "linux", "fehler", "protokoll"])
+        linux_skill = make_skill(
+            "Linux German", "Linux Server", ["server", "linux", "fehler", "protokoll"]
+        )
         router = SkillRouter([linux_skill])
         matches = router.get_matching_skills("linux server fehler")
         assert len(matches) >= 1
@@ -192,6 +246,7 @@ class TestSkillRouterMatching:
 # ---------------------------------------------------------------------------
 # SkillRouter: get_matching_skills_with_scores() — returns list[SkillMatch]
 # ---------------------------------------------------------------------------
+
 
 class TestSkillRouterWithScores:
     """Test SkillRouter.get_matching_skills_with_scores() for debugging."""
@@ -231,6 +286,7 @@ class TestSkillRouterWithScores:
 # SkillMatch dataclass
 # ---------------------------------------------------------------------------
 
+
 class TestSkillMatchDataclass:
     """Test SkillMatch result structure."""
 
@@ -261,6 +317,7 @@ class TestSkillMatchDataclass:
 # MatchEngine integration
 # ---------------------------------------------------------------------------
 
+
 class TestMatchEngine:
     """Test MatchEngine.match() directly."""
 
@@ -290,6 +347,7 @@ class TestMatchEngine:
 # CLI integration
 # ---------------------------------------------------------------------------
 
+
 class TestSkillRouterCLIIntegration:
     """Test SkillRouter wired into CLI session context."""
 
@@ -312,6 +370,7 @@ class TestSkillRouterCLIIntegration:
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
+
 
 class TestSkillRouterEdgeCases:
     """Edge case handling."""
@@ -374,6 +433,7 @@ class TestSkillRouterEdgeCases:
 # ---------------------------------------------------------------------------
 # format_for_system_prompt
 # ---------------------------------------------------------------------------
+
 
 class TestFormatForSystemPrompt:
     """Test SkillRouter.format_for_system_prompt()."""

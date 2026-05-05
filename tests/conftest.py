@@ -5,9 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
-from cucumber_agent.config import AgentConfig, Config, ContextConfig, MemoryConfig, PersonalityConfig
+from cucumber_agent.config import (
+    AgentConfig,
+    Config,
+    ContextConfig,
+    MemoryConfig,
+    PersonalityConfig,
+)
 from cucumber_agent.session import Session
 
 

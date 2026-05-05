@@ -9,10 +9,15 @@ from unittest.mock import patch
 import pytest
 
 # ── Calculator ───────────────────────────────────────────────────────────────
-
-
+from cucumber_agent.tools.base import BaseTool, ToolResult
 from cucumber_agent.tools.calculator import CalculatorTool, safe_calculate
+from cucumber_agent.tools.datetime_tool import DatetimeTool
+from cucumber_agent.tools.loader import CustomToolLoader
+from cucumber_agent.tools.read_file import ReadFileTool
+from cucumber_agent.tools.registry import ToolRegistry
+from cucumber_agent.tools.remember import RememberTool
 from cucumber_agent.tools.swarm import SwarmTool
+from cucumber_agent.tools.write_file import WriteFileTool
 
 
 class TestSafeCalculate:
@@ -71,8 +76,6 @@ class TestSafeCalculate:
         assert safe_calculate("e") == pytest.approx(math.e)
 
     def test_log_base_e(self):
-        import math
-
         assert safe_calculate("log(e)") == pytest.approx(1.0)
 
     def test_abs_negative(self):
@@ -166,11 +169,51 @@ class TestCalculatorTool:
 
 @pytest.mark.asyncio
 class TestSwarmTool:
-    async def test_full_dry_run_path(self, tmp_path):
+    async def test_full_dry_run_path(self, tmp_path, monkeypatch):
+        from cucumber_agent.tools import swarm as swarm_module
+
         (tmp_path / "SPEC.md").write_text(
             "Build a FastAPI backend with SQLite database and pytest tests.",
             encoding="utf-8",
         )
+
+        async def fake_llm_plan(spec_content, project_path):
+            return {
+                "phases": ["DATABASE", "BACKEND", "TESTING"],
+                "tasks": [
+                    {
+                        "id": "db",
+                        "description": "Create SQLite persistence layer",
+                        "agent_role": "coder",
+                        "phase": "DATABASE",
+                        "priority": 1,
+                        "files": ["backend/database.py"],
+                        "dependencies": [],
+                    },
+                    {
+                        "id": "api",
+                        "description": "Create FastAPI application routes",
+                        "agent_role": "coder",
+                        "phase": "BACKEND",
+                        "priority": 2,
+                        "files": ["backend/server.py"],
+                        "dependencies": ["db"],
+                    },
+                    {
+                        "id": "tests",
+                        "description": "Create pytest coverage for the API",
+                        "agent_role": "tester",
+                        "phase": "TESTING",
+                        "priority": 3,
+                        "files": ["tests/test_api.py"],
+                        "dependencies": ["api"],
+                    },
+                ],
+                "reasoning": "Backend, database, and tests are requested.",
+            }
+
+        monkeypatch.setattr(swarm_module, "_llm_create_task_plan", fake_llm_plan)
+
         tool = SwarmTool()
 
         init = await tool.execute(command="init", project=str(tmp_path))
@@ -187,6 +230,8 @@ class TestSwarmTool:
         assert "Report:" in report.output
         brain = json.loads((tmp_path / ".swarm_brain.json").read_text(encoding="utf-8"))
         assert "FRONTEND" not in brain["phases"]
+        assert brain["phases"] == ["DATABASE", "BACKEND", "TESTING"]
+        assert brain["tasks"]["task-002"]["dependencies"] == ["task-001"]
 
     async def test_run_rejects_invalid_parallel(self, tmp_path):
         tool = SwarmTool()
@@ -263,7 +308,9 @@ class TestSwarmTool:
             "load",
             staticmethod(lambda: SimpleNamespace(agent=SimpleNamespace(model="fake"))),
         )
-        monkeypatch.setattr(Agent, "from_config", classmethod(lambda cls, config: FakeAgent(provider)))
+        monkeypatch.setattr(
+            Agent, "from_config", classmethod(lambda cls, config: FakeAgent(provider))
+        )
 
         result = await _run_task_async(
             "task-001",
@@ -322,12 +369,20 @@ class TestSwarmTool:
         assert "ToolExecutionError" in task["error"]
         assert task["error_details"]["tool_name"] == "shell"
 
-    async def test_ci_only_spec_gets_implementation_task(self, tmp_path):
+    async def test_ci_only_spec_gets_implementation_task(self, tmp_path, monkeypatch):
+        from cucumber_agent.tools import swarm as swarm_module
+
         (tmp_path / "SPEC.md").write_text(
             "Create a tiny project README for a smoke test. Keep it simple, "
             "write only README.md, and include one short usage section.",
             encoding="utf-8",
         )
+
+        async def fake_llm_failure(spec_content, project_path):
+            raise RuntimeError("planner unavailable")
+
+        monkeypatch.setattr(swarm_module, "_llm_create_task_plan", fake_llm_failure)
+
         tool = SwarmTool()
 
         await tool.execute(command="init", project=str(tmp_path))
@@ -338,6 +393,39 @@ class TestSwarmTool:
         tasks = list(brain["tasks"].values())
         assert len(tasks) == 1
         assert tasks[0]["description"] == "Implement the project requirements described in SPEC.md"
+        assert brain["phases"] == ["IMPLEMENTATION"]
+
+    async def test_ai_plan_sanitizes_invalid_files_and_roles(self, tmp_path, monkeypatch):
+        from cucumber_agent.tools import swarm as swarm_module
+
+        async def fake_llm_plan(spec_content, project_path):
+            return {
+                "phases": ["implementation"],
+                "tasks": [
+                    {
+                        "id": "main",
+                        "description": "Write the app",
+                        "agent_role": "wizard",
+                        "phase": "implementation",
+                        "priority": "high",
+                        "files": ["app.py", "../outside.txt", "/tmp/nope"],
+                        "dependencies": ["missing"],
+                    }
+                ],
+            }
+
+        monkeypatch.setattr(swarm_module, "_llm_create_task_plan", fake_llm_plan)
+
+        tool = SwarmTool()
+        await tool.execute(command="init", project=str(tmp_path))
+        result = await tool.execute(command="plan", project=str(tmp_path))
+
+        assert result.success is True
+        brain = json.loads((tmp_path / ".swarm_brain.json").read_text(encoding="utf-8"))
+        task = brain["tasks"]["task-001"]
+        assert task["agent_role"] == "coder"
+        assert task["files"] == ["app.py"]
+        assert task["dependencies"] == []
 
     async def test_swarm_tool_args_block_write_outside_project(self, tmp_path):
         from cucumber_agent.tools.swarm import _normalize_swarm_tool_args
@@ -354,9 +442,6 @@ class TestSwarmTool:
 
 
 # ── Datetime Tool ────────────────────────────────────────────────────────────
-
-
-from cucumber_agent.tools.datetime_tool import DatetimeTool
 
 
 @pytest.mark.asyncio
@@ -416,9 +501,6 @@ class TestDatetimeTool:
 # ── ReadFileTool ─────────────────────────────────────────────────────────────
 
 
-from cucumber_agent.tools.read_file import ReadFileTool
-
-
 @pytest.mark.asyncio
 class TestReadFileTool:
     """Tests for the ReadFileTool."""
@@ -474,9 +556,6 @@ class TestReadFileTool:
 # ── WriteFileTool ────────────────────────────────────────────────────────────
 
 
-from cucumber_agent.tools.write_file import WriteFileTool
-
-
 @pytest.mark.asyncio
 class TestWriteFileTool:
     """Tests for the WriteFileTool."""
@@ -520,9 +599,6 @@ class TestWriteFileTool:
 
 
 # ── RememberTool ─────────────────────────────────────────────────────────────
-
-
-from cucumber_agent.tools.remember import RememberTool
 
 
 @pytest.mark.asyncio
@@ -569,10 +645,6 @@ class TestRememberTool:
 
 
 # ── ToolRegistry ─────────────────────────────────────────────────────────────
-
-
-from cucumber_agent.tools.base import BaseTool, ToolResult
-from cucumber_agent.tools.registry import ToolRegistry
 
 
 class _DummyTool(BaseTool):
@@ -646,9 +718,6 @@ class TestToolRegistry:
 
 
 # ── CustomToolLoader hot-reload ───────────────────────────────────────────────
-
-
-from cucumber_agent.tools.loader import CustomToolLoader
 
 
 class TestCustomToolLoader:
