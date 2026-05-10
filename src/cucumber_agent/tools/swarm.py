@@ -5,10 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import subprocess
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 from rich.console import Console
+from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 
@@ -62,6 +65,15 @@ async def _save_brain(brain: dict, brain_file: Path) -> None:
 _ALLOWED_AGENT_ROLES = {"planner", "coder", "reviewer", "tester", "devops", "designer"}
 _MAX_PLANNER_FILES = 160
 _MAX_PLAN_TASKS = 40
+
+_ROLE_COLORS = {
+    "coder": "green",
+    "tester": "yellow",
+    "reviewer": "magenta",
+    "planner": "cyan",
+    "devops": "blue",
+    "designer": "bright_magenta",
+}
 
 
 def _scan_project_files(project_path: Path) -> set[str]:
@@ -224,7 +236,7 @@ def _normalize_llm_plan(plan: dict) -> tuple[dict, list[str]]:
         priority_raw = raw_task.get("priority", len(tasks) + 1)
         try:
             priority = int(priority_raw)
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             priority = len(tasks) + 1
 
         dependencies = raw_task.get("dependencies", raw_task.get("depends_on", []))
@@ -344,16 +356,205 @@ Projektinventar:
     return _extract_json_object(response.content)
 
 
+# ---------------------------------------------------------------------------
+# Improvement 1: Live Dashboard — _AgentState and _TaskLog
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _AgentState:
+    tid: str
+    role: str
+    desc: str
+    status: str = "waiting"  # waiting | running | done | failed
+    step: int = 0
+    max_steps: int = 30
+    action: str = ""
+    started_at: str = ""
+    elapsed: float = 0.0
+
+
+class _TaskLog:
+    """Buffers console output for a task so Live display isn't disrupted."""
+
+    def __init__(self) -> None:
+        self.lines: list[str] = []
+
+    def print(self, msg: str) -> None:
+        self.lines.append(msg)
+
+    def flush(self) -> None:
+        for line in self.lines:
+            console.print(line)
+        self.lines.clear()
+
+
+def _render_phase_table(
+    agents: dict[str, _AgentState], phase_name: str, phase_num: int, total_phases: int
+) -> Table:
+    from rich import box as rbox
+
+    table = Table(
+        title=f"Phase {phase_num}/{total_phases}: {phase_name}",
+        box=rbox.SIMPLE_HEAD,
+        expand=True,
+        title_style="bold cyan",
+        show_header=True,
+        header_style="bold dim",
+    )
+    table.add_column("Task", style="dim cyan", width=10)
+    table.add_column("Rolle", width=10)
+    table.add_column("Status", width=14)
+    table.add_column("Fortschritt", width=16)
+    table.add_column("Aktion", overflow="fold")
+
+    _status_map = {
+        "waiting": "[dim]o wartet[/dim]",
+        "running": "[yellow]* laeuft[/yellow]",
+        "done": "[green]v fertig[/green]",
+        "failed": "[red]x fehler[/red]",
+    }
+    for tid, s in sorted(agents.items()):
+        bar_len = 12
+        filled = int((s.step / s.max_steps) * bar_len) if s.max_steps else 0
+        bar = "#" * filled + "." * (bar_len - filled)
+        step_str = f"{s.step}/{s.max_steps} [{bar}]"
+        color = _ROLE_COLORS.get(s.role, "white")
+        table.add_row(
+            tid,
+            f"[{color}]{s.role}[/{color}]",
+            _status_map.get(s.status, s.status),
+            f"[dim]{step_str}[/dim]",
+            (s.action or s.desc)[:70],
+        )
+    return table
+
+
+# ---------------------------------------------------------------------------
+# Improvement 4: Plan-Critic (defined before _analyze_and_plan)
+# ---------------------------------------------------------------------------
+
+
+async def _llm_critic_plan(
+    tasks: dict, phases: list[str], spec_content: str, project_path: Path
+) -> list[dict]:
+    """Ask the LLM to spot missing tasks in the plan. Returns list of new task dicts."""
+    from cucumber_agent.agent import Agent
+    from cucumber_agent.config import Config
+    from cucumber_agent.session import Message as _Msg
+    from cucumber_agent.session import Role as _Role
+
+    config = Config.load()
+    agent = Agent.from_config(config)
+
+    task_summary = "\n".join(
+        f"- {tid}: [{t['agent_role']}] Phase {t['phase']}: {t['description'][:90]}"
+        for tid, t in tasks.items()
+    )
+
+    prompt = f"""Du bist der Critic-Agent fuer Herbert Swarm.
+Pruefe den folgenden Plan auf fehlende, aber notwendige Aufgaben.
+
+SPEC (Auszug):
+{spec_content[:1500]}
+
+AKTUELLER PLAN:
+{task_summary}
+
+PHASEN: {', '.join(phases)}
+
+Antworte NUR mit einem JSON-Array. Leer [] wenn der Plan vollstaendig ist.
+Sonst maximal 3 neue Tasks:
+[
+  {{
+    "id": "critic-001",
+    "description": "konkrete fehlende Aufgabe mit klarem Ergebnis",
+    "agent_role": "tester|reviewer|coder|devops|designer",
+    "phase": "{phases[-1] if phases else 'VERIFICATION'}",
+    "priority": 10,
+    "files": ["relative/path.ext"],
+    "dependencies": [],
+    "reason": "kurze Begruendung warum dieser Task fehlt"
+  }}
+]
+
+Ergaenze NUR wenn WIRKLICH fehlend: .gitignore, Verifikationsskript, package.json scripts, README.
+Keine Tasks die im Plan bereits vorhanden sind. Maximal 3."""
+
+    try:
+        response = await agent._provider.complete(
+            messages=[_Msg(role=_Role.USER, content=prompt)],
+            model=config.agent.model,
+            temperature=0.1,
+            max_tokens=800,
+            tools=None,
+        )
+        content = (response.content or "").strip()
+        if "```json" in content:
+            content = content.split("```json", 1)[1].split("```", 1)[0]
+        elif "```" in content:
+            content = content.split("```", 1)[1].split("```", 1)[0]
+        additions = json.loads(content.strip())
+        if not isinstance(additions, list):
+            return []
+        return [t for t in additions if isinstance(t, dict) and t.get("description")]
+    except Exception:
+        return []
+
+
 async def _analyze_and_plan(spec_content: str, project_path: Path) -> tuple[dict, list[str]]:
     """Analyze SPEC.md and create a task plan using the configured LLM."""
     try:
         plan = await _llm_create_task_plan(spec_content, project_path)
         if reasoning := str(plan.get("reasoning") or "").strip():
-            console.print(f"  [dim]🤖 Planner: {reasoning[:160]}[/dim]")
-        return _normalize_llm_plan(plan)
+            console.print(f"  [dim]Planner: {reasoning[:160]}[/dim]")
+        tasks, phases = _normalize_llm_plan(plan)
+
+        # Plan-Critic pass: spot missing tasks
+        console.print("  [dim]Critic prueft Plan auf Luecken...[/dim]")
+        try:
+            additions = await _llm_critic_plan(tasks, phases, spec_content, project_path)
+            if additions:
+                console.print(f"  [yellow]Critic ergaenzt {len(additions)} Task(s):[/yellow]")
+                existing_count = len(tasks)
+                for i, add in enumerate(additions[:3]):
+                    critic_id = f"critic-{i + 1:03d}"  # noqa: F841
+                    reason = add.get("reason", "")[:80]
+                    desc = add.get("description", "")[:80]
+                    role = add.get("agent_role", "reviewer")
+                    if role not in _ALLOWED_AGENT_ROLES:
+                        role = "reviewer"
+                    console.print(f"    + [{role}] {desc}")
+                    if reason:
+                        console.print(f"      [dim]Grund: {reason}[/dim]")
+                    # Determine phase number for the critic task (put in last phase)
+                    phase_name = str(
+                        add.get("phase") or (phases[-1] if phases else "VERIFICATION")
+                    ).upper()
+                    if phase_name not in phases:
+                        phases.append(phase_name)
+                    phase_num = phases.index(phase_name) + 1
+                    task_id = f"task-{existing_count + i + 1:03d}"
+                    tasks[task_id] = {
+                        "id": task_id,
+                        "description": desc,
+                        "agent_role": role,
+                        "files": _clean_task_files(add.get("files", [])),
+                        "dependencies": [],
+                        "status": "pending",
+                        "priority": int(add.get("priority", 10)),
+                        "phase": phase_num,
+                        "created_by": "critic",
+                    }
+            else:
+                console.print("  [dim]Critic: Plan vollstaendig[/dim]")
+        except Exception as e:
+            console.print(f"  [dim]Critic uebersprungen: {e}[/dim]")
+
+        return tasks, phases
     except Exception as e:
         console.print(
-            f"  [yellow]⚠ KI-Planung fehlgeschlagen: {e} — nutze neutralen Minimalplan[/yellow]"
+            f"  [yellow]KI-Planung fehlgeschlagen: {e} — nutze neutralen Minimalplan[/yellow]"
         )
         return _generic_ai_unavailable_plan()
 
@@ -396,8 +597,8 @@ def _build_agent_prompt(task: dict, brain: dict, brain_file: Path) -> str:
     coding_standards = (
         "### CODING STANDARDS:\n"
         "- Schreibe sauberen, modularen und kommentierten Code.\n"
-        "- Nutze moderne Best Practices für die jeweilige Sprache/Framework.\n"
-        "- Vermeide Platzhalter (z.B. '// TODO') — implementiere die Logik vollständig.\n"
+        "- Nutze moderne Best Practices fuer die jeweilige Sprache/Framework.\n"
+        "- Vermeide Platzhalter (z.B. '// TODO') — implementiere die Logik vollstaendig.\n"
         "- Achte auf Fehlerbehandlung und Edge-Cases.\n"
     )
 
@@ -405,7 +606,7 @@ def _build_agent_prompt(task: dict, brain: dict, brain_file: Path) -> str:
         f"\n### GEHIRN-UPDATE REGEL:\n"
         f"Nachdem du ALLE Dateien erstellt/bearbeitet hast, MUSST du das Projekt-Gehirn aktualisieren:\n"
         f"1. Lese die Datei: {brain_file}\n"
-        f'2. Füge dein Ergebnis zu brain["facts"]["task_{tid}_result"] hinzu.\n'
+        f'2. Fuege dein Ergebnis zu brain["facts"]["task_{tid}_result"] hinzu.\n'
         f'3. Das Format MUSS ein JSON-Objekt sein: {{"files_created": [...], "summary": "<dein bericht>"}}\n'
     )
 
@@ -419,7 +620,7 @@ def _build_agent_prompt(task: dict, brain: dict, brain_file: Path) -> str:
         f"### ZU ERSTELLENDE DATEIEN:\n"
         f"{files}\n\n"
         f"{coding_standards}\n"
-        f"Arbeite Schritt für Schritt. Nutze 'shell' oder 'write_file' für deine Arbeit.\n"
+        f"Arbeite Schritt fuer Schritt. Nutze 'shell' oder 'write_file' fuer deine Arbeit.\n"
         f"{brain_update}"
     )
 
@@ -554,7 +755,14 @@ def _normalize_swarm_tool_args(
     return normalized, None
 
 
-async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -> dict:
+async def _run_task_async(
+    tid: str,
+    task: dict,
+    brain: dict,
+    brain_file: Path,
+    agent_state: _AgentState | None = None,
+    task_log: _TaskLog | None = None,
+) -> dict:
     from cucumber_agent.agent import Agent
     from cucumber_agent.config import Config
     from cucumber_agent.session import Session
@@ -569,63 +777,83 @@ async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -
 
     prompt = _build_agent_prompt(task, brain, brain_file)
 
+    def _log(msg: str) -> None:
+        if task_log is not None:
+            task_log.print(msg)
+        else:
+            console.print(msg)
+
     try:
         current_input = prompt
         max_steps = 30
         import time as _time
 
-        # Show task header with agent role
+        if agent_state is not None:
+            agent_state.max_steps = max_steps
+
+        # Show task header with agent role (only when not using Live dashboard)
         role = task.get("agent_role", "?")
-        role_colors = {
-            "coder": "green", "tester": "yellow", "reviewer": "magenta",
-            "planner": "cyan", "devops": "blue", "designer": "bright_magenta",
-        }
-        role_color = role_colors.get(role, "white")
-        console.print(
-            f"\n  [bold cyan]▶ {tid}[/bold cyan] "
-            f"[bold {role_color}][{role}][/bold {role_color}] "
-            f"[dim]{task['description'][:80]}[/dim]"
-        )
-        console.print(f"  [dim]    Gestartet: {datetime.now().strftime('%H:%M:%S')}[/dim]")
+        role_color = _ROLE_COLORS.get(role, "white")
+        if agent_state is None:
+            console.print(
+                f"\n  [bold cyan]> {tid}[/bold cyan] "
+                f"[bold {role_color}][{role}][/bold {role_color}] "
+                f"[dim]{task['description'][:80]}[/dim]"
+            )
+            console.print(f"  [dim]    Gestartet: {datetime.now().strftime('%H:%M:%S')}[/dim]")
 
         for step in range(max_steps):
             step_start = _time.monotonic()
 
-            # Progress: step indicator
-            bar_len = 12
-            filled = int((step / max_steps) * bar_len)
-            bar = "█" * filled + "░" * (bar_len - filled)
-            console.print(
-                f"  [dim cyan][{tid}][/dim cyan] [{step + 1}/{max_steps}] [dim]{bar}[/dim] Denke... "
-            )
+            if agent_state is not None:
+                agent_state.step = step
+                agent_state.action = f"Schritt {step + 1}/{max_steps} — Denke..."
+            else:
+                # Progress: step indicator
+                bar_len = 12
+                filled = int((step / max_steps) * bar_len)
+                bar = "#" * filled + "." * (bar_len - filled)
+                _log(
+                    f"  [dim cyan][{tid}][/dim cyan] [{step + 1}/{max_steps}] [dim]{bar}[/dim] Denke... "
+                )
 
             response = await agent.run_with_tools(session, current_input)
             step_duration = _time.monotonic() - step_start
 
             if step_duration > 60:
-                console.print(
-                    f"  [dim cyan][{tid}][/dim cyan]   [yellow]⚠ LLM: {step_duration:.0f}s[/yellow]"
+                _log(
+                    f"  [dim cyan][{tid}][/dim cyan]   [yellow]LLM: {step_duration:.0f}s[/yellow]"
                 )
 
             # Show agent thought / reasoning before tools
             if response.content and not response.tool_calls:
                 thought = response.content[:300].replace("\n", " ").strip()
-                console.print(f"  [dim cyan][{tid}][/dim cyan]   [dim]💡 {thought}[/dim]")
+                if agent_state is not None:
+                    agent_state.action = thought[:70]
+                else:
+                    _log(f"  [dim cyan][{tid}][/dim cyan]   [dim]{thought}[/dim]")
 
             if not response.tool_calls:
                 output_preview = (response.content or "")[:200].replace("\n", " ").strip()
-                console.print(
-                    f"  [dim cyan][{tid}][/dim cyan]   [green]✓ Abgeschlossen[/green] [dim]{output_preview}[/dim]"
-                )
+                if agent_state is not None:
+                    agent_state.step = max_steps
+                    agent_state.action = "Abgeschlossen"
+                else:
+                    _log(
+                        f"  [dim cyan][{tid}][/dim cyan]   [green]Abgeschlossen[/green] [dim]{output_preview}[/dim]"
+                    )
                 return {"success": True, "output": (response.content or "")[:600]}
 
             # Execute each tool call
             for tc in response.tool_calls:
                 # Show tool call with key args
                 args_preview = _summarize_tool_args(tc.name, tc.arguments)
-                console.print(
-                    f"  [dim cyan][{tid}][/dim cyan]   [cyan]→ {tc.name}[/cyan] [dim]{args_preview}[/dim]"
-                )
+                if agent_state is not None:
+                    agent_state.action = f"{tc.name} {args_preview}"[:70]
+                else:
+                    _log(
+                        f"  [dim cyan][{tid}][/dim cyan]   [cyan]-> {tc.name}[/cyan] [dim]{args_preview}[/dim]"
+                    )
 
                 tool_args, blocked = _normalize_swarm_tool_args(
                     tc.name,
@@ -653,8 +881,8 @@ async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -
 
                 # Show first line of result
                 first_line = output_text.split("\n")[0][:120].replace("\n", " ").strip()
-                status_icon = "[green]✓[/green]" if result.success else "[red]✗[/red]"
-                console.print(f"  [dim cyan][{tid}][/dim cyan]     {status_icon} {first_line}")
+                status_icon = "[green]v[/green]" if result.success else "[red]x[/red]"
+                _log(f"  [dim cyan][{tid}][/dim cyan]     {status_icon} {first_line}")
 
                 session.messages.append(
                     Message(
@@ -667,12 +895,15 @@ async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -
 
             # If the agent used tools, inject a neutral continuation prompt.
             current_input = (
-                "[ Weiter mit dem nächsten Schritt — die vorherigen Tools wurden ausgeführt. ]"
+                "[ Weiter mit dem naechsten Schritt — die vorherigen Tools wurden ausgefuehrt. ]"
             )
 
-        console.print(
-            f"  [dim cyan][{tid}][/dim cyan]   [yellow]⚠ Step-Limit ({max_steps}) erreicht[/yellow]"
-        )
+        if agent_state is not None:
+            agent_state.action = f"Step-Limit ({max_steps}) erreicht"
+        else:
+            _log(
+                f"  [dim cyan][{tid}][/dim cyan]   [yellow]Step-Limit ({max_steps}) erreicht[/yellow]"
+            )
         return {"success": False, "output": "Step limit reached before task completion"}
     except Exception as e:
         logger.exception(f"Exception in swarm task {tid}")
@@ -694,6 +925,292 @@ def _task_error_summary(result: dict) -> str:
 
     prefix = f"{' | '.join(prefix_parts)}: " if prefix_parts else ""
     return f"{prefix}{message}"
+
+
+# ---------------------------------------------------------------------------
+# Improvement 2: Real Verification Phase
+# ---------------------------------------------------------------------------
+
+
+async def _run_verification(project_path: Path, brain: dict) -> dict:
+    """Run hard checks on the built project. Returns {passed, failed, warnings}."""
+    results: dict[str, list[str]] = {"passed": [], "failed": [], "warnings": []}
+
+    def run_cmd(cmd: list[str], cwd: Path, timeout: int = 90) -> tuple[bool, str]:
+        try:
+            r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+            out = (r.stdout + "\n" + r.stderr).strip()
+            return r.returncode == 0, out[:400]
+        except subprocess.TimeoutExpired:
+            return False, f"Timeout after {timeout}s"
+        except FileNotFoundError:
+            return False, f"Not found: {cmd[0]}"
+        except Exception as e:
+            return False, str(e)[:200]
+
+    tasks = brain.get("tasks", {})
+
+    # 1. Check all planned files exist and are non-empty
+    stub_markers = [
+        "# TODO",
+        "// TODO",
+        "# FIXME",
+        "// FIXME",
+        "raise NotImplementedError",
+        'throw new Error("TODO',
+    ]
+    for tid, task in tasks.items():
+        for fp in task.get("files", []):
+            full = project_path / fp
+            if not full.exists():
+                results["failed"].append(f"Datei fehlt: {fp} ({tid})")
+                continue
+            try:
+                content = full.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            if not content.strip():
+                results["warnings"].append(f"Leere Datei: {fp}")
+            else:
+                found = [m for m in stub_markers if m in content]
+                if found:
+                    results["warnings"].append(f"Stub in {fp}: {', '.join(found[:2])}")
+
+    # 2. Node.js project checks
+    if (project_path / "package.json").exists():
+        ok, out = run_cmd(["npm", "install", "--prefer-offline"], project_path, timeout=120)
+        if ok:
+            results["passed"].append("npm install")
+        else:
+            results["failed"].append(f"npm install: {out[:150]}")
+
+        # JS syntax check
+        for js_file in sorted(project_path.rglob("*.js")):
+            if any(p in js_file.parts for p in ("node_modules", "dist", "build")):
+                continue
+            ok, out = run_cmd(["node", "--check", str(js_file)], project_path, timeout=10)
+            rel = str(js_file.relative_to(project_path))
+            if ok:
+                results["passed"].append(f"JS syntax OK: {rel}")
+            else:
+                results["failed"].append(f"JS Syntaxfehler in {rel}: {out[:120]}")
+
+        # npm test if available
+        try:
+            pkg_data = json.loads((project_path / "package.json").read_text())
+            if "test" in pkg_data.get("scripts", {}):
+                ok, out = run_cmd(["npm", "test"], project_path, timeout=60)
+                if ok:
+                    results["passed"].append("npm test")
+                else:
+                    results["warnings"].append(f"npm test: {out[:150]}")
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # 3. Python project checks
+    if (project_path / "pyproject.toml").exists() or (project_path / "requirements.txt").exists():
+        for py_file in sorted(project_path.rglob("*.py")):
+            if any(p in py_file.parts for p in (".venv", "__pycache__", "dist", "build")):
+                continue
+            ok, out = run_cmd(["python3", "-m", "py_compile", str(py_file)], project_path, timeout=10)
+            rel = str(py_file.relative_to(project_path))
+            if ok:
+                results["passed"].append(f"Python syntax OK: {rel}")
+            else:
+                results["failed"].append(f"Python Syntaxfehler in {rel}: {out[:120]}")
+
+        # pytest if available
+        ok, out = run_cmd(["python3", "-m", "pytest", "--tb=short", "-q"], project_path, timeout=60)
+        if ok:
+            results["passed"].append("pytest")
+        else:
+            results["warnings"].append(f"pytest: {out[:150]}")
+
+    return results
+
+
+def _print_verification_results(results: dict) -> None:
+    for check in results.get("passed", []):
+        console.print(f"  [green]v[/green] {check}")
+    for check in results.get("warnings", []):
+        console.print(f"  [yellow]![/yellow] {check}")
+    for check in results.get("failed", []):
+        console.print(f"  [red]x[/red] {check}")
+
+
+def _write_swarm_report(project_path: Path, brain: dict, verification: dict) -> None:
+    """Write SWARM_REPORT.md with verification results and task summary."""
+    tasks = brain.get("tasks", {})
+    passed = verification.get("passed", [])
+    failed = verification.get("failed", [])
+    warnings = verification.get("warnings", [])
+
+    lines = [
+        f"# Swarm Report: {brain.get('project_name', '?')}",
+        "",
+        f"Erstellt: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        "",
+        "## Verifikation",
+        "",
+        "| Status | Anzahl |",
+        "|--------|--------|",
+        f"| v Passed | {len(passed)} |",
+        f"| ! Warnings | {len(warnings)} |",
+        f"| x Failed | {len(failed)} |",
+        "",
+    ]
+    if failed:
+        lines += ["### Fehler", ""] + [f"- x {f}" for f in failed] + [""]
+    if warnings:
+        lines += ["### Warnungen", ""] + [f"- ! {w}" for w in warnings] + [""]
+    if passed:
+        lines += ["### Bestanden", ""] + [f"- v {p}" for p in passed[:20]] + [""]
+
+    done = sum(1 for t in tasks.values() if t["status"] == "done")
+    total = len(tasks)
+    lines += [
+        "## Aufgaben",
+        "",
+        f"**{done}/{total} Tasks abgeschlossen**",
+        "",
+    ]
+    for tid, task in sorted(tasks.items()):
+        icon = "v" if task["status"] == "done" else "x" if task["status"] == "failed" else "o"
+        lines.append(
+            f"- {icon} `{tid}` [{task['agent_role']}] {task['description'][:80]}"
+        )
+
+    try:
+        (project_path / "SWARM_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
+        console.print("  [dim]-> SWARM_REPORT.md geschrieben[/dim]")
+    except OSError as e:
+        console.print(f"  [yellow]! SWARM_REPORT.md konnte nicht geschrieben werden: {e}[/yellow]")
+
+
+# ---------------------------------------------------------------------------
+# Improvement 3: Auto-Fix Loop
+# ---------------------------------------------------------------------------
+
+
+async def _run_auto_fix_loop(
+    project_path: Path,
+    brain: dict,
+    brain_file: Path,
+    semaphore: asyncio.Semaphore,
+    timeout: int,
+    max_iterations: int = 2,
+) -> dict:
+    """Verify -> fix -> verify cycle. Returns final verification results."""
+    for iteration in range(1, max_iterations + 1):
+        console.print(
+            f"\n[bold cyan]Verifikation — Runde {iteration}/{max_iterations}[/bold cyan]"
+        )
+        vresults = await _run_verification(project_path, brain)
+        _print_verification_results(vresults)
+
+        if not vresults["failed"]:
+            console.print("  [green]Alle Checks bestanden[/green]")
+            _write_swarm_report(project_path, brain, vresults)
+            return vresults
+
+        if iteration == max_iterations:
+            console.print(
+                f"  [red]{len(vresults['failed'])} Fehler verbleiben nach {max_iterations} Runden[/red]"
+            )
+            _write_swarm_report(project_path, brain, vresults)
+            return vresults
+
+        # Build one combined fix prompt with all failures
+        failures_text = "\n".join(f"- {f}" for f in vresults["failed"][:8])
+        warnings_text = "\n".join(f"- {w}" for w in vresults["warnings"][:4])
+        fix_tid = f"fix-r{iteration}"
+        fix_task = {
+            "id": fix_tid,
+            "description": f"Auto-Fix Runde {iteration}: Behebe Verifikationsfehler",
+            "agent_role": "coder",
+            "files": [],
+            "dependencies": [],
+            "status": "pending",
+            "priority": 99,
+            "phase": 99,
+            "created_by": "auto-fix",
+        }
+        brain["tasks"][fix_tid] = fix_task
+        await _save_brain(brain, brain_file)
+
+        console.print(
+            f"\n  [yellow]-> Starte Auto-Fix Agent fuer {len(vresults['failed'])} Fehler...[/yellow]"
+        )
+
+        # Build a targeted fix prompt
+        fix_prompt = (
+            f"Du bist ein Fixer-Agent fuer das Projekt '{brain.get('project_name', '?')}'.\n"
+            f"Arbeitsverzeichnis: {project_path}\n\n"
+            f"Die automatische Verifikation hat folgende FEHLER gefunden:\n{failures_text}\n\n"
+            f"Warnungen (falls Zeit):\n{warnings_text}\n\n"
+            f"Behebe ALLE Fehler vollstaendig. Nutze shell und write_file. "
+            f"Pruefe nach jedem Fix ob er wirklich funktioniert. "
+            f"Fasse am Ende kurz zusammen was du behoben hast."
+        )
+
+        fix_task_data = dict(fix_task)
+        fix_task_data["description"] = fix_prompt[:400]
+
+        try:
+            fix_result = await asyncio.wait_for(
+                _run_task_async(fix_tid, fix_task_data, brain, brain_file),
+                timeout=timeout,
+            )
+            ok = fix_result.get("success", False)
+            brain["tasks"][fix_tid]["status"] = "done" if ok else "failed"
+            brain["tasks"][fix_tid]["completed_at"] = datetime.now().isoformat()
+            if ok:
+                console.print("  [green]Fix Agent fertig[/green]")
+            else:
+                console.print(
+                    f"  [red]Fix Agent fehlgeschlagen: {_task_error_summary(fix_result)[:100]}[/red]"
+                )
+        except Exception as e:
+            brain["tasks"][fix_tid]["status"] = "failed"
+            console.print(f"  [red]Fix Agent Exception: {e}[/red]")
+
+        await _save_brain(brain, brain_file)
+
+    return await _run_verification(project_path, brain)
+
+
+# ---------------------------------------------------------------------------
+# Improvement 5: Per-Task Quality Gate (defined before _cmd_run)
+# ---------------------------------------------------------------------------
+
+
+def _check_task_quality(task: dict, project_path: Path) -> list[str]:
+    """Check that a task's promised files exist and aren't empty/stub-only."""
+    issues: list[str] = []
+    stub_markers = [
+        "# TODO",
+        "// TODO",
+        "# FIXME",
+        "// FIXME",
+        "raise NotImplementedError()",
+        'throw new Error("TODO',
+    ]
+    for fp in task.get("files", []):
+        full = project_path / fp
+        if not full.exists():
+            issues.append(f"Datei nicht erstellt: {fp}")
+            continue
+        try:
+            content = full.read_text(encoding="utf-8", errors="ignore").strip()
+        except OSError:
+            continue
+        if not content:
+            issues.append(f"Datei leer: {fp}")
+            continue
+        found = [m for m in stub_markers if m in content]
+        if len(found) >= 3:  # Only fail on many stubs, not one
+            issues.append(f"Zu viele Stubs in {fp}: {', '.join(found[:2])}")
+    return issues
 
 
 # ---------------------------------------------------------------------------
@@ -722,12 +1239,12 @@ async def _cmd_init(project: str, name: str | None = None) -> str:
 
     console.print(
         Panel(
-            f"[bold green]✓ Swarm initialized[/bold green]\n"
+            f"[bold green]Swarm initialized[/bold green]\n"
             f"[bold]Project:[/bold] {project_name}\n"
             f"[bold]Path:[/bold]    {project_path}\n"
             f"[bold]Brain:[/bold]   {brain_file}\n\n"
-            f"[bold cyan]→ Nächster Schritt:[/bold cyan] /herbert-swarm plan {project_path}",
-            title="[bold cyan]🐝 CucumberSwarm[/bold cyan]",
+            f"[bold cyan]-> Naechster Schritt:[/bold cyan] /herbert-swarm plan {project_path}",
+            title="[bold cyan]CucumberSwarm[/bold cyan]",
             border_style="cyan",
         )
     )
@@ -758,9 +1275,7 @@ async def _cmd_plan(project: str, spec: str | None = None) -> str:
                     pass
         spec_content = "\n\n".join(fallback_parts)
         if spec_content:
-            console.print(
-                "[yellow]No SPEC.md — using README/docs as project context[/yellow]"
-            )
+            console.print("[yellow]No SPEC.md — using README/docs as project context[/yellow]")
             brain["spec_summary"] = spec_content[:2000]
         else:
             console.print(
@@ -778,7 +1293,7 @@ async def _cmd_plan(project: str, spec: str | None = None) -> str:
         lines.append(f"  Phase {i}: [cyan]{phase_name}[/cyan] ({len(phase_tasks)} tasks)")
 
     next_hint = (
-        f"\n[bold cyan]→ Nächster Schritt:[/bold cyan] /herbert-swarm run {project_path}"
+        f"\n[bold cyan]-> Naechster Schritt:[/bold cyan] /herbert-swarm run {project_path}"
         if tasks
         else ""
     )
@@ -786,7 +1301,7 @@ async def _cmd_plan(project: str, spec: str | None = None) -> str:
     console.print(
         Panel(
             "\n".join(lines) + next_hint,
-            title="[bold cyan]🐝 CucumberSwarm — Plan[/bold cyan]",
+            title="[bold cyan]CucumberSwarm — Plan[/bold cyan]",
             border_style="cyan",
         )
     )
@@ -834,12 +1349,13 @@ async def _cmd_run(
             f"[bold]Phases:[/bold]   {', '.join(brain.get('phases', []))}\n"
             f"[bold]Parallel:[/bold] {parallel}  [bold]Timeout:[/bold] {timeout}s/agent"
             + ("\n[yellow]DRY RUN — no agents called[/yellow]" if dry_run else ""),
-            title="[bold cyan]🐝 CucumberSwarm — Execution[/bold cyan]",
+            title="[bold cyan]CucumberSwarm — Execution[/bold cyan]",
             border_style="cyan",
         )
     )
 
     semaphore = asyncio.Semaphore(parallel)
+    total_phases = len(brain.get("phases", []))
 
     for phase_num, phase_name in enumerate(brain.get("phases", []), 1):
         phase_tasks = [
@@ -851,7 +1367,7 @@ async def _cmd_run(
             continue
 
         console.print(
-            f"\n[bold cyan]═══ Phase {phase_num}: {phase_name} ═══[/bold cyan] "
+            f"\n[bold cyan]=== Phase {phase_num}: {phase_name} ===[/bold cyan] "
             f"[dim]({len(phase_tasks)} tasks, max {parallel} parallel)[/dim]"
         )
 
@@ -868,32 +1384,103 @@ async def _cmd_run(
                     f"  [yellow][DRY][/yellow] [cyan]{tid}[/cyan]: {task['description'][:55]}"
                 )
         else:
+            # --- Improvement 1: Live Dashboard ---
+            agents: dict[str, _AgentState] = {}
+            task_logs: dict[str, _TaskLog] = {}
+
+            for tid, task in phase_tasks:
+                agents[tid] = _AgentState(
+                    tid=tid,
+                    role=task.get("agent_role", "?"),
+                    desc=task.get("description", "")[:70],
+                    started_at=datetime.now().strftime("%H:%M:%S"),
+                )
+                task_logs[tid] = _TaskLog()
+
+            import inspect as _inspect
+
+            _run_task_fn = _run_task_async
+            _task_fn_supports_state = "agent_state" in _inspect.signature(_run_task_fn).parameters
 
             async def run_one(tid: str, task: dict) -> tuple[str, dict]:
                 async with semaphore:
+                    agent_state = agents[tid]
+                    task_log = task_logs[tid]
+                    agent_state.status = "running"
+                    agent_state.started_at = datetime.now().strftime("%H:%M:%S")
+                    t0 = asyncio.get_event_loop().time()
                     try:
-                        result = await asyncio.wait_for(
-                            _run_task_async(tid, task, brain, brain_file),
-                            timeout=timeout,
-                        )
+                        if _task_fn_supports_state:
+                            coro = _run_task_fn(
+                                tid,
+                                task,
+                                brain,
+                                brain_file,
+                                agent_state=agent_state,
+                                task_log=task_log,
+                            )
+                        else:
+                            coro = _run_task_fn(tid, task, brain, brain_file)
+                        result = await asyncio.wait_for(coro, timeout=timeout)
                     except TimeoutError:
                         result = _format_failure(
-                            f"Timed out after {timeout}s",
-                            error_type="TimeoutError",
+                            f"Timed out after {timeout}s", error_type="TimeoutError"
                         )
                     except Exception as exc:
                         result = _format_failure(str(exc), error_type=type(exc).__name__)
 
+                    agent_state.elapsed = asyncio.get_event_loop().time() - t0
                     ok = result.get("success", False)
-                    status_icon = "[green]✓[/green]" if ok else "[red]✗[/red]"
-                    role = task.get("agent_role", "?")
-                    console.print(f"  {status_icon} [cyan]{tid}[/cyan] [dim][{role}][/dim]: {task['description'][:55]}")
-                    if not ok:
-                        console.print(f"    [red]Error:[/red] {_task_error_summary(result)[:240]}")
+
+                    # --- Improvement 5: Quality Gate ---
+                    if ok:
+                        quality_issues = _check_task_quality(task, project_path)
+                        if quality_issues:
+                            issue_text = "; ".join(quality_issues[:3])
+                            task_log.print(
+                                f"  [yellow]Quality-Gate [{tid}]: {issue_text}[/yellow]"
+                            )
+                            result = _format_failure(
+                                f"Quality gate: {issue_text}", error_type="QualityGateError"
+                            )
+                            ok = False
+
+                    agent_state.status = "done" if ok else "failed"
+                    agent_state.action = (
+                        "Fertig" if ok else f"Fehler: {_task_error_summary(result)[:50]}"
+                    )
                     return tid, result
 
-            result_pairs = await asyncio.gather(*(run_one(tid, task) for tid, task in phase_tasks))
+            with Live(
+                _render_phase_table(agents, phase_name, phase_num, total_phases),
+                console=console,
+                refresh_per_second=2,
+                transient=False,
+            ) as live:
+
+                async def _refresher() -> None:
+                    while True:
+                        await asyncio.sleep(0.5)
+                        live.update(
+                            _render_phase_table(agents, phase_name, phase_num, total_phases)
+                        )
+
+                refresher_task = asyncio.create_task(_refresher())
+                result_pairs = await asyncio.gather(
+                    *(run_one(tid, task) for tid, task in phase_tasks)
+                )
+                refresher_task.cancel()
+                try:
+                    await refresher_task
+                except asyncio.CancelledError:
+                    pass
+                live.update(_render_phase_table(agents, phase_name, phase_num, total_phases))
+
             results = dict(result_pairs)
+
+            # Flush detail logs after Live ends
+            for tid, _ in phase_tasks:
+                task_logs[tid].flush()
 
             for tid, task in phase_tasks:
                 r = results.get(tid, {})
@@ -920,13 +1507,22 @@ async def _cmd_run(
         # Phase summary after all tasks in this phase finish
         phase_done = sum(1 for t in phase_tasks if brain["tasks"][t[0]]["status"] == "done")
         phase_failed = sum(1 for t in phase_tasks if brain["tasks"][t[0]]["status"] == "failed")
-        icon = "[green]✓[/green]" if not phase_failed else f"[red]⚠ {phase_failed} failed[/red]"
+        icon = "[green]v[/green]" if not phase_failed else f"[red]! {phase_failed} failed[/red]"
         console.print(
             f"  [dim]Phase {phase_num} abgeschlossen:[/dim] {icon} {phase_done}/{len(phase_tasks)} done\n"
         )
 
         await _save_brain(brain, brain_file)
         brain["current_phase"] = phase_num
+        await _save_brain(brain, brain_file)
+
+    # --- Integration: Verification + Auto-Fix after all phases ---
+    if not dry_run:
+        console.print("\n[bold cyan]=== Verifikation & Auto-Fix ===[/bold cyan]")
+        final_verification = await _run_auto_fix_loop(
+            project_path, brain, brain_file, semaphore, timeout, max_iterations=2
+        )
+        brain["verification"] = final_verification
         await _save_brain(brain, brain_file)
 
     done = sum(1 for t in brain["tasks"].values() if t["status"] == "done")
@@ -941,7 +1537,7 @@ async def _cmd_run(
     console.print(
         Panel(
             summary_table,
-            title="[bold cyan]🐝 CucumberSwarm — Complete[/bold cyan]",
+            title="[bold cyan]CucumberSwarm — Complete[/bold cyan]",
             border_style="cyan",
         )
     )
@@ -968,7 +1564,7 @@ async def _cmd_status(project: str | None) -> str:
         f"[bold]Project:[/bold] {brain.get('project_name', '?')}  "
         f"[bold]Tasks:[/bold] {len(tasks)}\n"
     ]
-    icons = {"pending": "○", "running": "◐", "done": "●", "failed": "✗"}
+    icons = {"pending": "o", "running": "~", "done": "*", "failed": "x"}
     for status, count in sorted(by_status.items()):
         icon = icons.get(status, "?")
         color = {"done": "green", "failed": "red", "running": "yellow"}.get(status, "dim")
@@ -978,7 +1574,7 @@ async def _cmd_status(project: str | None) -> str:
         phase_tasks = [t for t in tasks.values() if t["phase"] == phase_num]
         done = sum(1 for t in phase_tasks if t["status"] == "done")
         failed = sum(1 for t in phase_tasks if t["status"] == "failed")
-        bar = "●" * done + "✗" * failed + "○" * (len(phase_tasks) - done - failed)
+        bar = "*" * done + "x" * failed + "o" * (len(phase_tasks) - done - failed)
         lines.append(
             f"\n  Phase {phase_num} [cyan]{phase_name}[/cyan]: [{bar}] {done}/{len(phase_tasks)}"
         )
@@ -986,7 +1582,7 @@ async def _cmd_status(project: str | None) -> str:
     console.print(
         Panel(
             "\n".join(lines),
-            title="[bold cyan]🐝 CucumberSwarm — Status[/bold cyan]",
+            title="[bold cyan]CucumberSwarm — Status[/bold cyan]",
             border_style="cyan",
         )
     )
@@ -1031,7 +1627,7 @@ async def _cmd_report(project: str | None) -> str:
     console.print(
         Panel(
             report_table,
-            title="[bold cyan]🐝 CucumberSwarm — Report[/bold cyan]",
+            title="[bold cyan]CucumberSwarm — Report[/bold cyan]",
             border_style="cyan",
         )
     )
@@ -1039,13 +1635,13 @@ async def _cmd_report(project: str | None) -> str:
     if all_files:
         for f in all_files[:20]:
             exists = Path(f).exists()
-            console.print(f"  {'[green]✓[/green]' if exists else '[yellow]?[/yellow]'} {f}")
+            console.print(f"  {'[green]v[/green]' if exists else '[yellow]?[/yellow]'} {f}")
 
     if failed:
         for tid, task in tasks.items():
             if task["status"] == "failed":
                 error = task.get("error", "") or "Tool failed without stderr/output"
-                console.print(f"  [red]✗[/red] {tid}: {error[:220]}")
+                console.print(f"  [red]x[/red] {tid}: {error[:220]}")
                 details = task.get("error_details", {})
                 if isinstance(details, dict):
                     tool_name = details.get("tool_name")
@@ -1080,12 +1676,12 @@ async def _cmd_brain(project: str | None) -> str:
     console.print(
         Panel(
             "\n".join(lines),
-            title="[bold cyan]🐝 CucumberSwarm — Brain[/bold cyan]",
+            title="[bold cyan]CucumberSwarm — Brain[/bold cyan]",
             border_style="cyan",
         )
     )
 
-    icons = {"pending": "○", "running": "◐", "done": "●", "failed": "✗"}
+    icons = {"pending": "o", "running": "~", "done": "*", "failed": "x"}
     for tid, task in tasks.items():
         icon = icons.get(task["status"], "?")
         color = {"done": "green", "failed": "red"}.get(task["status"], "dim")
@@ -1102,19 +1698,19 @@ async def _cmd_brain(project: str | None) -> str:
 async def _cmd_welcome() -> str:
     """Show the complete workflow guide."""
     guide = """
-[bold cyan]🐝 CucumberSwarm — Workflow Guide[/bold cyan]
+[bold cyan]CucumberSwarm — Workflow Guide[/bold cyan]
 
 Du hast ein Projekt und willst es bauen? Der Swarm hilft dir in 3 Schritten:
 
-[bold]1. [/bold][bold cyan]init[/bold cyan]   → Projekt beim Swarm anmelden
-[bold]2. [/bold][bold cyan]plan[/bold cyan]   → SPEC.md analysieren, Phasen & Tasks erstellen
-[bold]3. [/bold][bold cyan]run[/bold cyan]    → Alle Tasks parallel von Agenten erledigen
+[bold]1. [/bold][bold cyan]init[/bold cyan]   -> Projekt beim Swarm anmelden
+[bold]2. [/bold][bold cyan]plan[/bold cyan]   -> SPEC.md analysieren, Phasen & Tasks erstellen
+[bold]3. [/bold][bold cyan]run[/bold cyan]    -> Alle Tasks parallel von Agenten erledigen
 
-[bold]Zusätzliche Commands:[/bold]
-  [dim]status[/dim]   → Fortschritt anzeigen (läuft gerade, was als nächstes)
-  [dim]report[/dim]   → Ergebnisse & erstellte Dateien
-  [dim]brain[/dim]    → Internes Gedächtnis anzeigen
-  [dim]reset[/dim]     → Alles löschen und von vorne anfangen
+[bold]Zusaetzliche Commands:[/bold]
+  [dim]status[/dim]   -> Fortschritt anzeigen (laeuft gerade, was als naechstes)
+  [dim]report[/dim]   -> Ergebnisse & erstellte Dateien
+  [dim]brain[/dim]    -> Internes Gedaechtnis anzeigen
+  [dim]reset[/dim]     -> Alles loeschen und von vorne anfangen
 
 [bold]Typischer Ablauf:[/bold]
 
@@ -1123,11 +1719,11 @@ Du hast ein Projekt und willst es bauen? Der Swarm hilft dir in 3 Schritten:
 
   # Plan erstellen (einmalig nach init)
   /herbert-swarm plan /pfad/zum/projekt
-  # → LLM analysiert SPEC.md und erstellt Phasen + Tasks
+  # -> LLM analysiert SPEC.md und erstellt Phasen + Tasks
 
   # Bauen!
   /herbert-swarm run /pfad/zum/projekt
-  # → Agenten arbeiten Tasks ab, parallel, bis alles fertig
+  # -> Agenten arbeiten Tasks ab, parallel, bis alles fertig
 
   # Zwischendurch checken
   /herbert-swarm status /pfad/zum/projekt
@@ -1135,11 +1731,11 @@ Du hast ein Projekt und willst es bauen? Der Swarm hilft dir in 3 Schritten:
 
 [bold]Was passiert in jeder Phase?[/bold]
 
-  [cyan]INFRA[/cyan]       → Docker, Config, Environment-Setup
-  [cyan]DATABASE[/cyan]    → Models, Migrations, Schema
-  [cyan]BACKEND[/cyan]     → API Server, Routes, Business Logic
-  [cyan]FRONTEND[/cyan]    → Pages, Components, Styling
-  [cyan]TESTING[/cyan]     → Tests, CI/CD Pipeline
+  [cyan]INFRA[/cyan]       -> Docker, Config, Environment-Setup
+  [cyan]DATABASE[/cyan]    -> Models, Migrations, Schema
+  [cyan]BACKEND[/cyan]     -> API Server, Routes, Business Logic
+  [cyan]FRONTEND[/cyan]    -> Pages, Components, Styling
+  [cyan]TESTING[/cyan]     -> Tests, CI/CD Pipeline
 
   Das System erkennt automatisch was dein Projekt braucht.
 
@@ -1148,12 +1744,12 @@ Du hast ein Projekt und willst es bauen? Der Swarm hilft dir in 3 Schritten:
   # Fehlgeschlagene Tasks erneut versuchen
   /herbert-swarm run /pfad/zum/projekt retry_failed=true
 
-  # Alles zurücksetzen und neu starten
+  # Alles zuruecksetzen und neu starten
   /herbert-swarm reset /pfad/zum/projekt yes=true
   /herbert-swarm plan /pfad/zum/projekt
   /herbert-swarm run /pfad/zum/projekt
 
-[dim]Tipp: Starte mit [bold]init[/bold] → [bold]plan[/bold] → [bold]run[/bold]. Die meisten Commands brauchst du nie.[/dim]
+[dim]Tipp: Starte mit [bold]init[/bold] -> [bold]plan[/bold] -> [bold]run[/bold]. Die meisten Commands brauchst du nie.[/dim]
 """
     console.print(Panel(guide.strip(), border_style="cyan", padding=(1, 1)))
     return "Workflow guide shown above."
@@ -1194,7 +1790,7 @@ class SwarmTool(BaseTool):
         "run (execute all planned tasks with parallel agents), status (show progress), "
         "report (show results and files created), brain (show internal state), "
         "reset (clear brain). "
-        "Always init → plan → run in sequence."
+        "Always init -> plan -> run in sequence."
     )
     parameters = {
         "type": "object",
