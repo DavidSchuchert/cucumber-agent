@@ -311,7 +311,6 @@ Antworte AUSSCHLIESSLICH mit einem JSON-Objekt:
 
 Regeln:
 - Plane NUR, was aus der Projektbeschreibung und den Projektdateien wirklich folgt.
-- Erfinde keine Phasen (Frontend, Backend, Docker, Tests), wenn sie nicht benoetigt werden.
 - Nutze sinnvolle Phasen in Ausfuehrungsreihenfolge — Phasen koennen frei benannt werden.
 - Tasks muessen klein genug fuer einzelne Sub-Agenten sein und klare Dateipfade enthalten.
 - Dateien muessen relative Pfade im Projekt sein. Keine absoluten Pfade, kein '..'.
@@ -319,6 +318,11 @@ Regeln:
 - Setze dependencies realistisch: spaetere Tasks auf fruehere, die ihre Ausgabe brauchen.
 - Wenn die Anforderungen klein sind, reicht eine einzelne IMPLEMENTATION-Phase.
 - Schreibe fuer jede task eine praezise description mit klarem Ergebnis (keine vagen Formulierungen).
+- PFLICHT: Der Plan MUSS immer eine abschliessende Verifikations-Task enthalten (agent_role: "tester"
+  oder "reviewer") die: alle erstellten Dateien prueft, vorhandene Tests ausfuehrt (npm test / pytest),
+  Syntax-Fehler meldet und einen kurzen Testbericht in SWARM_REPORT.md schreibt.
+- Bei Web-Projekten (package.json, HTML, Express, React): die Verifikations-Task prueft zusaetzlich
+  ob `npm install` erfolgreich ist und alle JS/CSS-Dateien syntaktisch valide sind.
 
 Projekt: {project_path.name}
 Projektpfad: {project_path}
@@ -570,8 +574,18 @@ async def _run_task_async(tid: str, task: dict, brain: dict, brain_file: Path) -
         max_steps = 30
         import time as _time
 
-        # Show task header once
-        console.print(f"\n  [bold cyan]▶ {tid}[/bold cyan] [dim]{task['description'][:90]}[/dim]")
+        # Show task header with agent role
+        role = task.get("agent_role", "?")
+        role_colors = {
+            "coder": "green", "tester": "yellow", "reviewer": "magenta",
+            "planner": "cyan", "devops": "blue", "designer": "bright_magenta",
+        }
+        role_color = role_colors.get(role, "white")
+        console.print(
+            f"\n  [bold cyan]▶ {tid}[/bold cyan] "
+            f"[bold {role_color}][{role}][/bold {role_color}] "
+            f"[dim]{task['description'][:80]}[/dim]"
+        )
         console.print(f"  [dim]    Gestartet: {datetime.now().strftime('%H:%M:%S')}[/dim]")
 
         for step in range(max_steps):
@@ -872,7 +886,8 @@ async def _cmd_run(
 
                     ok = result.get("success", False)
                     status_icon = "[green]✓[/green]" if ok else "[red]✗[/red]"
-                    console.print(f"  {status_icon} [cyan]{tid}[/cyan]: {task['description'][:55]}")
+                    role = task.get("agent_role", "?")
+                    console.print(f"  {status_icon} [cyan]{tid}[/cyan] [dim][{role}][/dim]: {task['description'][:55]}")
                     if not ok:
                         console.print(f"    [red]Error:[/red] {_task_error_summary(result)[:240]}")
                     return tid, result
