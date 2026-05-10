@@ -602,6 +602,22 @@ def _build_agent_prompt(task: dict, brain: dict, brain_file: Path) -> str:
         "- Achte auf Fehlerbehandlung und Edge-Cases.\n"
     )
 
+    tester_hints = ""
+    if task.get("agent_role") in {"tester", "devops"}:
+        tester_hints = (
+            "\n### SERVER-TESTING REGELN (PFLICHT):\n"
+            "- Starte Server NIEMALS mit '&' allein — das haengt den Prozess.\n"
+            "- Nutze stattdessen dieses Muster fuer Node.js:\n"
+            "  node server.js &\n"
+            "  SERVER_PID=$!\n"
+            "  sleep 2\n"
+            "  curl -sf http://localhost:3000 || echo 'Server nicht erreichbar'\n"
+            "  kill $SERVER_PID 2>/dev/null\n"
+            "- Oder kompakter: timeout 10 bash -c 'node server.js & sleep 3 && curl -s http://localhost:3000; kill %1 2>/dev/null'\n"
+            "- Fuer npm test: immer '--forceExit' oder '--exit' Flag setzen um Hanging zu vermeiden.\n"
+            "- Schreibe SWARM_REPORT.md mit Pass/Fail fuer jeden Test.\n"
+        )
+
     brain_update = (
         f"\n### GEHIRN-UPDATE REGEL:\n"
         f"Nachdem du ALLE Dateien erstellt/bearbeitet hast, MUSST du das Projekt-Gehirn aktualisieren:\n"
@@ -619,7 +635,8 @@ def _build_agent_prompt(task: dict, brain: dict, brain_file: Path) -> str:
         f"{task['description']}\n\n"
         f"### ZU ERSTELLENDE DATEIEN:\n"
         f"{files}\n\n"
-        f"{coding_standards}\n"
+        f"{coding_standards}"
+        f"{tester_hints}\n"
         f"Arbeite Schritt fuer Schritt. Nutze 'shell' oder 'write_file' fuer deine Arbeit.\n"
         f"{brain_update}"
     )
