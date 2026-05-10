@@ -127,6 +127,10 @@ class AgentTool(BaseTool):
     async def execute(self, task: str) -> ToolResult:
         """Execute the sub-agent loop."""
         start_time = time.monotonic()
+        # Remember the auto-approve state so the next sub-agent inherits it
+        # (each run resets the flag at the end; this restore keeps the main
+        # session's /autoapprove setting alive across multiple sequential agents).
+        _saved_auto_approve = _subagent_auto_approve
 
         console.print()
         console.print(
@@ -143,19 +147,21 @@ class AgentTool(BaseTool):
 
         agent = Agent.from_config(config)
         session = Session(id="subagent", model=config.agent.model)
+        # Tell _build_messages to skip personality / facts / skills / wiki so
+        # the sub-agent stays lean and never hits provider context limits.
+        session.metadata["is_subagent"] = True
 
-        # Give the sub-agent context about its role
-        system_prompt = config.agent.system_prompt or ""
+        # Minimal system prompt — no personality bloat, just operational rules.
         subagent_prompt = (
-            f"{system_prompt}\n\n"
-            "WICHTIG: Du bist ein SUB-AGENT. Dir wurde eine komplexe Aufgabe übertragen. "
-            "Nutze deine Tools (shell, search), um die Aufgabe Schritt für Schritt zu lösen. "
-            "BENUTZE NIEMALS das 'agent' Tool — du bist selbst der Sub-Agent! "
-            "Wenn du ein Tool nutzt, schreibe vorher genau eine kurze öffentliche Fortschrittsnotiz "
-            "(ein Satz, was du als Nächstes prüfst oder baust; keine privaten Gedankengänge). "
-            "Setze im Tool-Argument 'reason' einen konkreten, nutzerverständlichen Zweck. "
-            "Wenn du fertig bist, fasse das Ergebnis zusammen und beende deine Arbeit "
-            "ohne weitere Tool-Aufrufe. Mache keine Konversation, liefere nur Ergebnisse."
+            "Du bist ein autonomer Sub-Agent. Dir wurde eine konkrete Aufgabe übertragen.\n"
+            "Nutze deine Tools (shell, search, write_file, read_file), "
+            "um die Aufgabe Schritt für Schritt zu lösen.\n"
+            "BENUTZE NIEMALS das 'agent' Tool — du bist selbst der Sub-Agent!\n"
+            "Schreibe vor jedem Tool-Aufruf eine kurze, öffentliche Fortschrittsnotiz "
+            "(ein Satz, was du als Nächstes tust).\n"
+            "Setze im Tool-Argument 'reason' einen konkreten, nutzerverständlichen Zweck.\n"
+            "Wenn du fertig bist, fasse das Ergebnis knapp zusammen und beende "
+            "ohne weitere Tool-Aufrufe. Liefere Ergebnisse, keine Konversation."
         )
         agent._agent_config.system_prompt = subagent_prompt
 
@@ -337,8 +343,10 @@ class AgentTool(BaseTool):
 
         elapsed = time.monotonic() - start_time
 
-        # Reset sub-agent auto-approve after run (main session flag re-sets it if needed)
-        set_subagent_auto_approve(False)
+        # Restore auto-approve to what it was before this agent ran.
+        # This keeps the main session's /autoapprove flag alive for sequential agents
+        # while still scoping any in-agent "4: Alle akzeptieren" to one run.
+        set_subagent_auto_approve(_saved_auto_approve)
 
         # Summary table
         summary = Table.grid(padding=(0, 2))
@@ -379,7 +387,10 @@ class AgentTool(BaseTool):
         choice = await asyncio.to_thread(
             ptk_prompt, HTML("  <b><ansiyellow>Wahl &gt;</ansiyellow></b> ")
         )
-        return choice.strip()
+        stripped = choice.strip()
+        if stripped in ("/exit", "/quit"):
+            raise EOFError("User requested exit from approval dialog")
+        return stripped
 
     async def _execute_tool(self, name: str, args: dict, session: Session) -> ToolResult:
         """Execute a tool and record result in session."""

@@ -345,6 +345,16 @@ class Agent:
         """
         messages: list[Message] = []
 
+        # Sub-agents get a lean prompt — no personality, facts, skills or wiki.
+        # This keeps their context small so long autopilot runs don't hit provider limits.
+        if session.metadata.get("is_subagent"):
+            if self._agent_config.system_prompt:
+                messages.append(Message(role=Role.SYSTEM, content=self._agent_config.system_prompt))
+            remember_last = self._context_config.remember_last
+            recent = session.messages[-remember_last:] if remember_last > 0 else session.messages
+            messages.extend(recent)
+            return messages
+
         # ── Tier 0: Core identity anchor (reload from disk every time) ─
         personality_file = self._config.config_dir / "personality" / "personality.md"
         from cucumber_agent.config import PersonalityConfig

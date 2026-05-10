@@ -107,11 +107,27 @@ def _has_any(workspace: Path, filenames: set[str]) -> bool:
     return any((workspace / name).exists() for name in filenames)
 
 
+def _read_workspace_context(workspace_path: Path) -> str:
+    """Read key workspace files for context, return condensed summary."""
+    parts: list[str] = []
+    for fname in ("SPEC.md", "README.md", "TODO.md", "GOAL.md", "CHANGELOG.md"):
+        fpath = workspace_path / fname
+        if fpath.exists():
+            try:
+                content = fpath.read_text(encoding="utf-8", errors="ignore")[:1500]
+                parts.append(f"=== {fname} ===\n{content}")
+            except OSError:
+                pass
+    return "\n\n".join(parts)
+
+
 def create_plan(goal: str, workspace: Path | str) -> AutopilotState:
-    """Create a broad, deterministic V1 plan for a project goal."""
+    """Create a targeted plan for a project goal, informed by workspace context."""
     workspace_path = Path(workspace).expanduser().resolve()
     cleaned_goal = goal.strip() or "Projekt verbessern und stabilisieren"
     tasks: list[AutopilotTask] = []
+    ctx = _read_workspace_context(workspace_path)
+    ctx_hint = f" Kontext aus dem Projekt: {ctx[:400]}" if ctx else ""
 
     def add(title: str, detail: str, role: str, priority: int) -> None:
         tasks.append(
@@ -125,51 +141,81 @@ def create_plan(goal: str, workspace: Path | str) -> AutopilotState:
         )
 
     add(
-        "Projektzustand analysieren",
-        "Workspace, bestehende Doku, Tests, offene Risiken und passende Umsetzungspfade erfassen.",
+        "Projektzustand analysieren und Plan erstellen",
+        (
+            f"Analysiere den Workspace '{workspace_path}' gruendlich: "
+            f"vorhandene Dateien, Doku, Tests, offene Risiken. "
+            f"Leite daraus konkrete Umsetzungsschritte fuer das Ziel '{cleaned_goal}' ab "
+            f"und schreibe sie in AUTOPILOT_PLAN.md.{ctx_hint}"
+        ),
         "planner",
         1,
-    )
-    add(
-        "Ziel in umsetzbare Arbeit schneiden",
-        f"Das Ziel '{cleaned_goal}' in kleine, testbare Schritte mit klaren Ergebnissen zerlegen.",
-        "planner",
-        2,
     )
 
     if _has_any(workspace_path, {"pyproject.toml", "setup.py", "requirements.txt"}):
         add(
-            "Python-Code und Schnittstellen verbessern",
-            "Betroffene Module implementieren oder refactoren und bestehende Patterns beibehalten.",
+            "Python-Implementierung",
+            (
+                f"Implementiere die Kernlogik fuer '{cleaned_goal}' in den betroffenen Python-Modulen. "
+                f"Halte bestehende Patterns bei, behandle Edge-Cases und schliesse alle TODOs ab. "
+                f"Lese zuerst AUTOPILOT_PLAN.md falls vorhanden.{ctx_hint}"
+            ),
             "coder",
+            2,
+        )
+        add(
+            "Tests und Qualitaetssicherung",
+            (
+                f"Ergaenze pytest-Tests fuer alle neuen oder geaenderten Python-Komponenten. "
+                f"Fuehre ruff check und ty check aus und behebe alle Fehler. "
+                f"Lese zuerst AUTOPILOT_PLAN.md und die Implementierungsergebnisse.{ctx_hint}"
+            ),
+            "tester",
             3,
         )
+
+    elif _has_any(workspace_path, {"package.json", "vite.config.ts", "next.config.js", "tsconfig.json"}):
         add(
-            "Python-Tests und Typchecks absichern",
-            "Gezielte pytest-, ruff- und pyright-Abdeckung fuer die Aenderung ergaenzen.",
+            "Frontend-Implementierung",
+            (
+                f"Implementiere '{cleaned_goal}' in der Frontend-Codebasis. "
+                f"Halte bestehende Komponentenstruktur und Styles bei. "
+                f"Lese zuerst AUTOPILOT_PLAN.md falls vorhanden.{ctx_hint}"
+            ),
+            "coder",
+            2,
+        )
+        add(
+            "Frontend-Qualitaet sichern",
+            (
+                f"Prüfe UI-Flows, TypeScript-Fehler und Responsiveness fuer '{cleaned_goal}'. "
+                f"Fuehre npm run lint / tsc aus und behebe alle Fehler.{ctx_hint}"
+            ),
             "tester",
-            4,
+            3,
         )
 
-    if _has_any(workspace_path, {"package.json", "vite.config.ts", "next.config.js"}):
+    else:
         add(
-            "Frontend-Erlebnis pruefen und verbessern",
-            "UI-Flows, Responsiveness, Textueberlauf und erwartbare Interaktionen absichern.",
-            "frontend",
-            4,
+            "Implementierung",
+            (
+                f"Implementiere '{cleaned_goal}' im Workspace '{workspace_path}'. "
+                f"Lese zuerst AUTOPILOT_PLAN.md falls vorhanden, "
+                f"dann setze die geplanten Schritte Schritt fuer Schritt um.{ctx_hint}"
+            ),
+            "coder",
+            2,
         )
 
     add(
-        "Integration ausfuehren",
-        "Geplante Tasks mit passenden Agenten ausfuehren, Ergebnisse speichern und Fehler sichtbar machen.",
-        "coder",
-        5,
-    )
-    add(
-        "Review und Abschlussbericht erstellen",
-        "Aenderungen, Tests, Rest-Risiken und naechste Schritte kompakt zusammenfassen.",
+        "Abschlussbericht und Verifikation",
+        (
+            f"Verifiziere, dass '{cleaned_goal}' vollstaendig umgesetzt wurde: "
+            f"prüfe alle erstellten/geaenderten Dateien, fuehre vorhandene Tests aus "
+            f"und fasse Ergebnisse, Rest-Risiken und naechste Schritte in AUTOPILOT_REPORT.md zusammen."
+        ),
         "reviewer",
-        6,
+        4,
     )
 
     return AutopilotState(
@@ -258,16 +304,30 @@ async def run_plan(
 
     semaphore = asyncio.Semaphore(parallel)
 
-    async def execute_task(task: AutopilotTask) -> None:
+    # Seed with results from already-completed tasks so retries get full context.
+    accumulated_results: list[str] = [
+        f"{t.title}: {t.result[:300]}"
+        for t in state.tasks
+        if t.status == "done" and t.result
+    ]
+
+    async def execute_task(task: AutopilotTask, prev_results: list[str]) -> None:
         async with semaphore:
             task.status = "running"
             task.started_at = _now()
+            context_section = ""
+            if prev_results:
+                joined = "\n".join(f"- {r}" for r in prev_results[-6:])
+                context_section = (
+                    f"\n\nContext from previously completed tasks:\n{joined}\n"
+                )
             prompt = (
                 f"Agent Autopilot task for workspace: {state.workspace}\n"
                 f"Overall goal: {state.goal}\n"
                 f"Task: {task.title}\n\n"
-                f"Details: {task.detail}\n\n"
-                "Work only inside the workspace. Preserve unrelated user changes. "
+                f"Details: {task.detail}\n"
+                f"{context_section}"
+                "\nWork only inside the workspace. Preserve unrelated user changes. "
                 "Use existing project patterns and finish with a concise summary."
             )
             try:
@@ -275,6 +335,9 @@ async def run_plan(
             except TimeoutError:
                 task.status = "failed"
                 task.error = f"Timed out after {timeout}s"
+            except EOFError:
+                # User typed /exit in an approval dialog — propagate so the REPL exits cleanly.
+                raise
             except Exception as exc:
                 task.status = "failed"
                 task.error = str(exc)[:500]
@@ -288,7 +351,17 @@ async def run_plan(
                     task.error = (result.error or result.output or "unknown error")[:500]
             task.completed_at = _now()
 
-    await asyncio.gather(*(execute_task(task) for task in pending))
+    # Execute tasks in priority order so planner → coder → tester → reviewer
+    # flows correctly and each group sees results from the previous group.
+    priorities = sorted({t.priority for t in pending})
+    for priority in priorities:
+        group = [t for t in pending if t.priority == priority]
+        snapshot = list(accumulated_results)
+        await asyncio.gather(*(execute_task(task, snapshot) for task in group))
+        for task in group:
+            if task.status == "done" and task.result:
+                accumulated_results.append(f"{task.title}: {task.result[:300]}")
+
     state.last_report = report_text(state)
     return state
 

@@ -277,11 +277,20 @@ async def _llm_create_task_plan(spec_content: str, project_path: Path) -> dict:
     config = Config.load()
     agent = Agent.from_config(config)
 
-    spec_preview = spec_content[:8000] if spec_content else "(Keine SPEC.md gefunden.)"
     inventory = _planner_file_inventory(project_path)
+    if spec_content:
+        spec_preview = spec_content[:8000]
+        spec_source_label = "SPEC.md / Projektbeschreibung"
+    else:
+        spec_preview = (
+            "Keine SPEC.md vorhanden. Leite den Plan aus dem Projektinventar ab.\n"
+            "Analysiere die vorhandenen Dateien und erstelle sinnvolle Aufgaben "
+            "die das Projekt verbessern, vervollstaendigen oder stabilisieren."
+        )
+        spec_source_label = "Projektinventar (kein SPEC)"
 
     prompt = f"""Du bist der KI-Planner fuer Herbert Swarm.
-Erstelle einen konkreten, automatisch aus der Projektbeschreibung abgeleiteten Multi-Agent-Plan.
+Erstelle einen konkreten, aus dem Projekt abgeleiteten Multi-Agent-Plan.
 
 Antworte AUSSCHLIESSLICH mit einem JSON-Objekt:
 {{
@@ -289,7 +298,7 @@ Antworte AUSSCHLIESSLICH mit einem JSON-Objekt:
   "tasks": [
     {{
       "id": "kurze-stabile-id",
-      "description": "konkrete Aufgabe",
+      "description": "konkrete Aufgabe mit klarem Ergebnis",
       "agent_role": "coder|reviewer|tester|devops|designer|planner",
       "phase": "PHASE_NAME",
       "priority": 1,
@@ -301,18 +310,21 @@ Antworte AUSSCHLIESSLICH mit einem JSON-Objekt:
 }}
 
 Regeln:
-- Plane NUR, was aus SPEC.md und Projektdateien wirklich folgt.
-- Erfinde keine Frontend-, Backend-, Datenbank-, Docker- oder Testphase, wenn sie nicht verlangt ist.
-- Nutze sinnvolle Phasen in Ausfuehrungsreihenfolge. Phasen koennen frei benannt werden.
-- Tasks muessen klein genug fuer parallele Sub-Agenten sein und klare Dateien besitzen.
+- Plane NUR, was aus der Projektbeschreibung und den Projektdateien wirklich folgt.
+- Erfinde keine Phasen (Frontend, Backend, Docker, Tests), wenn sie nicht benoetigt werden.
+- Nutze sinnvolle Phasen in Ausfuehrungsreihenfolge — Phasen koennen frei benannt werden.
+- Tasks muessen klein genug fuer einzelne Sub-Agenten sein und klare Dateipfade enthalten.
 - Dateien muessen relative Pfade im Projekt sein. Keine absoluten Pfade, kein '..'.
-- Dependencies duerfen nur auf task ids aus deiner Antwort zeigen.
-- Wenn die Anforderungen sehr klein sind, plane eine einzelne IMPLEMENTATION-Phase mit einer Aufgabe.
+- Dependencies duerfen nur auf task-ids aus deiner Antwort zeigen.
+- Setze dependencies realistisch: spaetere Tasks auf fruehere, die ihre Ausgabe brauchen.
+- Wenn die Anforderungen klein sind, reicht eine einzelne IMPLEMENTATION-Phase.
+- Schreibe fuer jede task eine praezise description mit klarem Ergebnis (keine vagen Formulierungen).
 
 Projekt: {project_path.name}
 Projektpfad: {project_path}
+Quelle: {spec_source_label}
 
-SPEC.md:
+{spec_source_label}:
 {spec_preview}
 
 Projektinventar:
@@ -358,6 +370,25 @@ def _build_agent_prompt(task: dict, brain: dict, brain_file: Path) -> str:
         else ""
     )
 
+    # Include results from completed dependency tasks so this agent can build on prior work.
+    dep_ctx = ""
+    facts = brain.get("facts", {})
+    deps = task.get("dependencies", [])
+    if deps and facts:
+        dep_lines: list[str] = []
+        for dep_id in deps:
+            dep_fact = facts.get(f"task_{dep_id}_result")
+            if dep_fact and isinstance(dep_fact, dict):
+                summary = (dep_fact.get("summary") or "")[:350]
+                created = dep_fact.get("files_created", [])
+                if summary:
+                    dep_lines.append(f"  [{dep_id}] {summary}")
+                if created:
+                    names = ", ".join(Path(f).name for f in created[:6])
+                    dep_lines.append(f"  [{dep_id}] Dateien: {names}")
+        if dep_lines:
+            dep_ctx = "\n### ERGEBNISSE ABHAENGIGER AUFGABEN:\n" + "\n".join(dep_lines) + "\n"
+
     coding_standards = (
         "### CODING STANDARDS:\n"
         "- Schreibe sauberen, modularen und kommentierten Code.\n"
@@ -377,7 +408,8 @@ def _build_agent_prompt(task: dict, brain: dict, brain_file: Path) -> str:
     return (
         f"Du bist ein spezialisierter {task['agent_role']} Agent im CucumberSwarm.\n"
         f"Dein Arbeitsverzeichnis ist: {project_path}\n\n"
-        f"{spec_ctx}\n"
+        f"{spec_ctx}"
+        f"{dep_ctx}\n"
         f"### DEINE AUFGABE ({tid}):\n"
         f"{task['description']}\n\n"
         f"### ZU ERSTELLENDE DATEIEN:\n"
@@ -700,8 +732,26 @@ async def _cmd_plan(project: str, spec: str | None = None) -> str:
         spec_content = spec_path.read_text(encoding="utf-8")
         brain["spec_summary"] = spec_content[:2000]
     else:
-        spec_content = ""
-        console.print(f"[yellow]No spec file at {spec_path} — scanning project files[/yellow]")
+        # Fall back to README and other context documents.
+        fallback_parts: list[str] = []
+        for fname in ("README.md", "README.txt", "TODO.md", "GOAL.md"):
+            fpath = project_path / fname
+            if fpath.exists():
+                try:
+                    text = fpath.read_text(encoding="utf-8", errors="ignore")[:2000]
+                    fallback_parts.append(f"# {fname}\n{text}")
+                except OSError:
+                    pass
+        spec_content = "\n\n".join(fallback_parts)
+        if spec_content:
+            console.print(
+                "[yellow]No SPEC.md — using README/docs as project context[/yellow]"
+            )
+            brain["spec_summary"] = spec_content[:2000]
+        else:
+            console.print(
+                f"[yellow]No spec or README at {spec_path} — planning from file inventory only[/yellow]"
+            )
 
     tasks, phases = await _analyze_and_plan(spec_content, project_path)
     brain["tasks"] = tasks

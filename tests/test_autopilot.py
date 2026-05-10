@@ -46,8 +46,8 @@ def test_create_plan_detects_python_project(tmp_path):
 
     titles = [task.title for task in state.tasks]
     assert state.goal == "mache das Projekt stabil"
-    assert "Python-Code und Schnittstellen verbessern" in titles
-    assert "Python-Tests und Typchecks absichern" in titles
+    assert any("Python" in t for t in titles)
+    assert any("Test" in t or "Qualit" in t for t in titles)
 
 
 def test_autopilot_store_round_trip(tmp_path):

@@ -48,7 +48,7 @@ from cucumber_agent.workspace import WorkspaceDetector
 
 logger = get_logger("cli")
 
-_COMMAND_PUNCTUATION = ".,;:!?"
+_COMMAND_PUNCTUATION = ".,;:!"
 STATIC_SLASH_COMMANDS = [
     "/help",
     "/quickstart",
@@ -61,7 +61,6 @@ STATIC_SLASH_COMMANDS = [
     "/model",
     "/update",
     "/debug",
-    "/optimize",
     "/memory",
     "/context",
     "/autopilot",
@@ -394,10 +393,33 @@ def print_help() -> None:
             ],
         ),
         (
-            "Arbeiten",
+            "Swarm — Projekt bauen",
             [
-                ("/herbert-swarm . --dry-run", "Projekt per KI planen, ohne Dateien zu ändern"),
-                ("/autopilot plan <ziel>", "Sequentiellen Projektplan anlegen"),
+                (
+                    "/herbert-swarm . --dry-run",
+                    "Für Features & Multi-Datei-Änderungen.\n"
+                    "  Braucht SPEC.md. Baut mit mehreren\n"
+                    "  Agenten parallel.",
+                ),
+                ("/herbert-swarm . --parallel 3", "Swarm ausführen"),
+            ],
+        ),
+        (
+            "Autopilot — Aufgabe erledigen",
+            [
+                (
+                    "/autopilot plan <ziel>",
+                    "Für konkrete Einzelaufgaben.\n"
+                    "  Kein SPEC.md nötig. Plant sequentiell:\n"
+                    "  Analyse → Code → Review.",
+                ),
+                ("/autopilot run", "Plan ausführen"),
+                ("/autopilot status", "Fortschritt anzeigen"),
+            ],
+        ),
+        (
+            "Skills & Tools",
+            [
                 ("/skills", "Installierte Skills auflisten"),
                 ("/tools", "Registrierte Tools anzeigen"),
             ],
@@ -450,8 +472,10 @@ def print_help() -> None:
     console.print(Columns(panels, equal=True, expand=True))
     console.print(
         Panel(
-            "[bold]Merksatz:[/bold] /doctor prüft die Basis, /what-now sagt dir den nächsten Schritt, "
-            "/quickstart zeigt den leichtesten Einstieg.",
+            "[bold]Wann was?[/bold]\n"
+            "  [cyan]Swarm[/cyan]     → Feature bauen, SPEC.md da, viele Dateien → /herbert-swarm\n"
+            "  [cyan]Autopilot[/cyan] → Eine Aufgabe, kein SPEC.md nötig, schnell → /autopilot plan\n"
+            "  [dim]/doctor · /what-now · /quickstart[/dim]",
             border_style="dim",
             padding=(0, 1),
         )
@@ -1481,8 +1505,19 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
         if self._skill_loader.needs_reload():
             self._skill_loader.load_all()
 
-        # Check for skill commands first, including aliases and punctuation-tolerant input.
-        skill_invocation = _resolve_skill_invocation(user_input, self._skill_loader)
+        # Resolve the normalized command first so built-ins always win over skills.
+        _parts_early = user_input.strip().split(None, 1)
+        _cmd_early = (
+            _canonical_slash_command(_normalize_command_word(_parts_early[0]))
+            if _parts_early
+            else ""
+        )
+        _is_builtin = _cmd_early in STATIC_SLASH_COMMANDS
+
+        # Skills can extend the agent but must not override built-in commands.
+        skill_invocation = (
+            _resolve_skill_invocation(user_input, self._skill_loader) if not _is_builtin else None
+        )
         if skill_invocation:
             skill, args = skill_invocation
             console.print(f"  [dim magenta]⚡ Skill: {skill.name}[/dim magenta]\n")
@@ -1793,6 +1828,12 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                 )
                 table.add_row("Gesprächs-Summary:", summary_status)
                 table.add_row("Nachrichten (Live):", f"{len(self._session.messages)}")
+                pins = self._session.metadata.get("pinned_items", [])
+                if pins:
+                    table.add_row(
+                        "Gepinnt:",
+                        f"[cyan]{len(pins)}[/cyan] [dim]Element(e) — /pin zum Anzeigen[/dim]",
+                    )
 
                 # Show a small progress bar
                 bar_width = 20
@@ -1931,27 +1972,27 @@ Do NOT echo back the current values. Actually analyze and suggest improvements."
                         console.print(f"  [{color}]{role_val.upper()}:[/{color}] {content_text}")
                     console.print()
             case "/undo":
-                # Remove last user + assistant message pair
+                # Remove the last user message and everything that followed it
+                # (assistant text, tool calls, tool results — the whole exchange).
                 msgs = self._session.messages
                 if not msgs:
                     console.print("  [dim]Keine Nachrichten zum Rückgängigmachen.[/dim]\n")
                 else:
-                    # Find and remove the last assistant message
-                    removed = 0
-                    if msgs and msgs[-1].role == SessionRole.ASSISTANT:
-                        msgs.pop()
-                        removed += 1
-                    # Then remove the last user message
-                    if msgs and msgs[-1].role == SessionRole.USER:
-                        msgs.pop()
-                        removed += 1
-                    if removed:
+                    # Walk backwards to find the last USER message index.
+                    last_user_idx = None
+                    for i in range(len(msgs) - 1, -1, -1):
+                        if msgs[i].role == SessionRole.USER:
+                            last_user_idx = i
+                            break
+                    if last_user_idx is None:
+                        console.print("  [dim]Nichts zum Rückgängigmachen gefunden.[/dim]\n")
+                    else:
+                        removed = len(msgs) - last_user_idx
+                        self._session.messages = msgs[:last_user_idx]
                         console.print(
                             f"  [green]✓ {removed} Nachricht(en) entfernt.[/green] "
-                            f"[dim]({len(msgs)} verbleibend)[/dim]\n"
+                            f"[dim]({len(self._session.messages)} verbleibend)[/dim]\n"
                         )
-                    else:
-                        console.print("  [dim]Nichts zum Rückgängigmachen gefunden.[/dim]\n")
             case "/export":
                 import datetime
 
